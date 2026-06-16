@@ -1,0 +1,47 @@
+/* ── 全局重置 ── */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #0d1117;
+  color: #e6edf3;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ── Ant Design 微调 ── */
+
+/* 侧边栏 */
+.ant-layout-sider {
+  background: #161b22 !important;
+}
+
+/* Empty 组件 */
+.ant-empty-description {
+  color: #484f58 !important;
+}
+
+/* Input 清除按钮 */
+.ant-input-clear-icon {
+  color: #484f58 !important;
+}
+
+/* Layout */
+.ant-layout {
+  background: transparent !important;
+}
