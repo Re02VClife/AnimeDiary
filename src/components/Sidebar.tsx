@@ -1,0 +1,633 @@
+import { useState, useMemo, useCallback } from 'react';
+import { Segmented, Slider, Input, Button, Popconfirm, message } from 'antd';
+import { PlusOutlined, EditOutlined, CloseOutlined } from '@ant-design/icons';
+import type { AnimeEntry, Dimension } from '../types';
+import { DEFAULT_DIMENSIONS } from '../types';
+import { rankByDimension } from '../services/rankingService';
+import WatchTimeline from './WatchCalendar';
+
+interface SidebarProps {
+  animeList: AnimeEntry[];
+  activeDim: string;
+  onActiveDimChange: (dim: string) => void;
+  onDimensionRank?: (dimKey: string, order: 'asc' | 'desc') => void;
+  onImportExcel?: () => void;
+  onExportExcel?: () => void;
+  onOpenDimensionManager?: () => void;
+  onAnimeClick?: (anime: AnimeEntry) => void;
+  imgHeight?: number;
+  onImgHeightChange?: (h: number) => void;
+  activeTag?: string | null;
+  onActiveTagChange?: (tag: string | null) => void;
+  onRenameTag?: (oldName: string, newName: string) => void;
+  onDeleteTag?: (tagName: string) => void;
+  // 批量添加模式
+  batchMode?: boolean;
+  selectedBatchTags?: string[];
+  onBatchTagsChange?: (tags: string[]) => void;
+  onStartBatch?: () => void;
+  onConfirmBatch?: () => void;
+  onCancelBatch?: () => void;
+  onOpenKnowledgeGraph?: () => void;
+  onExportUserData?: () => void;
+  onImportUserData?: (file: File) => void;
+  onFixSearchAlias?: () => void;
+  onOpenExcel?: () => void;
+  onOpenAISettings?: () => void;
+  onOpenTasteReport?: () => void;
+}
+
+/** Tag 预设存储 key */
+const TAG_PRESETS_KEY = 'anime_diary_tag_presets';
+
+function loadTagPresets(): string[] {
+  try {
+    const raw = localStorage.getItem(TAG_PRESETS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveTagPresets(presets: string[]): void {
+  localStorage.setItem(TAG_PRESETS_KEY, JSON.stringify(presets));
+}
+
+/** 伪维度：BGM / 番名 */
+const BGM_DIM: Dimension = { key: 'bgm', label: 'BGM评分', description: 'Bangumi 评分', weight: 0 };
+const NAME_DIM: Dimension = { key: 'namesort', label: '番名', description: '按番剧名称排序', weight: 0 };
+
+const Sidebar: React.FC<SidebarProps> = ({
+  animeList,
+  activeDim,
+  onActiveDimChange,
+  onDimensionRank,
+  onImportExcel,
+  onExportExcel,
+  onOpenDimensionManager,
+  onAnimeClick,
+  imgHeight,
+  onImgHeightChange,
+  activeTag,
+  onActiveTagChange,
+  onRenameTag,
+  onDeleteTag,
+  batchMode,
+  selectedBatchTags,
+  onBatchTagsChange,
+  onStartBatch,
+  onConfirmBatch,
+  onCancelBatch,
+  onOpenKnowledgeGraph,
+  onExportUserData,
+  onImportUserData,
+  onFixSearchAlias,
+  onOpenExcel,
+  onOpenAISettings,
+  onOpenTasteReport,
+}) => {
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [showCalendar, setShowCalendar] = useState(true);
+  const [showRanking, setShowRanking] = useState(true);
+  const [showTags, setShowTags] = useState(true);
+  const [tagEditMode, setTagEditMode] = useState(false); // Tag 编辑模式开关
+  const [showGraph, setShowGraph] = useState(false); // 知识图谱折叠
+  const [showAI, setShowAI] = useState(false); // AI 分析折叠
+
+  // Tag 编辑状态
+  const [editingTag, setEditingTag] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [newTagName, setNewTagName] = useState('');
+  const [tagPresets, setTagPresets] = useState<string[]>(() => loadTagPresets());
+
+  // ── Tag 统计：收集全部标签（含预设），按使用次数排序 ──
+  const tagStats = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const a of animeList) {
+      for (const t of a.tags) {
+        counts[t.name] = (counts[t.name] || 0) + 1;
+      }
+    }
+    // 合并预设标签（未在番剧中出现的计数为 0）
+    for (const preset of tagPresets) {
+      if (!(preset in counts)) counts[preset] = 0;
+    }
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh'));
+  }, [animeList, tagPresets]);
+
+  // 开始重命名
+  const startRename = useCallback((name: string) => {
+    setEditingTag(name);
+    setEditValue(name);
+  }, []);
+
+  // 确认重命名
+  const confirmRename = useCallback(() => {
+    const newName = editValue.trim();
+    if (!newName || !editingTag || newName === editingTag) {
+      setEditingTag(null);
+      return;
+    }
+    onRenameTag?.(editingTag, newName);
+    // 同步更新预设列表
+    const updated = tagPresets.map((p) => p === editingTag ? newName : p);
+    setTagPresets(updated);
+    saveTagPresets(updated);
+    setEditingTag(null);
+    message.success(`已重命名「${editingTag}」→「${newName}」`);
+  }, [editingTag, editValue, tagPresets, onRenameTag]);
+
+  // 删除标签
+  const confirmDelete = useCallback((name: string) => {
+    onDeleteTag?.(name);
+    // 同步从预设列表移除
+    const updated = tagPresets.filter((p) => p !== name);
+    setTagPresets(updated);
+    saveTagPresets(updated);
+  }, [tagPresets, onDeleteTag]);
+
+  // 新增预设标签
+  const addTagPreset = useCallback(() => {
+    const name = newTagName.trim();
+    if (!name) return;
+    if (tagPresets.includes(name)) { message.warning('标签已存在'); return; }
+    const updated = [...tagPresets, name];
+    setTagPresets(updated);
+    saveTagPresets(updated);
+    setNewTagName('');
+    message.success(`已添加标签「${name}」`);
+  }, [newTagName, tagPresets]);
+
+  // 按当前维度排序的全部番剧（含 BGM 特殊处理）
+  const allRanked = useMemo(() => {
+    if (!activeDim) return [];
+    if (activeDim === 'bgm') {
+      return [...animeList]
+        .filter((a) => a.bangumiScore && a.bangumiScore > 0)
+        .sort((a, b) => (b.bangumiScore || 0) - (a.bangumiScore || 0));
+    }
+    if (activeDim === 'namesort') {
+      return [...animeList].sort((a, b) => a.title.localeCompare(b.title, 'zh'));
+    }
+    return rankByDimension(animeList, activeDim);
+  }, [animeList, activeDim]);
+
+  const dimLabel = (key: string) =>
+    DEFAULT_DIMENSIONS.find((d) => d.key === key)?.label || key;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* ── 追番时间轴 ── */}
+      <div className="sidebar-section">
+        <div
+          className="section-title"
+          onClick={() => setShowCalendar(!showCalendar)}
+          style={{ cursor: 'pointer', userSelect: 'none' }}
+        >
+          {showCalendar ? '▼' : '▶'} 📅 追番时间轴
+        </div>
+        {showCalendar && (
+          <WatchTimeline animeList={animeList} onAnimeClick={onAnimeClick} />
+        )}
+      </div>
+
+      {/* ── 维度排序 ── */}
+      <div className="sidebar-section">
+        <div
+          className="section-title"
+          onClick={() => setShowRanking(!showRanking)}
+          style={{ cursor: 'pointer', userSelect: 'none' }}
+        >
+          {showRanking ? '▼' : '▶'} 📊 维度排序
+        </div>
+        {showRanking && (
+          <>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
+              {[...DEFAULT_DIMENSIONS, BGM_DIM, NAME_DIM].map((dim: Dimension) => (
+                <div
+                  key={dim.key}
+                  className={`dimension-chip${activeDim === dim.key ? ' active' : ''}`}
+                  onClick={() => {
+                    onActiveDimChange(dim.key);
+                    setSortDir('desc');
+                    onDimensionRank?.(dim.key, 'desc');
+                  }}
+                  title={dim.description}
+                >
+                  {dim.label}
+                </div>
+              ))}
+            </div>
+
+            {/* 正倒序切换 */}
+            <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'flex-end' }}>
+              <Segmented
+                size="small"
+                value={sortDir}
+                onChange={(v) => {
+                  setSortDir(v as 'asc' | 'desc');
+                  onDimensionRank?.(activeDim, v as 'asc' | 'desc');
+                }}
+                options={[
+                  { value: 'desc', label: '↓高到低' },
+                  { value: 'asc', label: '↑低到高' },
+                ]}
+              />
+            </div>
+
+            {/* 排名列表（可滚动全量） */}
+            <div style={{
+              display: 'flex', flexDirection: 'column', gap: 2,
+              maxHeight: 500, overflowY: 'auto',
+            }}>
+              {(sortDir === 'desc' ? allRanked : [...allRanked].reverse()).map((anime, idx) => {
+                const score = anime.scores.find((s) => s.dimensionKey === activeDim);
+                const rank = sortDir === 'desc' ? idx + 1 : allRanked.length - idx;
+                return (
+                  <div
+                    key={anime.id}
+                    onClick={() => onAnimeClick?.(anime)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      padding: '4px 8px', borderRadius: 4, cursor: 'pointer',
+                      background: rank <= 3 ? 'rgba(251,114,153,0.06)' : 'transparent',
+                      border: rank <= 3 ? '1px solid rgba(251,114,153,0.15)' : '1px solid transparent',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = '#1c2128'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = rank <= 3 ? 'rgba(251,114,153,0.06)' : 'transparent'; }}
+                  >
+                    <span style={{
+                      fontSize: 11, fontWeight: 700,
+                      color: rank <= 3 ? '#fb7299' : '#484f58',
+                      minWidth: 16, textAlign: 'center',
+                    }}>
+                      {rank}
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, color: '#e6edf3', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {anime.title}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: '#fb7299' }}>
+                      {activeDim === 'namesort' ? '' :
+                       activeDim === 'bgm'
+                        ? (anime.bangumiScore?.toFixed(1) || '-')
+                        : (score?.score?.toFixed(activeDim === 'vibe' ? 2 : 1) || '-')}
+                    </span>
+                  </div>
+                );
+              })}
+              {allRanked.length === 0 && (
+                <div style={{ fontSize: 12, color: '#484f58', textAlign: 'center', padding: 12 }}>
+                  暂无 {dimLabel(activeDim)} 维度数据
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── Tag 管理 ── */}
+      <div className="sidebar-section">
+        <div
+          className="section-title"
+          onClick={() => setShowTags(!showTags)}
+          style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+        >
+          <span>
+            {showTags ? '▼' : '▶'} 🏷️ Tag 管理
+            {activeTag && (
+              <span
+                style={{ fontSize: 11, color: '#8b949e', fontWeight: 400, marginLeft: 4 }}
+                onClick={(e) => { e.stopPropagation(); onActiveTagChange?.(null); }}
+              >
+                (已选: {activeTag} ✕)
+              </span>
+            )}
+          </span>
+          <span style={{ display: 'flex', gap: 2 }}>
+            {batchMode ? (
+              <>
+                <Button size="small" type="primary"
+                  onClick={(e) => { e.stopPropagation(); onConfirmBatch?.(); }}
+                  style={{ fontSize: 11, height: 22, padding: '0 8px' }}
+                  disabled={!selectedBatchTags?.length}
+                >
+                  确认
+                </Button>
+                <Button size="small"
+                  onClick={(e) => { e.stopPropagation(); onCancelBatch?.(); }}
+                  style={{ fontSize: 11, height: 22, padding: '0 6px' }}
+                >
+                  取消
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  size="small" type="text"
+                  onClick={(e) => { e.stopPropagation(); onStartBatch?.(); }}
+                  style={{ fontSize: 11, height: 22, padding: '0 6px', color: '#8b949e' }}
+                  title="批量添加标签到番剧"
+                >
+                  批量添加
+                </Button>
+                <Button
+                  size="small" type="text"
+                  icon={<EditOutlined style={{ fontSize: 12 }} />}
+                  onClick={(e) => { e.stopPropagation(); setTagEditMode(!tagEditMode); }}
+                  style={{
+                    color: tagEditMode ? '#fb7299' : '#484f58',
+                    width: 24, height: 24, minWidth: 24, padding: 0,
+                  }}
+                  title={tagEditMode ? '退出编辑' : '编辑标签'}
+                />
+              </>
+            )}
+          </span>
+        </div>
+        {showTags && (
+          <>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxHeight: 200, overflowY: 'auto', marginBottom: 8 }}>
+              {tagStats.length === 0 && !newTagName ? (
+                <div style={{ fontSize: 12, color: '#484f58', textAlign: 'center', width: '100%', padding: 12 }}>
+                  暂无标签数据
+                </div>
+              ) : (
+                tagStats.map(([name, count]) => (
+                  <div
+                    key={name}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 2,
+                      padding: '2px 4px 2px 10px', borderRadius: 12, fontSize: 12,
+                      background: activeTag === name ? 'rgba(251,114,153,0.2)' : '#21262d',
+                      border: `1px solid ${activeTag === name ? '#fb7299' : '#30363d'}`,
+                      color: activeTag === name ? '#fb7299' : '#8b949e',
+                    }}
+                  >
+                    {/* 编辑模式 → 输入框 */}
+                    {editingTag === name ? (
+                      <Input
+                        size="small"
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        onPressEnter={confirmRename}
+                        onBlur={confirmRename}
+                        autoFocus
+                        style={{
+                          width: 70, height: 20, fontSize: 11,
+                          background: '#0d1117', borderColor: '#fb7299', color: '#e6edf3',
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    ) : (
+                      <span
+                        onClick={() => {
+                          if (batchMode) {
+                            // 批量模式：切换标签选中
+                            const sel = selectedBatchTags || [];
+                            onBatchTagsChange?.(
+                              sel.includes(name) ? sel.filter((t) => t !== name) : [...sel, name],
+                            );
+                          } else {
+                            onActiveTagChange?.(activeTag === name ? null : name);
+                          }
+                        }}
+                        style={{ cursor: 'pointer' }}
+                        title={batchMode ? `勾选「${name}」以批量添加` : `${name}（${count} 部番剧）`}
+                      >
+                        {/* 批量模式下的勾选标记 */}
+                        {batchMode && (
+                          <span style={{
+                            display: 'inline-block', width: 14, height: 14, lineHeight: '14px',
+                            borderRadius: 3, marginRight: 2, fontSize: 10, textAlign: 'center',
+                            background: selectedBatchTags?.includes(name) ? '#fb7299' : '#30363d',
+                            color: '#fff', verticalAlign: 'middle',
+                          }}>
+                            {selectedBatchTags?.includes(name) ? '✓' : ''}
+                          </span>
+                        )}
+                        {name}
+                        {count > 0 && <span style={{ fontSize: 10, opacity: 0.5, marginLeft: 2 }}>{count}</span>}
+                      </span>
+                    )}
+                    {/* 操作按钮（仅在编辑模式下显示） */}
+                    {tagEditMode && (
+                      <span style={{ display: 'flex', gap: 1, marginLeft: 2 }}>
+                        <Button
+                          size="small" type="text"
+                          icon={<EditOutlined style={{ fontSize: 10 }} />}
+                          onClick={(e) => { e.stopPropagation(); startRename(name); }}
+                          style={{ width: 18, height: 18, minWidth: 18, padding: 0, color: '#484f58' }}
+                          title="重命名"
+                        />
+                        <Popconfirm
+                          title="全局删除"
+                          description={`从全部番剧中删除「${name}」？`}
+                          onConfirm={(e) => { e?.stopPropagation(); confirmDelete(name); }}
+                          onCancel={(e) => e?.stopPropagation()}
+                          okText="删除" cancelText="取消"
+                          placement="bottom"
+                        >
+                          <Button
+                            size="small" type="text" danger
+                            icon={<CloseOutlined style={{ fontSize: 10 }} />}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ width: 18, height: 18, minWidth: 18, padding: 0 }}
+                            title="删除"
+                          />
+                        </Popconfirm>
+                      </span>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+            {/* 新增预设标签（仅在编辑模式下显示） */}
+            {tagEditMode && (
+            <div style={{ display: 'flex', gap: 4 }}>
+              <Input
+                size="small"
+                placeholder="新增标签…"
+                value={newTagName}
+                onChange={(e) => setNewTagName(e.target.value)}
+                onPressEnter={addTagPreset}
+                style={{
+                  flex: 1, height: 26, fontSize: 12,
+                  background: '#0d1117', borderColor: '#30363d', color: '#e6edf3',
+                }}
+              />
+              <Button size="small" type="primary" icon={<PlusOutlined />}
+                onClick={addTagPreset} style={{ height: 26 }} />
+            </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ── 知识图谱 ── */}
+      <div className="sidebar-section">
+        <div
+          className="section-title"
+          onClick={() => setShowGraph(!showGraph)}
+          style={{ cursor: 'pointer', userSelect: 'none' }}
+        >
+          {showGraph ? '▼' : '▶'} 🔗 知识图谱
+        </div>
+        {showGraph && (
+          <div style={{ padding: '4px 0' }}>
+            <div
+              onClick={onOpenKnowledgeGraph}
+              style={{
+                height: 160,
+                background: '#161b22',
+                borderRadius: 8,
+                border: '1px solid #30363d',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                transition: 'border-color 0.2s, background 0.2s',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = '#fb7299';
+                e.currentTarget.style.background = '#1c2128';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = '#30363d';
+                e.currentTarget.style.background = '#161b22';
+              }}
+            >
+              <div style={{ fontSize: 28, marginBottom: 4, opacity: 0.6 }}>🕸️</div>
+              <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 2 }}>
+                番剧关系网络
+              </div>
+              <div
+                style={{
+                  fontSize: 10,
+                  color: '#fb7299',
+                  background: 'rgba(251,114,153,0.1)',
+                  padding: '2px 10px',
+                  borderRadius: 10,
+                  border: '1px solid rgba(251,114,153,0.2)',
+                }}
+              >
+                全屏查看
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── AI 分析 ── */}
+      {(onOpenAISettings || onOpenTasteReport) && (
+        <div className="sidebar-section">
+          <div
+            className="section-title"
+            onClick={() => setShowAI(!showAI)}
+            style={{ cursor: 'pointer', userSelect: 'none' }}
+          >
+            {showAI ? '▼' : '▶'} 🤖 AI 分析
+          </div>
+          {showAI && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {onOpenTasteReport && (
+                <div
+                  className="settings-item"
+                  onClick={onOpenTasteReport}
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(251,114,153,0.1), rgba(251,114,153,0.02))',
+                    border: '1px solid rgba(251,114,153,0.15)',
+                    borderRadius: 8,
+                    padding: '10px 14px',
+                  }}
+                >
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#fb7299' }}>
+                    📊 品味分析
+                  </span>
+                  <span style={{ fontSize: 10, color: '#484f58', marginLeft: 'auto' }}>
+                    ~¥0.002
+                  </span>
+                </div>
+              )}
+              <div
+                className="settings-item"
+                onClick={onOpenAISettings}
+              >
+                <span style={{ fontSize: 12, color: '#8b949e' }}>⚙️ AI 设置</span>
+              </div>
+              <div style={{ fontSize: 10, color: '#484f58', padding: '2px 0' }}>
+                基于评分数据生成品味报告和偏好画像。需要配置 API Key。
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── 设置 ── */}
+      <div className="sidebar-section">
+        <div className="section-title">⚙️ 设置</div>
+        <div className="settings-list">
+          <div className="settings-item" onClick={onImportExcel}>
+            <span>📤 导入 Excel</span>
+          </div>
+          <div className="settings-item" onClick={onExportExcel}>
+            <span>📥 导出 Excel</span>
+          </div>
+          {onOpenExcel && (
+            <div className="settings-item" onClick={onOpenExcel}>
+              <span>📋 查看 Excel</span>
+            </div>
+          )}
+          {onExportUserData && (
+            <div className="settings-item" onClick={onExportUserData}>
+              <span>💾 导出用户数据</span>
+            </div>
+          )}
+          {onImportUserData && (
+            <div
+              className="settings-item"
+              onClick={() => {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = '.zip';
+                input.onchange = (e) => {
+                  const file = (e.target as HTMLInputElement).files?.[0];
+                  if (file) onImportUserData(file);
+                };
+                input.click();
+              }}
+            >
+              <span>📂 导入用户数据</span>
+            </div>
+          )}
+          {onFixSearchAlias && (
+            <div className="settings-item" onClick={onFixSearchAlias}>
+              <span>🔄 修正检索名</span>
+            </div>
+          )}
+          {onOpenDimensionManager && (
+            <div className="settings-item" onClick={onOpenDimensionManager}>
+              <span>📐 维度管理</span>
+            </div>
+          )}
+          {onImgHeightChange && (
+            <div style={{ padding: '6px 10px' }}>
+              <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 2 }}>
+                🖼️ 图片高度: {imgHeight}px
+              </div>
+              <Slider
+                min={200} max={800} step={20}
+                value={imgHeight}
+                onChange={(v) => onImgHeightChange(v)}
+                styles={{ track: { background: '#fb7299' }, rail: { background: '#30363d' } }}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Sidebar;
