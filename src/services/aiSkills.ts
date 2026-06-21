@@ -610,7 +610,7 @@ ${dimCompare}
 }
 
 // ════════════════════════════════════════════════════════════════════
-// 推荐候选池工具
+// 推荐引擎 — 外部数据源发现模式
 // ════════════════════════════════════════════════════════════════════
 
 /** 8 维评分向量（排除 overall） */
@@ -641,149 +641,899 @@ function jaccard(a: string[], b: string[]): number {
   return union === 0 ? 0 : intersection / union;
 }
 
-export interface Candidate {
-  anime: AnimeEntry;
-  score: number;
-  reason: string;
-}
-
-/**
- * 构建推荐候选池
- * 1. 余弦相似度 top-15（基于 8 维评分向量）
- * 2. 图谱路径推荐（同公司 + 共享标签 >= 2）
- * 3. 排除已看/在看/抛弃/弃番
- */
-export function buildCandidatePool(
-  allAnime: AnimeEntry[],
-  profile?: PreferenceProfile | null,
-): Candidate[] {
-  const exclude = new Set(['watched', 'watching', 'dropped', 'onHold']);
-  const candidates = allAnime.filter((a) => !exclude.has(a.category));
-  if (candidates.length === 0) return [];
-
-  const scored = allAnime.filter((a) =>
-    a.scores.some((s) => s.score > 0),
-  );
-  // 以所有有评分的番作为参考
-  const refVectors = scored.map((a) => ({
-    anime: a,
-    vector: buildScoreVector(a),
-  }));
-
-  const candidateSet = new Map<string, Candidate>();
-
-  // 1. 余弦相似度（对每个候选，取与所有参考番的最大相似度）
-  for (const c of candidates) {
-    const cv = buildScoreVector(c);
-    let maxSim = 0;
-    for (const ref of refVectors) {
-      const sim = cosineSimilarity(cv, ref.vector);
-      if (sim > maxSim) maxSim = sim;
-    }
-    if (maxSim > 0.3) {
-      candidateSet.set(c.id, {
-        anime: c,
-        score: maxSim,
-        reason: `评分向量余弦相似度 ${(maxSim * 100).toFixed(0)}%`,
-      });
-    }
-  }
-
-  // 2. 图谱路径（同公司 + 共享标签）
-  for (const c of candidates) {
-    const existing = candidateSet.get(c.id);
-    for (const ref of refVectors) {
-      let graphScore = 0;
-      const reasons: string[] = [];
-      if (c.studio && ref.anime.studio === c.studio) {
-        graphScore += 0.3;
-        reasons.push(`同公司: ${c.studio}`);
-      }
-      const sharedTags = c.tags
-        .filter((t) => ref.anime.tags.some((rt) => rt.name === t.name));
-      if (sharedTags.length >= 2) {
-        graphScore += 0.15 * sharedTags.length;
-        reasons.push(`共享标签: ${sharedTags.map((t) => t.name).join(', ')}`);
-      }
-      if (graphScore > 0 && (!existing || graphScore > existing.score)) {
-        candidateSet.set(c.id, {
-          anime: c,
-          score: Math.min(graphScore, 0.95),
-          reason: reasons.join('; '),
-        });
-      }
-    }
-  }
-
-  // 排序取 top-20
-  return [...candidateSet.values()]
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 20);
+/** AniList 搜索结果条目 */
+interface DiscoverItem {
+  id: number;
+  name: string;
+  name_cn: string;
+  summary: string;
+  images: { large?: string; common?: string; medium?: string; small?: string };
+  rating: { score?: number; total?: number };
+  air_date: string;
+  eps: number;
+  genres?: string[];
+  tags?: string[];
+  matchedTag: string;
 }
 
 // ════════════════════════════════════════════════════════════════════
-// Skill 3: 智能推荐
+// Skill 3: 智能推荐（外部发现）
 // ════════════════════════════════════════════════════════════════════
 
 export interface Recommendation {
   title: string;
+  /** 非剧透推荐理由 */
   reason: string;
+  /** 简介（非剧透） */
+  intro: string;
+  /** Bangumi 评分 */
+  bgmScore?: number;
+  /** 封面图 URL */
+  posterUrl?: string;
+  /** 上映年份 */
+  airDate?: string;
+  /** 匹配的偏好标签 */
+  matchedTags: string[];
   confidence: number;
 }
 
 export interface RecommendResult {
   recommendations: Recommendation[];
+  /** 外部发现总数 */
+  candidateCount: number;
+  /** 搜索用的标签 */
+  searchedTags: string[];
+  /** 数据来源 */
+  sourceLabel?: string;
 }
 
+/**
+ * 从 Bangumi 按偏好标签发现番剧
+ * @param animeList 用户已有番剧（用于排除）
+ * @param profile 偏好画像（可选）
+ * @param onProgress 进度回调
+ */
 export async function smartRecommend(
-  allAnime: AnimeEntry[],
+  animeList: AnimeEntry[],
   profile?: PreferenceProfile | null,
+  onProgress?: (phase: string) => void,
 ): Promise<RecommendResult> {
-  const candidates = buildCandidatePool(allAnime, profile);
-  if (candidates.length < 3) {
-    return {
-      recommendations: candidates.map((c) => ({
-        title: c.anime.title,
-        reason: c.reason,
-        confidence: c.score,
-      })),
-    };
+  // 1. 提取搜索标签：高偏差番标签 + 评价关键词 → LLM 提炼为搜索词
+  const devData = buildDeviationData(animeList);
+
+  // 从高偏差番提取标签（这是实际标签名，如"科幻""战争"）
+  const hiTagNames = devData.topHiTags.map(([name]) => name);
+  // 从评价提取关键词（如"泽野弘之""A-1"）
+  const kwNames = devData.keywords;
+
+  // 合并去重，过滤太泛的词
+  const genericWords = new Set([
+    '制作', '剧情', '画风', '音乐', '角色', '声优', '动画', '番剧',
+    '作品', '动漫', '设定', '节奏', '演出', '氛围', '很好', '非常',
+    '不错', '感觉', '觉得', '比较', '特别', '真的',
+  ]);
+  const rawTags = [...new Set([...hiTagNames, ...kwNames])]
+    .filter((t) => !genericWords.has(t) && t.length >= 2);
+
+  // 如果有偏好画像，用 LLM 从画像中提炼 3-5 个搜索关键词
+  let llmSearchKeywords: string[] = [];
+  if (profile && rawTags.length >= 3) {
+    try {
+      const kwSystemPrompt = `你是一个搜索关键词提取器。根据用户偏好画像和已知标签，输出最适合用来在动漫数据库中搜索新番的3-5个关键词。必须是具体的题材/风格/类型词（如：科幻、机甲、催泪、悬疑、日常），不要输出完整的句子。
+
+必须只输出JSON：{"keywords":["关键词1","关键词2",...]}`;
+
+      const kwUserPrompt = `用户偏好: ${profile.preferenceProfile}
+喜欢: ${profile.likes.map((l) => l.aspect).join('; ')}
+已知标签: ${rawTags.slice(0, 10).join('、')}
+
+请输出搜索关键词。`;
+
+      const kwRaw = await chat(kwSystemPrompt, kwUserPrompt, {
+        maxTokens: 200,
+        temperature: 0.2,
+      });
+      const kwParsed = JSON.parse(extractJSON(kwRaw)) as { keywords: string[] };
+      llmSearchKeywords = (kwParsed.keywords || []).filter(
+        (k: string) => k.length >= 2 && k.length <= 6,
+      );
+    } catch {
+      // 提炼失败，降级使用原始标签
+    }
   }
 
-  // 候选列表
-  const candidateLines = candidates
-    .map((c) => {
-      const dims = DEFAULT_DIMENSIONS
-        .filter((d) => d.key !== 'overall')
-        .map((d) => `${d.label}${getScore(c.anime, d.key).toFixed(1)}`)
-        .join(' ');
-      const tags = c.anime.tags.map((t) => t.name).join('/');
-      return `- ${c.anime.title} | ${dims} | 标签: ${tags} | 匹配: ${c.reason}`;
+  // 最终搜索标签：LLM 提炼关键词优先，原始标签补充
+  const searchTags = [
+    ...new Set([...llmSearchKeywords, ...rawTags]),
+  ].slice(0, 8);
+
+  if (searchTags.length === 0) {
+    // 兜底：用高偏差番的标签
+    searchTags.push(...hiTagNames.slice(0, 5));
+  }
+
+  // 2. 三层降级发现：AniList → Bangumi v0 标签浏览 → Bangumi 搜索
+  onProgress?.('正在搜索匹配番剧…');
+
+  // 取已有番剧标题（优先高分番剧，取前 30 部）
+  const excludeTitles = animeList
+    .filter((a) => a.scores.some((s) => s.score > 0))
+    .sort((a, b) => {
+      const sa = getScore(a, 'overall') || calcOverall(a);
+      const sb = getScore(b, 'overall') || calcOverall(b);
+      return sb - sa;
     })
-    .join('\n');
+    .map((a) => a.title)
+    .slice(0, 30);
 
-  const profileText = profile
-    ? `偏好: ${profile.preferenceProfile}\n喜欢: ${profile.likes.map((l) => l.aspect).join('、')}\n雷区: ${profile.dislikes.map((d) => d.aspect).join('、')}`
-    : '（未生成偏好画像，基于评分相似度推荐）';
+  let discoverResults: DiscoverItem[] = [];
+  let sourceLabel = '';
 
-  const systemPrompt = `你是番剧推荐专家。从候选列表中选3-5部最适合用户的番。
+  // Tier 1: AniList GraphQL（海外可直连，搜索最精准）
+  try {
+    console.log('[推荐] 尝试 AniList 发现…');
+    const resp = await fetch('/api/anilist/discover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tags: searchTags, excludeTitles }),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      discoverResults = data.results || [];
+      sourceLabel = 'AniList';
+      console.log(`[推荐] AniList 返回 ${discoverResults.length} 部`);
+    } else {
+      console.log(`[推荐] AniList 端点返回 ${resp.status}`);
+    }
+  } catch (e) {
+    console.log('[推荐] AniList 不可用:', e instanceof Error ? e.message : e);
+  }
 
-必须只输出JSON，无前缀后缀：
-{"recommendations":[{"title":"番剧名","reason":"推荐理由","confidence":0.9}]}
+  // Tier 2: Bangumi v0 标签浏览（/v0/subjects?tag=xxx）
+  if (discoverResults.length === 0) {
+    onProgress?.('AniList 不可用，切换到 Bangumi 标签浏览…');
+    try {
+      console.log('[推荐] 尝试 Bangumi v0 标签浏览…');
+      const resp = await fetch('/api/bangumi/browse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags: searchTags }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        discoverResults = data.results || [];
+        sourceLabel = 'Bangumi';
+        console.log(`[推荐] Bangumi v0 返回 ${discoverResults.length} 部`);
+      } else {
+        console.log(`[推荐] Bangumi v0 端点返回 ${resp.status}`);
+      }
+    } catch (e) {
+      console.log('[推荐] Bangumi v0 不可用:', e instanceof Error ? e.message : e);
+    }
+  }
 
-confidence=推荐把握度(0-1)，reason结合用户偏好说明为什么匹配。用中文。`;
+  // Tier 3: Bangumi 标题搜索（搜标签关键词 → 能用的最后一招）
+  if (discoverResults.length === 0) {
+    onProgress?.('尝试 Bangumi 搜索…');
+    try {
+      console.log('[推荐] 尝试 Bangumi 搜索降级…');
+      const resp = await fetch('/api/bangumi/discover', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags: searchTags }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        discoverResults = data.results || [];
+        sourceLabel = 'Bangumi搜索';
+        console.log(`[推荐] Bangumi 搜索返回 ${discoverResults.length} 部`);
+      }
+    } catch (e) {
+      console.log('[推荐] Bangumi 搜索不可用:', e instanceof Error ? e.message : e);
+    }
+  }
 
-  const userPrompt = `用户偏好画像：
+  // Tier 4: LLM 直接推荐（利用 LLM 训练数据中的番剧知识）
+  if (discoverResults.length === 0) {
+    onProgress?.('AI 正在直接从知识库推荐…');
+    console.log('[推荐] Tier 4: LLM 直接推荐模式启动');
+
+    const profileText = profile
+      ? `偏好画像: ${profile.preferenceProfile}\n喜欢: ${profile.likes.map((l) => l.aspect).join('; ')}\n雷区: ${profile.dislikes.map((d) => d.aspect).join('; ')}`
+      : `高偏差番: ${devData.topPos.slice(0, 5).map((d) => d.anime.title).join('、')}\n标签: ${searchTags.join('、')}`;
+
+    const knownTitles = animeList.map((a) => a.title).join('、');
+
+    const directSystemPrompt = `你是番剧推荐大师。根据用户偏好推荐他没看过的番剧。
+
+必须只输出 JSON，无任何前缀后缀：
+{"recommendations":[{"title":"番剧名（中文通用译名）","year":"年份","reason":"为什么适合（结合偏好）","intro":"100字风格介绍（不剧透）","confidence":0.9}]}
+
+选3-5部。title 用中文通用译名。超冷门番也可以。`;
+
+    const directUserPrompt = `=== 用户品味 ===
 ${profileText}
 
-候选列表（共${candidates.length}部）：
-${candidateLines}
+=== 用户已看过（不要推荐这些）===
+${knownTitles.slice(0, 1000)}
 
 请推荐。`;
 
+    try {
+      console.log('[推荐] 调用 LLM 直接推荐…');
+      const directRaw = await chat(directSystemPrompt, directUserPrompt, {
+        maxTokens: 1500,
+        temperature: 0.6,
+      });
+      console.log('[推荐] LLM 返回长度:', directRaw.length);
+
+      const parsed = JSON.parse(extractJSON(directRaw)) as {
+        recommendations: { title: string; year?: string; reason: string; intro: string; confidence: number }[];
+      };
+      console.log('[推荐] 解析到', parsed.recommendations?.length, '条推荐');
+
+      if (parsed.recommendations?.length > 0) {
+        discoverResults = parsed.recommendations.map((rec) => ({
+          id: -(Math.random() * 10000) | 0,
+          name: rec.title,
+          name_cn: rec.title,
+          summary: rec.intro || '',
+          images: {},
+          rating: { score: 0 },
+          air_date: rec.year || '',
+          eps: 0,
+          matchedTag: 'AI推荐',
+        }));
+        sourceLabel = 'AI直接推荐';
+        console.log('[推荐] LLM 直接推荐成功:', discoverResults.length, '部');
+      } else {
+        console.log('[推荐] LLM 返回空推荐列表');
+      }
+    } catch (e) {
+      console.error('[推荐] LLM 直接推荐失败:', e instanceof Error ? e.message : e);
+    }
+  }
+
+  // 3. 排除用户已有番剧（AI 直接推荐时跳过——LLM 已在 prompt 中知晓已看列表）
+  const isDirectLLM = sourceLabel === 'AI直接推荐';
+  const norm = (s: string) => (s || '').replace(/[\s\-_:：・().,，、　]+/g, '').toLowerCase();
+
+  const externalCandidates = isDirectLLM
+    ? discoverResults
+    : (() => {
+        const existingTitles = new Set(
+          animeList.map((a) => [norm(a.title), norm(a.titleJa || ''), norm(a.searchAlias || '')]).flat(),
+        );
+        return discoverResults.filter((item) => {
+          const cn = norm(item.name_cn || '');
+          const en = norm((item as DiscoverItem & { name_en?: string }).name_en || '');
+          const jp = norm(item.name || '');
+          return (
+            !existingTitles.has(cn) &&
+            !existingTitles.has(en) &&
+            !existingTitles.has(jp) &&
+            cn.length >= 2
+          );
+        });
+      })();
+
+  if (externalCandidates.length < 3) {
+    return {
+      recommendations: externalCandidates.map((item) => ({
+        title: item.name_cn || item.name,
+        reason: `匹配标签「${item.matchedTag}」`,
+        intro: item.summary?.slice(0, 120) || '暂无简介',
+        bgmScore: item.rating?.score,
+        posterUrl: item.images?.large || item.images?.common,
+        airDate: item.air_date,
+        matchedTags: [item.matchedTag],
+        confidence: 0.5,
+      })),
+      candidateCount: externalCandidates.length,
+      searchedTags: searchTags,
+    };
+  }
+
+  // 4. 组装候选列表 → LLM 精选
+  onProgress?.('AI 正在筛选最佳推荐…');
+
+  const candidateLines = externalCandidates
+    .map((item) => {
+      const title = item.name_cn || item.name;
+      const score = item.rating?.score ? `评分${item.rating.score}` : '';
+      const date = item.air_date ? `(${item.air_date})` : '';
+      const genres = item.genres?.length
+        ? `类型: ${item.genres.slice(0, 5).join('/')}`
+        : '';
+      const summary = (item.summary || '').replace(/<[^>]+>/g, '').slice(0, 200);
+      return `- ${title} ${date} ${score} ${genres} | 搜索: ${item.matchedTag}\n  简介: ${summary}`;
+    })
+    .join('\n\n');
+
+  const profileText = profile
+    ? `偏好画像: ${profile.preferenceProfile}\n喜欢: ${profile.likes.map((l) => l.aspect).join('、')}\n雷区: ${profile.dislikes.map((d) => d.aspect).join('、')}`
+    : `高偏差番高频标签: ${hiTagNames.join('、')}\n用户评价关键词: ${kwNames.join('、')}`;
+
+  const systemPrompt = `你是一个番剧推荐师。根据用户的品味偏好，从 Bangumi 发现的候选番剧中精选推荐。
+
+核心原则：
+- 绝不剧透剧情走向、关键转折或结局
+- 简介只描述番剧的类型、风格、氛围和看点，不提及具体情节
+- 推荐理由要结合用户偏好，说清楚"为什么这部适合你"
+
+必须只输出一个 JSON 对象：
+{"recommendations":[{"title":"番剧名","reason":"为什么适合你（结合偏好，不剧透）","intro":"100字以内的风格介绍（不剧透）","confidence":0.9}]}
+
+选3-5部，confidence 0-1。用中文。`;
+
+  const userPrompt = `=== 用户品味特征 ===
+${profileText}
+
+搜索标签: ${searchTags.join('、')}
+
+=== Bangumi 候选番剧（共${externalCandidates.length}部）===
+${candidateLines}
+
+请精选推荐。`;
+
+  onProgress?.('AI 正在生成推荐理由…');
+
   const raw = await chat(systemPrompt, userPrompt, {
-    maxTokens: 600,
+    maxTokens: 1500,
+    temperature: 0.4,
+  });
+
+  const llmResult = JSON.parse(extractJSON(raw)) as {
+    recommendations: { title: string; reason: string; intro: string; confidence: number }[];
+  };
+
+  // 5. 合并 LLM 推荐与 AniList 元数据（封面、评分、类型、年份）
+  const merged: Recommendation[] = llmResult.recommendations.map((rec) => {
+    const normTitle = norm(rec.title);
+    const match = externalCandidates.find(
+      (item) =>
+        norm(item.name_cn || '').includes(normTitle) ||
+        norm(item.name || '').includes(normTitle) ||
+        normTitle.includes(norm(item.name_cn || '')) ||
+        normTitle.includes(norm(item.name || '')),
+    );
+    // 收集匹配标签：搜索命中标签 + AniList genres + 前几个 AniList tags
+    const matchedTags = [
+      ...new Set([
+        ...(match?.matchedTag ? [match.matchedTag] : []),
+        ...(match?.genres?.slice(0, 3) || []),
+        ...(match?.tags?.slice(0, 3) || []),
+      ]),
+    ];
+    return {
+      title: rec.title,
+      reason: rec.reason,
+      intro: rec.intro || match?.summary?.replace(/<[^>]+>/g, '').slice(0, 120) || '',
+      bgmScore: match?.rating?.score,
+      posterUrl: match?.images?.large || match?.images?.common || '',
+      airDate: match?.air_date || '',
+      matchedTags,
+      confidence: rec.confidence,
+    };
+  });
+
+  return {
+    recommendations: merged,
+    candidateCount: externalCandidates.length,
+    searchedTags: searchTags,
+    sourceLabel,
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Skill 4: 单部分析
+// ════════════════════════════════════════════════════════════════════
+
+export interface SingleAnimeAnalysisResult {
+  coreAppeal: { aspect: string; evidence: string; confidence: number }[];
+  vibePattern: string;
+  communityGap: string;
+  similarAnime: { title: string; why: string }[];
+}
+
+/**
+ * 对单部番剧做深度分析——为什么电波高/低，口味偏差的原因
+ * @param anime 目标番剧
+ * @param allAnime 全部番剧列表（用于百分位和相似度计算）
+ */
+export async function singleAnimeAnalysis(
+  anime: AnimeEntry,
+  allAnime: AnimeEntry[],
+): Promise<SingleAnimeAnalysisResult> {
+  const stats = buildPercentileMap(allAnime);
+  const pcts = getPercentileScores(anime, stats);
+
+  // 维度分数 + 百分位
+  const dimLines = DEFAULT_DIMENSIONS
+    .filter((d) => d.key !== 'overall')
+    .map((d) => {
+      const s = getScore(anime, d.key);
+      const p = pcts.find((pct) => pct.dimensionKey === d.key);
+      const pct = p ? `${p.percentile}%` : '-';
+      return `  ${d.label}: ${s.toFixed(d.key === 'vibe' ? 2 : 1)}（百分位${pct}）`;
+    })
+    .join('\n');
+
+  const overall = getScore(anime, 'overall') || calcOverall(anime);
+  const vibe = getScore(anime, 'vibe');
+  const deviation = calcTasteDeviation(anime);
+  const devText = deviation !== null
+    ? (deviation > 0
+        ? `+${deviation.toFixed(2)}（你远比社区更喜欢这部番）`
+        : `${deviation.toFixed(2)}（社区评分高于你的个人感受）`)
+    : '无 BGM 数据，无法计算偏差';
+
+  const bgm = anime.bangumiScore ? `BGM ${anime.bangumiScore}` : '无';
+
+  // 余弦相似度 top-3
+  const targetVec = buildScoreVector(anime);
+  const sims = allAnime
+    .filter((a) => a.id !== anime.id && a.scores.some((s) => s.score > 0))
+    .map((a) => ({ anime: a, sim: cosineSimilarity(targetVec, buildScoreVector(a)) }))
+    .sort((a, b) => b.sim - a.sim)
+    .slice(0, 3);
+
+  const simLines = sims
+    .map((x) => `  ${x.anime.title}（余弦${(x.sim * 100).toFixed(0)}%）`)
+    .join('\n');
+
+  const review = anime.review || '（无评价）';
+  const tags = anime.tags.map((t) => t.name).join('、');
+
+  const systemPrompt = `你是一个番剧分析专家。根据用户的评分数据，分析一部番剧为什么对用户有特别的意义（或为什么不来电）。
+
+必须只输出一个 JSON 对象，不要有任何前缀或后缀：
+{"coreAppeal":[{"aspect":"打动用户的方面","evidence":"数据证据","confidence":0.9}],"vibePattern":"与其他高电波番共性的总结，或为什么电波低的模式","communityGap":"用户和社区口味差距的原因分析","similarAnime":[{"title":"相似的番剧名","why":"为什么相似"}]}
+
+coreAppeal 写2-4个方面，communityGap 如果无 BGM 数据写"无社区对比数据"。用中文。`;
+
+  const userPrompt = `番剧：${anime.title}
+维度分数：${fmtDims(anime)}
+百分位排名：${dimLines}
+口味偏差值：${devText}
+${bgm}
+标签：${tags || '无'}
+
+用户评价：
+"${review.slice(0, 500)}"
+
+相似番剧（余弦相似度 top-3）：
+${simLines || '无足够数据'}
+
+请分析并输出 JSON。`;
+
+  const raw = await chat(systemPrompt, userPrompt, {
+    maxTokens: 800,
+    temperature: 0.4,
+  });
+
+  return JSON.parse(extractJSON(raw)) as SingleAnimeAnalysisResult;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Skill 5: 图谱优化
+// ════════════════════════════════════════════════════════════════════
+
+export interface GraphOptimizationResult {
+  merges: { from: string; to: string; reason: string }[];
+  newTags: { anime: string; tag: string; reason: string }[];
+  issues: string[];
+}
+
+/**
+ * 分析标签体系，建议合并/新增标签
+ */
+export async function graphOptimize(
+  animeList: AnimeEntry[],
+): Promise<GraphOptimizationResult> {
+  // 1. 标签使用统计
+  const tagAnimeMap: Record<string, AnimeEntry[]> = {};
+  for (const a of animeList) {
+    for (const t of a.tags) {
+      if (!tagAnimeMap[t.name]) tagAnimeMap[t.name] = [];
+      tagAnimeMap[t.name].push(a);
+    }
+  }
+
+  // 2. 找到 Jaccard 高但名称不同的标签对
+  const tagNames = Object.keys(tagAnimeMap).filter(
+    (name) => tagAnimeMap[name].length >= 2,
+  );
+  const redundantPairs: { from: string; to: string; jaccard: number }[] = [];
+  for (let i = 0; i < tagNames.length; i++) {
+    for (let j = i + 1; j < tagNames.length; j++) {
+      const idsA = new Set(tagAnimeMap[tagNames[i]].map((a) => a.id));
+      const idsB = new Set(tagAnimeMap[tagNames[j]].map((a) => a.id));
+      const jac = jaccard([...idsA], [...idsB]);
+      if (jac >= 0.4 && tagNames[i] !== tagNames[j]) {
+        const aLen = idsA.size;
+        const bLen = idsB.size;
+        // 建议合并方向：更多番剧的标签为主
+        redundantPairs.push({
+          from: aLen >= bLen ? tagNames[j] : tagNames[i],
+          to: aLen >= bLen ? tagNames[i] : tagNames[j],
+          jaccard: jac,
+        });
+      }
+    }
+  }
+  // 去重并取 top-10
+  const seenPairs = new Set<string>();
+  const topPairs = redundantPairs
+    .filter((p) => {
+      const key = [p.from, p.to].sort().join('|');
+      if (seenPairs.has(key)) return false;
+      seenPairs.add(key);
+      return true;
+    })
+    .sort((a, b) => b.jaccard - a.jaccard)
+    .slice(0, 10);
+
+  // 3. 单次使用的稀有标签
+  const rareTags = tagNames.filter(
+    (name) => tagAnimeMap[name].length === 1,
+  ).slice(0, 10);
+
+  // 4. 无标签但评分完整的番剧
+  const untaggedScored = animeList
+    .filter(
+      (a) =>
+        a.tags.length === 0 &&
+        a.scores.some((s) => s.score > 0) &&
+        DEFAULT_DIMENSIONS.filter((d) => d.key !== 'overall').every(
+          (d) => getScore(a, d.key) > 0,
+        ),
+    )
+    .slice(0, 10);
+
+  // 5. 组装 Prompt
+  const pairLines = topPairs
+    .map(
+      (p) =>
+        `  "${p.from}"(${tagAnimeMap[p.from]?.length || 0}部) ↔ "${p.to}"(${tagAnimeMap[p.to]?.length || 0}部) — Jaccard ${(p.jaccard * 100).toFixed(0)}%`,
+    )
+    .join('\n');
+
+  const rareLines = rareTags
+    .map((name) => `  ${name}（${tagAnimeMap[name]?.length || 0}部）`)
+    .join('\n');
+
+  const untaggedLines = untaggedScored
+    .map((a) => {
+      const dims = DEFAULT_DIMENSIONS
+        .filter((d) => d.key !== 'overall')
+        .map((d) => `${d.label}${getScore(a, d.key).toFixed(1)}`)
+        .join(' ');
+      return `  ${a.title} | ${dims} | 现有标签：无`;
+    })
+    .join('\n');
+
+  const systemPrompt = `你是一个标签体系优化专家。分析动漫标签数据，发现可合并的冗余标签和应添加的标签。
+
+必须只输出一个 JSON 对象，不要有任何前缀或后缀：
+{"merges":[{"from":"标签名","to":"目标标签","reason":"合并理由"}],"newTags":[{"anime":"番剧名","tag":"建议标签","reason":"理由"}],"issues":["其他发现的问题"]}
+
+merges 建议2-5个合并，newTags 建议2-5个新增标签，issues 写1-3个体系问题。用中文。`;
+
+  const userPrompt = `标签总数：${tagNames.length} 个，番剧总数：${animeList.length} 部
+
+=== 疑似冗余标签对（Jaccard ≥ 0.4）===
+${pairLines || '无显著冗余对'}
+
+=== 低频使用标签（仅1部番剧使用）===
+${rareLines || '无'}
+
+=== 无标签但评分完整的番剧 ===
+${untaggedLines || '无'}
+
+请分析并输出 JSON。`;
+
+  const raw = await chat(systemPrompt, userPrompt, {
+    maxTokens: 1200,
     temperature: 0.3,
   });
-  return JSON.parse(extractJSON(raw)) as RecommendResult;
+
+  return JSON.parse(extractJSON(raw)) as GraphOptimizationResult;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Skill 6: 智能打 tag
+// ════════════════════════════════════════════════════════════════════
+
+export interface AutoTagResult {
+  suggestedTags: { name: string; reason: string }[];
+}
+
+/**
+ * 调用 Bangumi 获取番剧标签，让 LLM 筛选建议标签
+ */
+export async function autoTag(
+  anime: AnimeEntry,
+): Promise<AutoTagResult> {
+  // 1. 从 Bangumi 搜索该番剧的标签数据
+  let bangumiTags: string[] = [];
+  let bangumiSummary = '';
+  try {
+    const getResp = await fetch(
+      `/api/bangumi/search?keyword=${encodeURIComponent(anime.title)}`,
+    );
+    if (getResp.ok) {
+      const data = await getResp.json();
+      const list = data?.list || [];
+      if (list.length > 0) {
+        // 提取标签
+        const item = list[0];
+        bangumiSummary = item.summary || '';
+        const tags = item.tags || [];
+        bangumiTags = tags.map((t: { name: string }) => t.name);
+      }
+    }
+  } catch {
+    // Bangumi 不可用时降级
+  }
+
+  // 2. 提取番剧维度特征
+  const dims = DEFAULT_DIMENSIONS
+    .filter((d) => d.key !== 'overall')
+    .map((d) => `${d.label}${getScore(anime, d.key).toFixed(1)}`)
+    .join(' ');
+
+  const existingTags = anime.tags.map((t) => t.name);
+
+  const systemPrompt = `你是一个番剧标签专家。根据番剧信息和已有标签，建议最合适的补充标签。
+
+必须只输出一个 JSON 对象，不要有任何前缀或后缀：
+{"suggestedTags":[{"name":"标签名","reason":"建议理由"}]}
+
+建议3-5个标签，应为2-4个汉字或常见动漫分类术语，不应与已有标签重复。用中文。`;
+
+  const userPrompt = `番剧：${anime.title}
+制作公司：${anime.studio || '未知'}
+维度评分：${dims}
+已有标签：${existingTags.length > 0 ? existingTags.join('、') : '无'}
+Bangumi 社区标签：${bangumiTags.length > 0 ? bangumiTags.join('、') : '无数据'}
+Bangumi 简介：${bangumiSummary ? bangumiSummary.slice(0, 300) : '无'}
+
+请建议应补充的标签。`;
+
+  const raw = await chat(systemPrompt, userPrompt, {
+    maxTokens: 500,
+    temperature: 0.3,
+  });
+
+  return JSON.parse(extractJSON(raw)) as AutoTagResult;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Skill 2-extended: 偏好画像（深度模式）
+// ════════════════════════════════════════════════════════════════════
+
+/** 逐番分析结果（深度模式 Step 1） */
+interface AnimeReviewAnalysis {
+  title: string;
+  strengths: string[];
+  weaknesses: string[];
+}
+
+/**
+ * 深度模式 Step 1：逐番调 LLM 分析 Bangumi 社区评论
+ * @param reviewData /api/bangumi/reviews 返回的 { title: { reviews[] } }
+ * @param deviationData 口味偏差数据
+ * @param onProgress 进度回调 (current, total)
+ */
+async function deepStep1_PerAnime(
+  reviewData: Record<string, { reviews: string[] }>,
+  deviationData: DeviationData,
+  onProgress?: (current: number, total: number) => void,
+): Promise<AnimeReviewAnalysis[]> {
+  // 取有评论数据的番剧（正负偏差各取有数据的，最多 10 + 10 = 20 部）
+  const posTitles = deviationData.topPos
+    .map((d) => d.anime.title)
+    .filter((t) => reviewData[t]?.reviews?.length > 0)
+    .slice(0, 10);
+  const negTitles = deviationData.topNeg
+    .map((d) => d.anime.title)
+    .filter((t) => reviewData[t]?.reviews?.length > 0)
+    .slice(0, 10);
+  const allTitles = [...new Set([...posTitles, ...negTitles])];
+
+  if (allTitles.length === 0) return [];
+
+  const results: AnimeReviewAnalysis[] = [];
+  const total = allTitles.length;
+
+  const reviewSystemPrompt = `从以下 Bangumi 社区评论和标签数据中提取 3 个社区普遍认可的"优点"和 2 个社区普遍吐槽的"雷点"，用短语概括。
+
+必须只输出一个 JSON，无前缀后缀：
+{"strengths":["优点1","优点2","优点3"],"weaknesses":["雷点1","雷点2"]}
+
+用中文短语（2-6字），不要长句。`;
+
+  for (let i = 0; i < allTitles.length; i++) {
+    const title = allTitles[i];
+    const data = reviewData[title];
+    if (!data) continue;
+
+    const reviewsText = data.reviews.join('\n').slice(0, 2000);
+
+    try {
+      // 找到该番剧的偏差方向
+      const dev =
+        deviationData.topPos.find((d) => d.anime.title === title) ||
+        deviationData.topNeg.find((d) => d.anime.title === title);
+      const devLabel = dev
+        ? `口味偏差 ${dev.deviation > 0 ? '+' : ''}${dev.deviation.toFixed(2)}`
+        : '';
+
+      const userPrompt = `以下是「${title}」的 Bangumi 社区数据${devLabel ? `（用户${devLabel}）` : ''}：
+
+${reviewsText}
+
+请提取优点和雷点。`;
+
+      const raw = await chat(reviewSystemPrompt, userPrompt, {
+        maxTokens: 600,
+        temperature: 0.3,
+      });
+
+      const parsed = JSON.parse(extractJSON(raw)) as {
+        strengths: string[];
+        weaknesses: string[];
+      };
+      results.push({
+        title,
+        strengths: parsed.strengths || [],
+        weaknesses: parsed.weaknesses || [],
+      });
+    } catch {
+      // 单部失败不影响整体
+      results.push({ title, strengths: [], weaknesses: [] });
+    }
+
+    onProgress?.(i + 1, total);
+
+    // 请求间隔（避免 LLM 限流）
+    if (i < allTitles.length - 1) {
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+
+  return results;
+}
+
+/**
+ * 深度模式 Step 2：汇总所有番剧分析结果，提取共性
+ */
+async function deepStep2_Commonality(
+  perAnimeResults: AnimeReviewAnalysis[],
+  deviationData: DeviationData,
+): Promise<PreferenceProfile> {
+  // 组装正偏差番的优点 + 负偏差番的雷点
+  const posTitles = new Set(
+    deviationData.topPos.map((d) => d.anime.title),
+  );
+  const negTitles = new Set(
+    deviationData.topNeg.map((d) => d.anime.title),
+  );
+
+  const posResults = perAnimeResults.filter((r) => posTitles.has(r.title));
+  const negResults = perAnimeResults.filter((r) => negTitles.has(r.title));
+
+  const posStrengths = posResults.flatMap((r) =>
+    r.strengths.map((s) => `[${r.title}] ${s}`),
+  );
+  const negWeaknesses = negResults.flatMap((r) =>
+    r.weaknesses.map((w) => `[${r.title}] ${w}`),
+  );
+
+  // 偏差概况
+  const overallTrend =
+    deviationData.avgPosDev > 0.8
+      ? '用户总体比 BGM 社区评分更挑剔，对某些特定类型有强烈偏好'
+      : deviationData.avgNegDev < -0.8
+        ? '用户总体比 BGM 社区评分更宽容'
+        : '用户口味与社区基本一致';
+
+  const systemPrompt = `你是一个番剧品味分析师。根据多部番剧的优点/雷点分析结果，结合口味偏差值，提炼用户的整体偏好模型。
+
+必须只输出一个 JSON 对象：
+{"likes":[{"aspect":"偏好方面","confidence":0.9,"evidence":"数据证据"}],"dislikes":[{"aspect":"雷区","confidence":0.85,"evidence":"证据"}],"preferenceProfile":"一句话总结用户品味","tasteDeviation":"与社区口味的差异趋势描述"}
+
+likes 写3-5个偏好倾向，dislikes 写2-3个雷区。用中文。`;
+
+  const userPrompt = `=== 口味偏差概况 ===
+正偏差番 ${deviationData.posCount} 部（平均 +${deviationData.avgPosDev}），负偏差番 ${deviationData.negCount} 部（平均 ${deviationData.avgNegDev}）
+→ ${overallTrend}
+
+=== 正偏差番 — 社区认可的优点 ===
+${posStrengths.join('\n') || '无数据'}
+
+=== 负偏差番 — 社区吐槽的雷点 ===
+${negWeaknesses.join('\n') || '无数据'}
+
+=== 用户评价关键词 ===
+${deviationData.keywords.join('、') || '无'}
+
+请提炼偏好画像。`;
+
+  const raw = await chat(systemPrompt, userPrompt, {
+    maxTokens: 1500,
+    temperature: 0.4,
+  });
+
+  return JSON.parse(extractJSON(raw)) as PreferenceProfile;
+}
+
+/**
+ * 运行深度模式偏好画像（完整流程）
+ *
+ * 流程：
+ *   1. 调 /api/bangumi/reviews 采集社区数据
+ *   2. 逐番调 LLM 提取优点/雷点（deepStep1）
+ *   3. 汇总共性提取（deepStep2）
+ *
+ * @param animeList 番剧列表
+ * @param onPhase 阶段回调用于 UI 进度展示
+ * @param onProgress 逐番进度回调 (current, total)
+ */
+export async function preferenceProfileDeep(
+  animeList: AnimeEntry[],
+  onPhase?: (phase: 'collecting' | 'analyzing' | 'synthesizing') => void,
+  onProgress?: (current: number, total: number) => void,
+): Promise<PreferenceProfile> {
+  const d = buildDeviationData(animeList);
+
+  if (d.samples.length < 5) {
+    return {
+      likes: [],
+      dislikes: [],
+      preferenceProfile: '数据不足，需要至少 5 部有 BGM 评分 + 电波评分的番剧',
+      tasteDeviation: '',
+      hiddenGems: [],
+    };
+  }
+
+  // Phase 1: 采集 Bangumi 评论数据
+  onPhase?.('collecting');
+
+  const titles = [...new Set([...d.topPos, ...d.topNeg].map((x) => x.anime.title))];
+  let reviewData: Record<string, { reviews: string[] }> = {};
+
+  try {
+    const resp = await fetch('/api/bangumi/reviews', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ titles }),
+    });
+    if (resp.ok) {
+      const json = await resp.json();
+      reviewData = json.results || {};
+    }
+  } catch {
+    // 采集失败，降级为元数据模式
+    return await preferenceProfile(animeList, 'metadata');
+  }
+
+  // Phase 2: 逐番 LLM 分析
+  onPhase?.('analyzing');
+
+  const perAnimeResults = await deepStep1_PerAnime(
+    reviewData,
+    d,
+    onProgress,
+  );
+
+  if (perAnimeResults.length === 0) {
+    return await preferenceProfile(animeList, 'metadata');
+  }
+
+  // Phase 3: 共性提取
+  onPhase?.('synthesizing');
+
+  return await deepStep2_Commonality(perAnimeResults, d);
 }

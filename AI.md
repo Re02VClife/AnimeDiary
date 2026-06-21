@@ -1,6 +1,6 @@
 # AI 集成 — 架构设计
 
-> **状态**：一期已完成（2026-06-16）  
+> **状态**：二期、三期已完成（2026-06-16）  
 > **原则**：重计算留前端，LLM 只做它擅长的最后一公里。
 
 ---
@@ -579,26 +579,27 @@ tasteAnalysis(animeList)
 2. **`response_format: json_schema` 不被所有 provider 支持**：Ollama 和部分代理会返回 `This response_format type is unavailable now`。解决方案：在 system prompt 中直接写明期望的 JSON 格式，并加 `extractJSON()` 处理 markdown 代码块包裹。
 3. **LLM 重复循环**：中文长输出时模型容易陷入 token 重复。解决方案：`frequency_penalty: 0.5` + `presence_penalty: 0.3` + `temperature: 0.3` + `maxTokens` 控制在 800-1500。
 
-### 第二期（推荐 + 深度模式）🔄 部分完成
+### 第二期（推荐 + 深度模式）✅ 已完成
 
 | 任务 | 文件 | 状态 |
 |------|------|------|
 | `smartRecommend()` | `src/services/aiSkills.ts` | ✅ 已实现（余弦相似度 + 图谱路径候选池 → LLM 精选） |
 | 偏好画像缓存 | `src/services/aiCache.ts` | ✅ localStorage + 24h 过期，供推荐消费 |
 | 推荐面板 | `src/components/TasteReportModal.tsx` 第三个 Tab | ✅ 「🎁 智能推荐」Tab，金色排名卡片 |
-| Bangumi 评论采集 | `vite.config.ts` → `/api/bangumi/reviews` | ❌ 待实现 |
-| 深度模式偏好分析 | `src/services/aiSkills.ts` → 分两步 LLM 提取 | ❌ 待实现 |
-| `RecommendPanel.tsx` 独立组件 | — | ❌ 暂集成在 TasteReportModal 中，可后续抽出 |
+| Bangumi 评论采集 | `vite.config.ts` → `/api/bangumi/reviews` | ✅ POST 端点，搜索 subject + 拉取详情/标签，24h 缓存 |
+| 深度模式偏好分析 | `src/services/aiSkills.ts` → 分两步 LLM 提取 | ✅ `preferenceProfileDeep()` 三阶段：采集→逐番分析→共性提取 |
+| TasteReportModal 深度模式触发 | `src/components/TasteReportModal.tsx` | ✅ 自动检测 deepMode，进度条 + 阶段提示 |
+| `RecommendPanel.tsx` 独立组件 | — | ⏸️ 暂集成在 TasteReportModal 中，可后续抽出 |
 
-### 第三期（辅助 skill）
+### 第三期（辅助 skill）✅ 已完成
 
 | 任务 | 文件 | 状态 |
 |------|------|------|
-| `singleAnimeAnalysis()` | `src/services/aiSkills.ts` | ❌ 待实现 |
-| `graphOptimize()` | `src/services/aiSkills.ts` | ❌ 待实现 |
-| `autoTag()` | `src/services/aiSkills.ts` | ❌ 待实现 |
-| 图谱优化建议 UI | `KnowledgeGraphModal.tsx` | ❌ 待实现 |
-| 详情面板「🤖 深度分析」按钮 | `AnimeDetailModal.tsx` | ❌ 待实现 |
+| `singleAnimeAnalysis()` | `src/services/aiSkills.ts` | ✅ 维度百分位+余弦相似度+口味偏差 → LLM 分析 |
+| `graphOptimize()` | `src/services/aiSkills.ts` | ✅ Jaccard 冗余检测+稀有标签+缺失标签 → LLM 优化建议 |
+| `autoTag()` | `src/services/aiSkills.ts` | ✅ Bangumi 搜索社区标签 + 维度特征 → LLM 建议标签 |
+| 图谱优化建议 UI | `KnowledgeGraphModal.tsx` | ✅ 侧栏「🧠 图谱优化」按钮 + 合并/新增/建议结果展示 |
+| 详情面板「🤖 深度分析」按钮 | `AnimeDetailModal.tsx` | ✅ 编辑模式下维度评分区 + 智能打Tag 按钮 + 结果卡片 |
 
 ---
 
@@ -608,14 +609,14 @@ tasteAnalysis(animeList)
 |-------|------|-----------|-------------|--------|------|
 | 品味分析 | ✅ | ~800 | ¥0.002 | 本地统计 | < 5s |
 | 偏好画像 | ✅ | ~1500 | ¥0.003 | 口味偏差+电波极值 | < 5s |
-| 智能推荐 | ✅ | ~600 | ¥0.001 | 缓存画像 + 候选池 | < 5s |
-| 偏好画像（深度） | ❌ | ~5 万 | ¥0.10~0.20 | + Bangumi 评论 | 30~60s |
-| 单部分析 | ❌ | ~800 | ¥0.002 | 单番维度+评价 | < 5s |
-| 单部分析（深度） | ❌ | ~5000 | ¥0.01 | + Bangumi 评论 | 10~15s |
-| 图谱优化 | ❌ | ~2000 | ¥0.005 | 标签 Jaccard | < 5s |
-| 智能打 tag | ❌ | ~500 | ¥0.001 | 单部番数据 | < 3s |
+| 智能推荐 | ✅ | ~3000 | ¥0.006 | + Bangumi 发现 API | 5~15s |
+| 偏好画像（深度） | ✅ | ~5 万 | ¥0.10~0.20 | + Bangumi 评论 | 30~60s |
+| 单部分析 | ✅ | ~800 | ¥0.002 | 单番维度+评价 | < 5s |
+| 单部分析（深度） | ⏸️ | ~5000 | ¥0.01 | + Bangumi 评论 | 10~15s |
+| 图谱优化 | ✅ | ~2000 | ¥0.005 | 标签 Jaccard | < 5s |
+| 智能打 tag | ✅ | ~500 | ¥0.001 | 单部番数据 | < 3s |
 
-> 已实现的三个 skill 跑一轮（品味 + 画像 + 推荐）：约 ¥0.006，不到 1 分钱。
+> 已实现全部八个 skill。常规三连（品味 + 画像 + 推荐）：约 ¥0.006，不到 1 分钱。
 
 ---
 

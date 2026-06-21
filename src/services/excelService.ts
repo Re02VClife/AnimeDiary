@@ -27,6 +27,13 @@ function excelSerialToDate(serial: number): string {
   return date.toISOString().split('T')[0];
 }
 
+/** 将 ISO 日期字符串转为 Excel 序列号 */
+function dateToExcelSerial(dateStr: string): number {
+  if (!dateStr) return 0;
+  const d = new Date(dateStr);
+  return Math.round(d.getTime() / 86400000) + 25569;
+}
+
 /** 解析上映年月（"21/4" → "2021-04"） */
 function parseReleaseDate(raw: string): string {
   if (!raw) return '';
@@ -104,6 +111,8 @@ function mapRowToAnime(row: unknown[], rowIndex: number): AnimeEntry | null {
     episodes: undefined,
     studio: String(row[EXCEL_COL.STUDIO] || '').trim() || undefined,
     frameCount: parseNumber(row[EXCEL_COL.FRAME_COUNT]) || undefined,
+    aniListScore: parseNumber(row[EXCEL_COL.ANILIST_SCORE]) || undefined,
+    watchDate: excelSerialToDate(parseNumber(row[EXCEL_COL.WATCH_DATE])) || undefined,
     review: reviewText || undefined,
     notes: String(row[EXCEL_COL.NOTES] || '').trim() || undefined,
     createdAt: excelSerialToDate(parseNumber(row[EXCEL_COL.FIRST_WATCH])),
@@ -139,6 +148,39 @@ function mapAnimeToUpdates(entry: AnimeEntry): ExcelUpdate[] {
 
   if (entry.searchAlias !== undefined && entry.searchAlias !== '') {
     updates.push({ sheetName: MAIN_SHEET, rowIndex: rowIdx, colIndex: EXCEL_COL.SEARCH_ALIAS, value: entry.searchAlias });
+  }
+
+  // 上映日期
+  if (entry.releaseDate !== undefined) {
+    updates.push({ sheetName: MAIN_SHEET, rowIndex: rowIdx, colIndex: EXCEL_COL.RELEASE_DATE, value: entry.releaseDate });
+  }
+
+  // 观看时间（首刷时间）：写入 Excel 序列号
+  if (entry.watchDate !== undefined) {
+    const serial = dateToExcelSerial(entry.watchDate);
+    if (serial > 0) {
+      updates.push({ sheetName: MAIN_SHEET, rowIndex: rowIdx, colIndex: EXCEL_COL.WATCH_DATE, value: serial });
+    }
+  }
+
+  // Bangumi 评分
+  if (entry.bangumiScore !== undefined) {
+    updates.push({ sheetName: MAIN_SHEET, rowIndex: rowIdx, colIndex: EXCEL_COL.BGM_SCORE, value: entry.bangumiScore });
+  }
+
+  // AniList 评分
+  if (entry.aniListScore !== undefined) {
+    updates.push({ sheetName: MAIN_SHEET, rowIndex: rowIdx, colIndex: EXCEL_COL.ANILIST_SCORE, value: entry.aniListScore });
+  }
+
+  // 制作组
+  if (entry.studio !== undefined) {
+    updates.push({ sheetName: MAIN_SHEET, rowIndex: rowIdx, colIndex: EXCEL_COL.STUDIO, value: entry.studio });
+  }
+
+  // 张数
+  if (entry.frameCount !== undefined) {
+    updates.push({ sheetName: MAIN_SHEET, rowIndex: rowIdx, colIndex: EXCEL_COL.FRAME_COUNT, value: entry.frameCount });
   }
 
   return updates;
