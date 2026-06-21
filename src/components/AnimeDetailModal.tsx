@@ -3,7 +3,7 @@ import { Modal, InputNumber, Input, Tag, Descriptions, Button, Space, message, T
 import { SaveOutlined, PlusOutlined, EditOutlined, LeftOutlined, RightOutlined, PictureOutlined, ImportOutlined, ThunderboltOutlined, TagOutlined, SearchOutlined } from '@ant-design/icons';
 import type { AnimeEntry, AnimeTag, DimensionScore, DimensionReview, AnimeCategory, BangumiSearchItem } from '../types';
 import { DEFAULT_DIMENSIONS, DIMENSION_LABEL_MAP, CATEGORY_CONFIG } from '../types';
-import { fetchPoster } from '../services/excelService';
+import { fetchPoster, savePosterUrlToExcel } from '../services/excelService';
 import { loadImages, saveImage as saveImageToLocal } from '../services/imageService';
 import { addToPosterBlacklist, loadPosterBlacklist, savePosterOverride, loadPosterPositions, savePosterPosition } from '../services/storageService';
 import { singleAnimeAnalysis, autoTag } from '../services/aiSkills';
@@ -464,6 +464,8 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       setPosterUrl(entry.dataUrl);
       savePosterOverride(anime.id, entry.dataUrl).catch(() => {});
       onPosterChange?.(anime.id, entry.dataUrl);
+      // 同步写入 Excel
+      savePosterUrlToExcel({ ...anime, posterUrl: entry.dataUrl }).catch(() => {});
       message.success(`封面已保存到本地：${entry.fileName}`);
     } catch (e) {
       message.error('保存封面失败');
@@ -1518,6 +1520,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
           setPosterUrl(url);
           savePosterOverride(anime.id, url).catch(e => console.error(e));
           onPosterChange?.(anime.id, url);
+          savePosterUrlToExcel({ ...anime, posterUrl: url }).catch(e => console.error(e));
           loadImages(anime.title).then(stored => {
             const storedUrls = stored.map(img => img.dataUrl);
             setAllImages([url, ...storedUrls.filter(u => u !== url)]);

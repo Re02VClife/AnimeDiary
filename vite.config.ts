@@ -62,8 +62,9 @@ function excelApiPlugin(): Plugin {
               const { sheetName, rowIndex, colIndex, value } = update;
               const ws = wb.Sheets[sheetName];
               if (!ws) continue;
+              // 使用 sheet_add_aoa 替代直接赋值，它会自动扩展 !ref 范围
               const cellAddr = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
-              ws[cellAddr] = { t: typeof value === 'number' ? 'n' : 's', v: value };
+              XLSX.utils.sheet_add_aoa(ws, [[value]], { origin: cellAddr });
             }
             const wbOut = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
             fs.writeFileSync(EXCEL_PATH, wbOut);
