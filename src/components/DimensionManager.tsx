@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react';
 import { Modal, Input, InputNumber, Button, Space, List, message, Popconfirm, Slider } from 'antd';
 import { PlusOutlined, DeleteOutlined, SaveOutlined } from '@ant-design/icons';
 import type { Dimension } from '../types';
-import { loadDimensions, saveDimensions } from '../services/storageService';
+import { loadDimensions, saveDimensions } from '../../features/anime-data/storage-service';
 
 interface DimensionManagerProps {
   open: boolean;

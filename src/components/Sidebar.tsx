@@ -3,40 +3,13 @@ import { Segmented, Slider, Input, Button, Popconfirm, message } from 'antd';
 import { PlusOutlined, EditOutlined, CloseOutlined } from '@ant-design/icons';
 import type { AnimeEntry, Dimension } from '../types';
 import { DEFAULT_DIMENSIONS } from '../types';
-import { rankByDimension } from '../services/rankingService';
-import WatchTimeline from './WatchCalendar';
+import { rankByDimension } from '../../features/ranking/ranking-service';
+import WatchTimeline from '../../features/watch-calendar/WatchCalendar';
+import { useAnimeContext } from '../../context/AnimeContext';
 
-interface SidebarProps {
-  animeList: AnimeEntry[];
-  activeDim: string;
-  onActiveDimChange: (dim: string) => void;
-  onDimensionRank?: (dimKey: string, order: 'asc' | 'desc') => void;
-  onImportExcel?: () => void;
-  onExportExcel?: () => void;
-  onOpenDimensionManager?: () => void;
-  onAnimeClick?: (anime: AnimeEntry) => void;
-  imgHeight?: number;
-  onImgHeightChange?: (h: number) => void;
-  activeTag?: string | null;
-  onActiveTagChange?: (tag: string | null) => void;
-  onRenameTag?: (oldName: string, newName: string) => void;
-  onDeleteTag?: (tagName: string) => void;
-  // 批量添加模式
-  batchMode?: boolean;
-  selectedBatchTags?: string[];
-  onBatchTagsChange?: (tags: string[]) => void;
-  onStartBatch?: () => void;
-  onConfirmBatch?: () => void;
-  onCancelBatch?: () => void;
-  onOpenKnowledgeGraph?: () => void;
-  onExportUserData?: () => void;
-  onImportUserData?: (file: File) => void;
-  onFixSearchAlias?: () => void;
-  onOpenExcel?: () => void;
-  onOpenAISettings?: () => void;
-  onOpenTasteReport?: () => void;
-  onBatchSavePosters?: () => void;
-}
+// Sidebar 现在直接消费 Context，不再需要外部 props
+// eslint-disable-next-line @typescript-eslint/no-empty-interface
+interface SidebarProps {}
 
 /** Tag 预设存储 key */
 const TAG_PRESETS_KEY = 'anime_diary_tag_presets';
@@ -56,36 +29,13 @@ function saveTagPresets(presets: string[]): void {
 const BGM_DIM: Dimension = { key: 'bgm', label: 'BGM评分', description: 'Bangumi 评分', weight: 0 };
 const NAME_DIM: Dimension = { key: 'namesort', label: '番名', description: '按番剧名称排序', weight: 0 };
 
-const Sidebar: React.FC<SidebarProps> = ({
-  animeList,
-  activeDim,
-  onActiveDimChange,
-  onDimensionRank,
-  onImportExcel,
-  onExportExcel,
-  onOpenDimensionManager,
-  onAnimeClick,
-  imgHeight,
-  onImgHeightChange,
-  activeTag,
-  onActiveTagChange,
-  onRenameTag,
-  onDeleteTag,
-  batchMode,
-  selectedBatchTags,
-  onBatchTagsChange,
-  onStartBatch,
-  onConfirmBatch,
-  onCancelBatch,
-  onOpenKnowledgeGraph,
-  onExportUserData,
-  onImportUserData,
-  onFixSearchAlias,
-  onOpenExcel,
-  onOpenAISettings,
-  onOpenTasteReport,
-  onBatchSavePosters,
-}) => {
+const Sidebar: React.FC<SidebarProps> = () => {
+  const { state, dispatch, handleDimensionRank, handleAnimeClick, handleRenameTag,
+    handleDeleteTag, handleBatchAddTags, handleCancelBatch, handleExportUserData,
+    handleImportUserData, handleFixSearchAlias, handleOpenExcel, handleBatchSavePosters,
+    handleImportExcel, handleExportExcel } = useAnimeContext();
+  const { animeList, activeDim, imgHeight, activeTag, batchMode, selectedBatchTags } = state;
+
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [showCalendar, setShowCalendar] = useState(true);
   const [showRanking, setShowRanking] = useState(true);
@@ -129,23 +79,23 @@ const Sidebar: React.FC<SidebarProps> = ({
       setEditingTag(null);
       return;
     }
-    onRenameTag?.(editingTag, newName);
+    handleRenameTag(editingTag, newName);
     // 同步更新预设列表
     const updated = tagPresets.map((p) => p === editingTag ? newName : p);
     setTagPresets(updated);
     saveTagPresets(updated);
     setEditingTag(null);
     message.success(`已重命名「${editingTag}」→「${newName}」`);
-  }, [editingTag, editValue, tagPresets, onRenameTag]);
+  }, [editingTag, editValue, tagPresets, handleRenameTag]);
 
   // 删除标签
   const confirmDelete = useCallback((name: string) => {
-    onDeleteTag?.(name);
+    handleDeleteTag(name);
     // 同步从预设列表移除
     const updated = tagPresets.filter((p) => p !== name);
     setTagPresets(updated);
     saveTagPresets(updated);
-  }, [tagPresets, onDeleteTag]);
+  }, [tagPresets, handleDeleteTag]);
 
   // 新增预设标签
   const addTagPreset = useCallback(() => {
@@ -188,7 +138,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           {showCalendar ? '▼' : '▶'} 📅 追番时间轴
         </div>
         {showCalendar && (
-          <WatchTimeline animeList={animeList} onAnimeClick={onAnimeClick} />
+          <WatchTimeline animeList={animeList} onAnimeClick={handleAnimeClick} />
         )}
       </div>
 
@@ -209,9 +159,9 @@ const Sidebar: React.FC<SidebarProps> = ({
                   key={dim.key}
                   className={`dimension-chip${activeDim === dim.key ? ' active' : ''}`}
                   onClick={() => {
-                    onActiveDimChange(dim.key);
+                    dispatch({ type: 'SET_ACTIVE_DIM', payload: dim.key });
                     setSortDir('desc');
-                    onDimensionRank?.(dim.key, 'desc');
+                    handleDimensionRank(dim.key, 'desc');
                   }}
                   title={dim.description}
                 >
@@ -227,7 +177,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 value={sortDir}
                 onChange={(v) => {
                   setSortDir(v as 'asc' | 'desc');
-                  onDimensionRank?.(activeDim, v as 'asc' | 'desc');
+                  handleDimensionRank(activeDim, v as 'asc' | 'desc');
                 }}
                 options={[
                   { value: 'desc', label: '↓高到低' },
@@ -247,7 +197,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 return (
                   <div
                     key={anime.id}
-                    onClick={() => onAnimeClick?.(anime)}
+                    onClick={() => handleAnimeClick(anime)}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 8,
                       padding: '4px 8px', borderRadius: 4, cursor: 'pointer',
@@ -300,7 +250,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             {activeTag && (
               <span
                 style={{ fontSize: 11, color: '#8b949e', fontWeight: 400, marginLeft: 4 }}
-                onClick={(e) => { e.stopPropagation(); onActiveTagChange?.(null); }}
+                onClick={(e) => { e.stopPropagation(); dispatch({ type: 'SET_ACTIVE_TAG', payload: null }); }}
               >
                 (已选: {activeTag} ✕)
               </span>
@@ -310,14 +260,14 @@ const Sidebar: React.FC<SidebarProps> = ({
             {batchMode ? (
               <>
                 <Button size="small" type="primary"
-                  onClick={(e) => { e.stopPropagation(); onConfirmBatch?.(); }}
+                  onClick={(e) => { e.stopPropagation(); handleBatchAddTags(); }}
                   style={{ fontSize: 11, height: 22, padding: '0 8px' }}
                   disabled={!selectedBatchTags?.length}
                 >
                   确认
                 </Button>
                 <Button size="small"
-                  onClick={(e) => { e.stopPropagation(); onCancelBatch?.(); }}
+                  onClick={(e) => { e.stopPropagation(); handleCancelBatch(); }}
                   style={{ fontSize: 11, height: 22, padding: '0 6px' }}
                 >
                   取消
@@ -327,7 +277,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               <>
                 <Button
                   size="small" type="text"
-                  onClick={(e) => { e.stopPropagation(); onStartBatch?.(); }}
+                  onClick={(e) => { e.stopPropagation(); dispatch({ type: 'SET_BATCH_MODE', payload: true }); }}
                   style={{ fontSize: 11, height: 22, padding: '0 6px', color: '#8b949e' }}
                   title="批量添加标签到番剧"
                 >
@@ -387,11 +337,12 @@ const Sidebar: React.FC<SidebarProps> = ({
                           if (batchMode) {
                             // 批量模式：切换标签选中
                             const sel = selectedBatchTags || [];
-                            onBatchTagsChange?.(
-                              sel.includes(name) ? sel.filter((t) => t !== name) : [...sel, name],
-                            );
+                            dispatch({
+                              type: 'SET_BATCH_TAGS',
+                              payload: sel.includes(name) ? sel.filter((t) => t !== name) : [...sel, name],
+                            });
                           } else {
-                            onActiveTagChange?.(activeTag === name ? null : name);
+                            dispatch({ type: 'SET_ACTIVE_TAG', payload: activeTag === name ? null : name });
                           }
                         }}
                         style={{ cursor: 'pointer' }}
@@ -478,7 +429,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         {showGraph && (
           <div style={{ padding: '4px 0' }}>
             <div
-              onClick={onOpenKnowledgeGraph}
+              onClick={() => dispatch({ type: 'OPEN_MODAL', modal: 'knowledgeGraph' })}
               style={{
                 height: 160,
                 background: '#161b22',
@@ -522,115 +473,98 @@ const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* ── AI 分析 ── */}
-      {(onOpenAISettings || onOpenTasteReport) && (
-        <div className="sidebar-section">
-          <div
-            className="section-title"
-            onClick={() => setShowAI(!showAI)}
-            style={{ cursor: 'pointer', userSelect: 'none' }}
-          >
-            {showAI ? '▼' : '▶'} 🤖 AI 分析
-          </div>
-          {showAI && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {onOpenTasteReport && (
-                <div
-                  className="settings-item"
-                  onClick={onOpenTasteReport}
-                  style={{
-                    background: 'linear-gradient(135deg, rgba(251,114,153,0.1), rgba(251,114,153,0.02))',
-                    border: '1px solid rgba(251,114,153,0.15)',
-                    borderRadius: 8,
-                    padding: '10px 14px',
-                  }}
-                >
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#fb7299' }}>
-                    📊 品味分析
-                  </span>
-                  <span style={{ fontSize: 10, color: '#484f58', marginLeft: 'auto' }}>
-                    ~¥0.002
-                  </span>
-                </div>
-              )}
-              <div
-                className="settings-item"
-                onClick={onOpenAISettings}
-              >
-                <span style={{ fontSize: 12, color: '#8b949e' }}>⚙️ AI 设置</span>
-              </div>
-              <div style={{ fontSize: 10, color: '#484f58', padding: '2px 0' }}>
-                基于评分数据生成品味报告和偏好画像。需要配置 API Key。
-              </div>
-            </div>
-          )}
+      {/* ── AI 分析（始终显示）── */}
+      <div className="sidebar-section">
+        <div
+          className="section-title"
+          onClick={() => setShowAI(!showAI)}
+          style={{ cursor: 'pointer', userSelect: 'none' }}
+        >
+          {showAI ? '▼' : '▶'} 🤖 AI 分析
         </div>
-      )}
+        {showAI && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div
+              className="settings-item"
+              onClick={() => dispatch({ type: 'OPEN_MODAL', modal: 'tasteReport' })}
+              style={{
+                background: 'linear-gradient(135deg, rgba(251,114,153,0.1), rgba(251,114,153,0.02))',
+                border: '1px solid rgba(251,114,153,0.15)',
+                borderRadius: 8,
+                padding: '10px 14px',
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#fb7299' }}>
+                📊 品味分析
+              </span>
+              <span style={{ fontSize: 10, color: '#484f58', marginLeft: 'auto' }}>
+                ~¥0.002
+              </span>
+            </div>
+            <div
+              className="settings-item"
+              onClick={() => dispatch({ type: 'OPEN_MODAL', modal: 'aiSettings' })}
+            >
+              <span style={{ fontSize: 12, color: '#8b949e' }}>⚙️ AI 设置</span>
+            </div>
+            <div style={{ fontSize: 10, color: '#484f58', padding: '2px 0' }}>
+              基于评分数据生成品味报告和偏好画像。需要配置 API Key。
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* ── 设置 ── */}
       <div className="sidebar-section">
         <div className="section-title">⚙️ 设置</div>
         <div className="settings-list">
-          <div className="settings-item" onClick={onImportExcel}>
+          <div className="settings-item" onClick={handleImportExcel}>
             <span>📤 导入 Excel</span>
           </div>
-          <div className="settings-item" onClick={onExportExcel}>
+          <div className="settings-item" onClick={handleExportExcel}>
             <span>📥 导出 Excel</span>
           </div>
-          {onOpenExcel && (
-            <div className="settings-item" onClick={onOpenExcel}>
-              <span>📋 查看 Excel</span>
+          <div className="settings-item" onClick={handleOpenExcel}>
+            <span>📋 查看 Excel</span>
+          </div>
+          <div className="settings-item" onClick={handleBatchSavePosters}>
+            <span>🖼 持久化所有海报</span>
+          </div>
+          <div className="settings-item" onClick={handleExportUserData}>
+            <span>💾 导出用户数据</span>
+          </div>
+          <div
+            className="settings-item"
+            onClick={() => {
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.accept = '.zip';
+              input.onchange = (e) => {
+                const file = (e.target as HTMLInputElement).files?.[0];
+                if (file) handleImportUserData(file);
+              };
+              input.click();
+            }}
+          >
+            <span>📂 导入用户数据</span>
+          </div>
+          <div className="settings-item" onClick={handleFixSearchAlias}>
+            <span>🔄 修正检索名</span>
+          </div>
+          <div className="settings-item" onClick={() => dispatch({ type: 'OPEN_MODAL', modal: 'dimManager' })}>
+            <span>📐 维度管理</span>
+          </div>
+          <div style={{ padding: '6px 10px' }}>
+            <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 2 }}>
+              🖼️ 图片高度: {imgHeight}px
             </div>
-          )}
-          {onBatchSavePosters && (
-            <div className="settings-item" onClick={onBatchSavePosters}>
-              <span>🖼 持久化所有海报</span>
-            </div>
-          )}
-          {onExportUserData && (
-            <div className="settings-item" onClick={onExportUserData}>
-              <span>💾 导出用户数据</span>
-            </div>
-          )}
-          {onImportUserData && (
-            <div
-              className="settings-item"
-              onClick={() => {
-                const input = document.createElement('input');
-                input.type = 'file';
-                input.accept = '.zip';
-                input.onchange = (e) => {
-                  const file = (e.target as HTMLInputElement).files?.[0];
-                  if (file) onImportUserData(file);
-                };
-                input.click();
-              }}
-            >
-              <span>📂 导入用户数据</span>
-            </div>
-          )}
-          {onFixSearchAlias && (
-            <div className="settings-item" onClick={onFixSearchAlias}>
-              <span>🔄 修正检索名</span>
-            </div>
-          )}
-          {onOpenDimensionManager && (
-            <div className="settings-item" onClick={onOpenDimensionManager}>
-              <span>📐 维度管理</span>
-            </div>
-          )}
-          {onImgHeightChange && (
-            <div style={{ padding: '6px 10px' }}>
-              <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 2 }}>
-                🖼️ 图片高度: {imgHeight}px
-              </div>
-              <Slider
-                min={200} max={800} step={20}
-                value={imgHeight}
-                onChange={(v) => onImgHeightChange(v)}
-                styles={{ track: { background: '#fb7299' }, rail: { background: '#30363d' } }}
-              />
-            </div>
-          )}
+            <Slider
+              min={200} max={800} step={20}
+              value={imgHeight}
+              onChange={(v) => dispatch({ type: 'SET_IMG_HEIGHT', payload: v })}
+              styles={{ track: { background: '#fb7299' }, rail: { background: '#30363d' } }}
+            />
+          </div>
         </div>
       </div>
     </div>

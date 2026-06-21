@@ -3,14 +3,14 @@
  *   从番剧列表中抽取实体和关系，构建力导向图数据
  *   所有计算均为纯函数，在 useMemo 中调用
  */
-import type { AnimeEntry } from '../types';
+import type { AnimeEntry } from '../../src/types';
 import type {
   GraphData,
   GraphNodeDef,
   GraphEdgeDef,
   GraphEdgeRelation,
-} from '../types/graph';
-import { CATEGORY_TO_INDEX } from '../types/graph';
+} from './graph-types';
+import { CATEGORY_TO_INDEX } from './graph-types';
 
 // ── core/ 工具函数 ──
 import { cosineSimilarity, jaccardSimilarity } from '../../core/math';
