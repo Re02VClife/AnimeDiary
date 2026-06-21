@@ -51,7 +51,7 @@ const RadarChart: React.FC<RadarChartProps> = ({ anime, allAnime, mini = false }
         type: 'radar',
         data: [
           {
-            value: dims.map((d) => d.percentile),
+            value: dims.map((d) => Math.max(10, d.percentile)),
             name: anime.title,
             symbol: mini ? 'none' : 'circle',
             symbolSize: 4,

@@ -40,6 +40,8 @@ export const EXCEL_COL = {
   CHAR3_DESIGN: 33,   // AH - 人设3
   CHAR3_STYLE: 34,    // AI - 造型3
   CHAR4_NAME: 35,     // AJ - 角色4
+  ANILIST_SCORE: 36,  // AK - AniList 评分
+  WATCH_DATE: 17,     // R - 首刷时间（别名，同 FIRST_WATCH）
 } as const;
 
 /** Excel 工作表名称 */
@@ -87,4 +89,6 @@ export const EDITABLE_COLS: number[] = [
   EXCEL_COL.STUDIO,
   EXCEL_COL.RELEASE_DATE,
   EXCEL_COL.FIRST_WATCH,
+  EXCEL_COL.BGM_SCORE,
+  EXCEL_COL.ANILIST_SCORE,
 ];

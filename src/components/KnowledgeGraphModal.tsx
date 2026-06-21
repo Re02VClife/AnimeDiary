@@ -435,12 +435,12 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
   return (
     <Modal
       title={
-        <span style={{ color: '#e6edf3', fontSize: 16 }}>
-          🔗 知识图谱
-          <span style={{ fontSize: 12, color: '#8b949e', fontWeight: 400, marginLeft: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ color: '#e6edf3', fontSize: 16 }}>🔗 知识图谱</span>
+          <span style={{ fontSize: 12, color: '#8b949e', fontWeight: 400 }}>
             {animeList.length} 部番剧 · {fullGraph?.edges.length || 0} 条关系
           </span>
-        </span>
+        </div>
       }
       open={open}
       onCancel={onClose}
@@ -617,6 +617,7 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
               <div>👆 点击番剧查看详情</div>
               <div>👆 双击空白重置视图</div>
             </div>
+
           </div>
 
           {/* ── 右侧画布 ── */}

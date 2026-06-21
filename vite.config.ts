@@ -7,7 +7,7 @@ import XLSX from 'xlsx';
 import AdmZip from 'adm-zip';
 
 // Excel 文件路径
-const EXCEL_PATH = 'C:\\Users\\24628\\Desktop\\vscode\\番评分.xlsx';
+const EXCEL_PATH = path.resolve(__dirname, '番评分.xlsx');
 
 // ── Vite 插件：Excel 文件 I/O API ──
 function excelApiPlugin(): Plugin {
@@ -128,6 +128,7 @@ function excelApiPlugin(): Plugin {
 
       // ── Bangumi 搜索代理 + 缓存 ──
       const CACHE_PATH = path.resolve(__dirname, 'bangumi_cache.json');
+      const BANGUMI_REVIEW_CACHE_PATH = path.resolve(__dirname, 'bangumi_review_cache.json');
       // Bangumi API 镜像列表（优先尝试能连通的）
       const BANGUMI_APIS = [
         'https://bangumi.online/api',
@@ -137,14 +138,15 @@ function excelApiPlugin(): Plugin {
       server.middlewares.use('/api/bangumi/search', async (req, res) => {
         const url = new URL(req.url!, 'http://localhost');
         const keyword = url.searchParams.get('keyword') || '';
+        const force = url.searchParams.get('force') === '1';
         if (!keyword) {
           res.statusCode = 400;
           res.end(JSON.stringify({ error: '缺少 keyword 参数' }));
           return;
         }
 
-        // 1. 查本地缓存（忽略空格和特殊字符的模糊匹配）
-        try {
+        // 1. 查本地缓存（force=1 时跳过）
+        if (!force) { try {
           if (fs.existsSync(CACHE_PATH)) {
             const cache = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf-8'));
             // 精确匹配
@@ -167,7 +169,7 @@ function excelApiPlugin(): Plugin {
               return;
             }
           }
-        } catch (_) { /* 缓存读取失败，继续 */ }
+        } catch (_) { /* 缓存读取失败，继续 */ } } // if (!force)
 
         // 2. 依次尝试镜像站代理请求
         let list: unknown[] = [];
@@ -208,6 +210,232 @@ function excelApiPlugin(): Plugin {
         res.end(JSON.stringify({ list, cached: false, offline: !connected }));
       });
 
+      // ── Bangumi 评论采集（深度模式用）──
+      server.middlewares.use('/api/bangumi/reviews', async (req, res) => {
+        if (req.method !== 'POST') {
+          res.statusCode = 405;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        req.on('data', (c: Buffer) => chunks.push(c));
+        req.on('end', async () => {
+          try {
+            const { titles } = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+            if (!Array.isArray(titles) || titles.length === 0) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: '缺少 titles 数组' }));
+              return;
+            }
+
+            // 读缓存
+            let cache: Record<string, unknown> = {};
+            const now = Date.now();
+            const TTL = 24 * 60 * 60 * 1000; // 24h
+            try {
+              if (fs.existsSync(BANGUMI_REVIEW_CACHE_PATH)) {
+                cache = JSON.parse(fs.readFileSync(BANGUMI_REVIEW_CACHE_PATH, 'utf-8'));
+              }
+            } catch (_) { /* ignore */ }
+
+            const results: Record<string, unknown> = {};
+            let cacheUpdated = false;
+
+            for (const title of titles) {
+              // 检查缓存
+              const cached = cache[title] as { ts?: number; data?: unknown } | undefined;
+              if (cached?.data && cached.ts && (now - cached.ts < TTL)) {
+                results[title] = cached.data;
+                continue;
+              }
+
+              // 搜索 subject
+              let subject: Record<string, unknown> | null = null;
+              for (const apiBase of BANGUMI_APIS) {
+                try {
+                  const searchUrl = `${apiBase}/search/subject/${encodeURIComponent(title)}?type=2&responseGroup=large`;
+                  const resp = await fetch(searchUrl, {
+                    headers: { 'User-Agent': 'AnimeDiary/1.0 (private)' },
+                    signal: AbortSignal.timeout(8000),
+                  });
+                  if (resp.ok) {
+                    const data = await resp.json();
+                    if (data.list?.length > 0) {
+                      subject = data.list[0];
+                      break;
+                    }
+                  }
+                } catch { continue; }
+              }
+
+              if (!subject) {
+                results[title] = { subjectId: null, error: '未找到' };
+                // 仍写入缓存（短暂缓存避免重复查询）
+                cache[title] = { ts: now, data: results[title] };
+                cacheUpdated = true;
+                continue;
+              }
+
+              const sid = (subject as { id: number }).id;
+              const summary = (subject as { summary?: string }).summary || '';
+              const rating = (subject as { rating?: { score?: number; total?: number } }).rating;
+              const tags = (subject as { tags?: Array<{ name: string; count: number }> }).tags || [];
+              const name = (subject as { name_cn?: string; name?: string }).name_cn
+                || (subject as { name?: string }).name || title;
+
+              // 构建社区评论数据：摘要 + 标签作为"社区评价"
+              const tagNames = tags.slice(0, 15).map((t: { name: string; count: number }) =>
+                `${t.name}(${t.count}人标记)`);
+
+              // 尝试获取更多评论数据（Bangumi subject 相关条目）
+              let extraReviews: string[] = [];
+              try {
+                // 部分镜像可能支持获取相关评论
+                const subjectUrl = `${BANGUMI_APIS[0]}/subject/${sid}`;
+                const subjectResp = await fetch(subjectUrl, {
+                  headers: { 'User-Agent': 'AnimeDiary/1.0 (private)' },
+                  signal: AbortSignal.timeout(5000),
+                });
+                if (subjectResp.ok) {
+                  const detail = await subjectResp.json();
+                  // 收集额外信息作为"评论"
+                  if (detail.infobox) {
+                    const infobox = detail.infobox as Array<{ key: string; value: string }>;
+                    const infoText = infobox
+                      .filter((i) => ['话数', '放送开始', '放送星期', '官方网站', '播放结束'].includes(i.key))
+                      .map((i) => `${i.key}: ${i.value}`)
+                      .join('; ');
+                    if (infoText) extraReviews.push(`基本信息: ${infoText}`);
+                  }
+                }
+              } catch { /* 忽略 */ }
+
+              // 组装社区评价文本
+              const communityReviews = [
+                summary ? `Bangumi简介: ${summary.slice(0, 500)}` : null,
+                tagNames.length > 0 ? `社区标签: ${tagNames.join(', ')}` : null,
+                rating?.score ? `Bangumi评分: ${rating.score}/10 (${rating.total || 0}人评分)` : null,
+                ...extraReviews,
+              ].filter(Boolean) as string[];
+
+              const data = {
+                subjectId: sid,
+                name,
+                rating: rating || null,
+                tags: tagNames,
+                reviews: communityReviews,
+                reviewCount: communityReviews.length,
+              };
+
+              results[title] = data;
+              cache[title] = { ts: now, data };
+              cacheUpdated = true;
+
+              // 请求间隔 1s（避免限流）
+              if (titles.indexOf(title) < titles.length - 1) {
+                await new Promise((r) => setTimeout(r, 1000));
+              }
+            }
+
+            // 写缓存
+            if (cacheUpdated) {
+              try {
+                fs.writeFileSync(BANGUMI_REVIEW_CACHE_PATH, JSON.stringify(cache, null, 2), 'utf-8');
+              } catch (_) { /* 缓存写入失败 */ }
+            }
+
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ results, cached: Object.keys(results).length > 0 }));
+          } catch (e) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: '评论采集失败: ' + (e instanceof Error ? e.message : '') }));
+          }
+        });
+      });
+
+      // ── Bangumi 发现：按标签批量搜索番剧（推荐引擎用）──
+      server.middlewares.use('/api/bangumi/discover', async (req, res) => {
+        if (req.method !== 'POST') {
+          res.statusCode = 405;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        req.on('data', (c: Buffer) => chunks.push(c));
+        req.on('end', async () => {
+          try {
+            const { tags } = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+            if (!Array.isArray(tags) || tags.length === 0) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: '缺少 tags 数组' }));
+              return;
+            }
+
+            // 去重用的结果集（按 subject id 去重）
+            const seen = new Set<number>();
+            const allResults: Record<string, unknown>[] = [];
+
+            for (const tag of tags.slice(0, 8)) {
+              let connected = false;
+              for (const apiBase of BANGUMI_APIS) {
+                try {
+                  const searchUrl = `${apiBase}/search/subject/${encodeURIComponent(tag)}?type=2&responseGroup=large`;
+                  const resp = await fetch(searchUrl, {
+                    headers: { 'User-Agent': 'AnimeDiary/1.0 (private)' },
+                    signal: AbortSignal.timeout(8000),
+                  });
+                  if (resp.ok) {
+                    const data = await resp.json();
+                    const list = (data.list || []) as Record<string, unknown>[];
+                    for (const item of list) {
+                      const id = item.id as number;
+                      if (id && !seen.has(id)) {
+                        seen.add(id);
+                        allResults.push({
+                          id: item.id,
+                          name: item.name || '',
+                          name_cn: item.name_cn || '',
+                          summary: (item.summary as string) || '',
+                          images: item.images || {},
+                          rating: item.rating || {},
+                          air_date: item.air_date || '',
+                          eps: item.eps || 0,
+                          // 从哪个标签搜到的
+                          matchedTag: tag,
+                        });
+                      }
+                    }
+                    connected = true;
+                    break;
+                  }
+                } catch { continue; }
+              }
+
+              // 请求间隔 1s
+              if (tags.indexOf(tag) < Math.min(tags.length, 8) - 1) {
+                await new Promise((r) => setTimeout(r, 1000));
+              }
+            }
+
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({
+              results: allResults.slice(0, 50),
+              total: allResults.length,
+              searchedTags: tags.slice(0, 8),
+            }));
+          } catch (e) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: '发现失败: ' + (e instanceof Error ? e.message : '') }));
+          }
+        });
+      });
+
       // ── AniList 搜索代理 ──
       const ANILIST_CACHE_PATH = path.resolve(__dirname, 'anilist_cache.json');
 
@@ -229,14 +457,15 @@ function excelApiPlugin(): Plugin {
       server.middlewares.use('/api/anilist/search', async (req, res) => {
         const url = new URL(req.url!, 'http://localhost');
         const keyword = url.searchParams.get('keyword') || '';
+        const force = url.searchParams.get('force') === '1';
         if (!keyword) {
           res.statusCode = 400;
           res.end(JSON.stringify({ error: '缺少 keyword 参数' }));
           return;
         }
 
-        // 1. 查缓存
-        try {
+        // 1. 查缓存（force=1 时跳过）
+        if (!force) { try {
           if (fs.existsSync(ANILIST_CACHE_PATH)) {
             const cache = JSON.parse(fs.readFileSync(ANILIST_CACHE_PATH, 'utf-8'));
             const norm = (s: string) => s.replace(/[\s\-_:：・().]+/g, '').toLowerCase();
@@ -249,7 +478,7 @@ function excelApiPlugin(): Plugin {
               }
             }
           }
-        } catch (_) {}
+        } catch (_) {} } // if (!force)
 
         // 2. 请求 AniList API
         try {
@@ -299,6 +528,221 @@ function excelApiPlugin(): Plugin {
           res.end(JSON.stringify({ list: [], error: 'AniList API 暂时不可用' }));
         }
       });
+      // ── Bangumi v0 标签浏览：按标签查找番剧（推荐引擎用）──
+      server.middlewares.use('/api/bangumi/browse', async (req, res) => {
+        if (req.method !== 'POST') {
+          res.statusCode = 405;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        req.on('data', (c: Buffer) => chunks.push(c));
+        req.on('end', async () => {
+          try {
+            const { tags } = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+            if (!Array.isArray(tags) || tags.length === 0) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: '缺少 tags 数组' }));
+              return;
+            }
+
+            const seen = new Set<number>();
+            const allResults: Record<string, unknown>[] = [];
+
+            // Bangumi v0 API 基础地址
+            const V0_APIS = [
+              'https://api.bgm.tv/v0',
+              'https://bangumi.online/api/v0',
+            ];
+
+            for (const tag of tags.slice(0, 8)) {
+              let connected = false;
+              for (const v0Base of V0_APIS) {
+                try {
+                  // v0 API: 按标签过滤番剧，按排名排序
+                  const browseUrl = `${v0Base}/subjects?tag=${encodeURIComponent(tag)}&type=2&sort=rank&limit=12`;
+                  const resp = await fetch(browseUrl, {
+                    headers: { 'User-Agent': 'AnimeDiary/1.0 (private)' },
+                    signal: AbortSignal.timeout(8000),
+                  });
+                  if (resp.ok) {
+                    const data = await resp.json();
+                    const list = (data.data || data || []) as Record<string, unknown>[];
+                    for (const item of list) {
+                      const id = item.id as number;
+                      if (id && !seen.has(id)) {
+                        seen.add(id);
+                        // v0 API 返回字段名略有不同
+                        const images = item.images as Record<string, string> | undefined;
+                        allResults.push({
+                          id,
+                          name: item.name || '',
+                          name_cn: item.name_cn || item.name || '',
+                          summary: item.summary || '',
+                          images: {
+                            large: images?.large || '',
+                            common: images?.common || images?.medium || '',
+                            medium: images?.medium || '',
+                            small: images?.small || '',
+                          },
+                          rating: {
+                            score: (item.rating as { score?: number })?.score || 0,
+                            total: (item.rating as { total?: number })?.total || 0,
+                          },
+                          air_date: item.date || item.air_date || '',
+                          eps: item.eps || item.eps_count || 0,
+                          matchedTag: tag,
+                        });
+                      }
+                    }
+                    connected = true;
+                    break;
+                  }
+                } catch { continue; }
+              }
+
+              if (tags.indexOf(tag) < Math.min(tags.length, 8) - 1) {
+                await new Promise((r) => setTimeout(r, 1000));
+              }
+            }
+
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({
+              results: allResults.slice(0, 50),
+              total: allResults.length,
+              searchedTags: tags.slice(0, 8),
+              source: 'bangumi_v0',
+            }));
+          } catch (e) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: '浏览失败: ' + (e instanceof Error ? e.message : '') }));
+          }
+        });
+      });
+
+      // ── AniList 发现：按标签批量搜索番剧（推荐引擎用）──
+      server.middlewares.use('/api/anilist/discover', async (req, res) => {
+        if (req.method !== 'POST') {
+          res.statusCode = 405;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        req.on('data', (c: Buffer) => chunks.push(c));
+        req.on('end', async () => {
+          try {
+            const { tags, excludeTitles } = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+            if (!Array.isArray(tags) || tags.length === 0) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: '缺少 tags 数组' }));
+              return;
+            }
+
+            // Phase A: 搜索用户已有番剧的 AniList ID，用于后续排除
+            const excludeIds = new Set<number>();
+            if (Array.isArray(excludeTitles) && excludeTitles.length > 0) {
+              // 取前 30 部最相关的（按标题长度优先，提高匹配精度）
+              const toCheck = excludeTitles
+                .filter((t: string) => t && t.length >= 3)
+                .slice(0, 30);
+              for (const title of toCheck) {
+                try {
+                  const escaped = String(title).replace(/"/g, '\\"').replace(/\n/g, ' ');
+                  const idQuery = `{Page(page:1,perPage:3){media(search:"${escaped}",type:ANIME){id}}}`;
+                  const idResp = await fetch('https://graphql.anilist.co', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    body: JSON.stringify({ query: idQuery }),
+                    signal: AbortSignal.timeout(5000),
+                  });
+                  if (idResp.ok) {
+                    const idJson = await idResp.json();
+                    const media = (idJson?.data?.Page?.media || []) as Array<{ id: number }>;
+                    for (const m of media) {
+                      if (m.id) excludeIds.add(m.id);
+                    }
+                  }
+                } catch { continue; }
+                // 限流
+                await new Promise((r) => setTimeout(r, 300));
+              }
+            }
+
+            // Phase B: 按标签搜索候选
+            const seen = new Set<number>();
+            const allResults: Record<string, unknown>[] = [];
+
+            for (const tag of tags.slice(0, 8)) {
+              try {
+                const escaped = String(tag).replace(/"/g, '\\"').replace(/\n/g, ' ');
+                const query = `{Page(page:1,perPage:10){media(search:"${escaped}",type:ANIME,sort:SCORE_DESC){id title{romaji english native}coverImage{large medium}averageScore episodes seasonYear description genres tags{name rank}}}}`;
+                const resp = await fetch('https://graphql.anilist.co', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  body: JSON.stringify({ query }),
+                  signal: AbortSignal.timeout(10000),
+                });
+                if (!resp.ok) continue;
+                const json = await resp.json();
+                const list = (json?.data?.Page?.media || []) as Record<string, unknown>[];
+                for (const item of list) {
+                  const id = item.id as number;
+                  // 跳过用户已有的番剧（AniList ID 匹配）
+                  if (id && !seen.has(id) && !excludeIds.has(id)) {
+                    seen.add(id);
+                    const title = item.title as { native?: string; romaji?: string; english?: string };
+                    const cover = item.coverImage as { large?: string; medium?: string };
+                    const genreList = (item.genres || []) as string[];
+                    const tagList = (item.tags || []) as Array<{ name: string; rank: number }>;
+                    allResults.push({
+                      id,
+                      name: title?.native || title?.romaji || '',
+                      name_cn: title?.native || title?.romaji || '',
+                      name_en: title?.english || '',
+                      summary: (item.description as string) || '',
+                      images: {
+                        large: cover?.large || '',
+                        common: cover?.medium || '',
+                        medium: cover?.medium || '',
+                        small: cover?.medium || '',
+                      },
+                      rating: {
+                        score: ((item.averageScore as number) || 0) / 10,
+                        total: 0,
+                      },
+                      air_date: (item.seasonYear as number) ? String(item.seasonYear) : '',
+                      eps: (item.episodes as number) || 0,
+                      genres: genreList,
+                      tags: tagList.map((t) => t.name),
+                      matchedTag: tag,
+                    });
+                  }
+                }
+              } catch { continue; }
+
+              // 请求间隔 800ms（AniList 限流 90 req/min）
+              if (tags.indexOf(tag) < Math.min(tags.length, 8) - 1) {
+                await new Promise((r) => setTimeout(r, 800));
+              }
+            }
+
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({
+              results: allResults.slice(0, 50),
+              total: allResults.length,
+              excludedCount: excludeIds.size,
+              searchedTags: tags.slice(0, 8),
+              source: 'anilist',
+            }));
+          } catch (e) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: '发现失败: ' + (e instanceof Error ? e.message : '') }));
+          }
+        });
+      });
+
       // ── 图片代理（解决外部 URL 跨域） ──
       server.middlewares.use('/api/images/proxy', async (req, res) => {
         const url = new URL(req.url!, 'http://localhost');

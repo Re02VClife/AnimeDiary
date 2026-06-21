@@ -1,5 +1,5 @@
 /**
- * 品味报告 Modal — 双 Tab 三阶段面板
+ * 品味报告 Modal — 三 Tab 面板（品味分析 / 偏好画像 / 发现新番）
  *
  * 每个分析 Tab 分三个阶段展示：
  *   Phase 1 — 前端数据统计（即时显示，纯计算）
@@ -20,10 +20,11 @@ import {
 } from '@ant-design/icons';
 import type { AnimeEntry } from '../types';
 import { DEFAULT_DIMENSIONS, DIMENSION_LABEL_MAP } from '../types';
-import { hasAIConfig } from '../services/aiConfig';
+import { hasAIConfig, loadAIConfig } from '../services/aiConfig';
 import {
   tasteAnalysis,
   preferenceProfile,
+  preferenceProfileDeep,
   smartRecommend,
   buildTasteStats,
   buildDeviationData,
@@ -497,6 +498,8 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
   const devData = useMemo(() => buildDeviationData(animeList), [animeList]);
 
   const [phase, setPhase] = useState<'stats' | 'llm' | 'done'>('stats');
+  const [deepPhaseLabel, setDeepPhaseLabel] = useState('');
+  const [deepProgress, setDeepProgress] = useState<{ current: number; total: number } | null>(null);
   const [reportText, setReportText] = useState('');
   const [editing, setEditing] = useState(false);
   const [profile, setProfile] = useState<PreferenceProfile | null>(null);
@@ -520,12 +523,41 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
     setError(null);
     setReportText('');
     setProfile(null);
+    setDeepPhaseLabel('');
+    setDeepProgress(null);
 
     const abort = new AbortController();
     abortRef.current = abort;
 
     try {
-      const result = await preferenceProfile(animeList);
+      const config = loadAIConfig();
+      const useDeepMode = config.deepMode && devData.samples.length >= 10;
+
+      let result: PreferenceProfile;
+      if (useDeepMode) {
+        // 深度模式：三步流程
+        result = await preferenceProfileDeep(
+          animeList,
+          (phase) => {
+            if (abort.signal.aborted) return;
+            const labels: Record<string, string> = {
+              collecting: '正在从 Bangumi 采集社区评论数据…',
+              analyzing: '正在逐番分析评论…',
+              synthesizing: '正在提炼共性偏好…',
+            };
+            setDeepPhaseLabel(labels[phase] || '');
+          },
+          (current, total) => {
+            if (abort.signal.aborted) return;
+            setDeepProgress({ current, total });
+          },
+        );
+        setDeepPhaseLabel('');
+        setDeepProgress(null);
+      } else {
+        result = await preferenceProfile(animeList);
+      }
+
       if (abort.signal.aborted || !runningRef.current) return;
 
       setProfile(result);
@@ -538,8 +570,8 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
       if (result.tasteDeviation) lines.push(s(result.tasteDeviation));
       setReportText(lines.join('\n'));
 
-      const estPrompt = 2500;
-      const estComp = 300;
+      const estPrompt = useDeepMode ? 50000 : 2500;
+      const estComp = useDeepMode ? 5000 : 300;
       setUsage({ promptTokens: estPrompt, completionTokens: estComp, totalTokens: estPrompt + estComp });
       setPhase('done');
     } catch (e) {
@@ -843,7 +875,9 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
             开始 AI 分析
           </Button>
           <div style={{ fontSize: 10, color: '#484f58', marginTop: 6 }}>
-            将口味偏差数据发送给 AI，生成偏好画像（约 2500 token / ¥0.005）
+            {loadAIConfig().deepMode
+              ? '深度模式：采集 Bangumi 社区评论 + 逐番 LLM 分析（约 5 万 token / ¥0.1-0.2）'
+              : '将口味偏差数据发送给 AI，生成偏好画像（约 2500 token / ¥0.005）'}
           </div>
         </div>
       )}
@@ -853,8 +887,28 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
         <div style={{ textAlign: 'center', padding: '24px 0' }}>
           <Spin size="default" />
           <div style={{ color: '#8b949e', fontSize: 12, marginTop: 10 }}>
-            AI 正在提取你的偏好特征…
+            {deepPhaseLabel || 'AI 正在提取你的偏好特征…'}
           </div>
+          {/* 深度模式逐番进度条 */}
+          {deepProgress && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{
+                width: '80%', margin: '0 auto', height: 8,
+                background: '#21262d', borderRadius: 4, overflow: 'hidden',
+              }}>
+                <div style={{
+                  height: '100%',
+                  width: `${Math.round((deepProgress.current / deepProgress.total) * 100)}%`,
+                  background: 'linear-gradient(90deg, #fb7299, #e85d8a)',
+                  borderRadius: 4,
+                  transition: 'width 0.3s ease',
+                }} />
+              </div>
+              <div style={{ fontSize: 10, color: '#484f58', marginTop: 4 }}>
+                正在分析 {deepProgress.current}/{deepProgress.total} 部番剧
+              </div>
+            </div>
+          )}
           <Button size="small" onClick={handleCancel}
             style={{ marginTop: 12, background: '#21262d', borderColor: '#30363d', color: '#f85149', fontSize: 11 }}>
             取消
@@ -1040,12 +1094,13 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
 };
 
 // ═══════════════════════════════════════════════════════
-// Tab 3: 智能推荐
+// Tab 3: 发现新番
 // ═══════════════════════════════════════════════════════
 
 const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
   const [phase, setPhase] = useState<'idle' | 'llm' | 'done'>('idle');
   const [recommendations, setRecommendations] = useState<RecommendResult | null>(null);
+  const [llmPhase, setLlmPhase] = useState('');
   const [usage, setUsage] = useState<TokenUsage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const runningRef = useRef(false);
@@ -1063,18 +1118,25 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
     setPhase('llm');
     setError(null);
     setRecommendations(null);
+    setLlmPhase('');
 
     const abort = new AbortController();
     abortRef.current = abort;
 
     try {
       const cachedProfile = loadProfileCache();
-      const result = await smartRecommend(animeList, cachedProfile);
+      const result = await smartRecommend(
+        animeList,
+        cachedProfile,
+        (msg) => {
+          if (!abort.signal.aborted) setLlmPhase(msg);
+        },
+      );
       if (abort.signal.aborted || !runningRef.current) return;
 
       setRecommendations(result);
-      const estPrompt = 2000;
-      const estComp = 300;
+      const estPrompt = 3000;
+      const estComp = 800;
       setUsage({ promptTokens: estPrompt, completionTokens: estComp, totalTokens: estPrompt + estComp });
       setPhase('done');
     } catch (e) {
@@ -1088,30 +1150,53 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
     }
   }, [animeList]);
 
+  // 偏好标签预览（空闲态展示）
+  const previewTags = useMemo(() => {
+    const devData = buildDeviationData(animeList);
+    return devData.topHiTags.slice(0, 5).map(([name]) => name);
+  }, [animeList]);
+
   return (
     <div style={{ padding: '4px 0' }}>
       {phase === 'idle' && (
         <div style={{ textAlign: 'center', padding: '24px 0' }}>
-          <div style={{ fontSize: 36, marginBottom: 12, opacity: 0.6 }}>🎯</div>
+          <div style={{ fontSize: 36, marginBottom: 12, opacity: 0.6 }}>🔍</div>
           <div style={{ fontSize: 13, color: '#8b949e', marginBottom: 4 }}>
-            基于你的偏好画像和评分数据，AI 会从候选中推荐最适合你的番剧
+            根据你的品味偏好，从 AniList 发现你可能喜欢的新番
           </div>
-          <div style={{ fontSize: 10, color: '#484f58', marginBottom: 16 }}>
-            {loadProfileCache() ? '已检测到缓存的偏好画像' : '建议先生成偏好画像以获得更精准的推荐'}
+          <div style={{ fontSize: 10, color: '#484f58', marginBottom: 4 }}>
+            {loadProfileCache() ? '✅ 已检测到缓存的偏好画像' : '💡 先生成偏好画像可获得更精准推荐'}
           </div>
+          {previewTags.length > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 4, marginBottom: 14 }}>
+              {previewTags.map((t) => (
+                <Tag key={t} style={{
+                  background: '#21262d', border: '1px solid #30363d',
+                  color: '#ffb347', fontSize: 10, borderRadius: 10, margin: 0,
+                }}>
+                  {t}
+                </Tag>
+              ))}
+              <span style={{ fontSize: 10, color: '#484f58', alignSelf: 'center' }}>→ 搜索中</span>
+            </div>
+          )}
           <Button type="primary" icon={<ThunderboltOutlined />} onClick={runLLM}
             style={{ background: 'linear-gradient(135deg, #ffb347, #e89520)', border: 'none', borderRadius: 20,
               padding: '6px 28px', fontWeight: 600, fontSize: 13 }}>
-            生成推荐
+            发现新番
           </Button>
-          <div style={{ fontSize: 10, color: '#484f58', marginTop: 6 }}>约 600 token / ¥0.001</div>
+          <div style={{ fontSize: 10, color: '#484f58', marginTop: 6 }}>
+            AniList 搜索 + AI 精选 · 约 3000 token / ¥0.006
+          </div>
         </div>
       )}
 
       {phase === 'llm' && (
         <div style={{ textAlign: 'center', padding: '24px 0' }}>
           <Spin size="default" />
-          <div style={{ color: '#8b949e', fontSize: 12, marginTop: 10 }}>AI 正在为你筛选推荐…</div>
+          <div style={{ color: '#8b949e', fontSize: 12, marginTop: 10 }}>
+            {llmPhase || '正在搜索…'}
+          </div>
           <Button size="small" onClick={handleCancel}
             style={{ marginTop: 12, background: '#21262d', borderColor: '#30363d', color: '#f85149', fontSize: 11 }}>
             取消
@@ -1121,35 +1206,112 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
 
       {phase === 'done' && recommendations && (
         <>
-          <PhaseDivider label="智能推荐" active={false} done={true} />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {recommendations.recommendations.map((r, i) => (
+          <PhaseDivider
+            label={`发现新番 · 搜索标签: ${recommendations.searchedTags.slice(0, 4).join('、')}`}
+            active={false} done={true}
+          />
+
+          {recommendations.recommendations.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '20px 0' }}>
+              <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.4 }}>📭</div>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4 }}>
+                外部搜索未找到匹配的新番
+              </div>
+              <div style={{ fontSize: 10, color: '#484f58' }}>
+                已尝试 AniList / Bangumi v0 / Bangumi 搜索三层降级。请打开浏览器控制台查看具体失败原因。
+              </div>
+              <div style={{ fontSize: 9, color: '#484f58', marginTop: 4 }}>
+                搜索标签: {recommendations.searchedTags.join('、')}
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {recommendations.recommendations.map((r, i) => (
               <div
                 key={i}
                 style={{
-                  background: 'linear-gradient(135deg, rgba(255,179,71,0.08), rgba(255,179,71,0.02))',
-                  border: '1px solid rgba(255,179,71,0.15)',
-                  borderRadius: 10,
-                  padding: '12px 16px',
+                  background: 'linear-gradient(135deg, rgba(255,179,71,0.06), rgba(255,179,71,0.01))',
+                  border: '1px solid rgba(255,179,71,0.12)',
+                  borderRadius: 10, overflow: 'hidden',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                  <span style={{
-                    width: 22, height: 22, borderRadius: 11, background: '#ffb347',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 11, fontWeight: 700, color: '#fff',
-                  }}>{i + 1}</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#e6edf3' }}>{r.title}</span>
-                  <Tag color="gold" style={{ fontSize: 9, lineHeight: '16px', margin: 0 }}>
-                    {(r.confidence * 100).toFixed(0)}%
-                  </Tag>
-                </div>
-                <div style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.6, marginLeft: 30 }}>
-                  {r.reason}
+                <div style={{ display: 'flex', gap: 12, padding: '12px 16px' }}>
+                  {/* 封面缩略图 */}
+                  {r.posterUrl && (
+                    <img
+                      src={r.posterUrl}
+                      alt={r.title}
+                      style={{
+                        width: 64, height: 90, objectFit: 'cover', borderRadius: 6,
+                        border: '1px solid #30363d', flexShrink: 0,
+                      }}
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                    />
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {/* 标题行 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                      <span style={{
+                        width: 20, height: 20, borderRadius: 10, background: '#ffb347',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 10, fontWeight: 700, color: '#fff', flexShrink: 0,
+                      }}>{i + 1}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: '#e6edf3' }}>{r.title}</span>
+                      {r.bgmScore !== undefined && r.bgmScore > 0 && (
+                        <span style={{
+                          fontSize: 10, color: '#fb7299', fontWeight: 600,
+                          background: 'rgba(251,114,153,0.1)', padding: '1px 6px', borderRadius: 8,
+                        }}>
+                          AniList {r.bgmScore.toFixed(1)}
+                        </span>
+                      )}
+                      {r.airDate && (
+                        <span style={{ fontSize: 10, color: '#484f58' }}>{r.airDate}</span>
+                      )}
+                      <Tag color="gold" style={{ fontSize: 9, lineHeight: '16px', margin: 0 }}>
+                        {(r.confidence * 100).toFixed(0)}%
+                      </Tag>
+                    </div>
+
+                    {/* 简介（不剧透） */}
+                    {r.intro && (
+                      <div style={{
+                        fontSize: 11, color: '#8b949e', lineHeight: 1.7,
+                        marginBottom: 6,
+                      }}>
+                        {r.intro}
+                      </div>
+                    )}
+
+                    {/* 推荐理由 */}
+                    <div style={{
+                      fontSize: 11, color: '#ffb347', lineHeight: 1.6,
+                      padding: '6px 10px', background: 'rgba(255,179,71,0.06)',
+                      borderRadius: 6, borderLeft: '2px solid #ffb347',
+                    }}>
+                      💡 {r.reason}
+                    </div>
+
+                    {/* 匹配标签 */}
+                    {r.matchedTags.length > 0 && (
+                      <div style={{ display: 'flex', gap: 3, marginTop: 6, flexWrap: 'wrap' }}>
+                        {r.matchedTags.map((t) => (
+                          <span key={t} style={{
+                            fontSize: 9, color: '#2eaadc', padding: '1px 6px',
+                            background: 'rgba(46,170,220,0.08)', borderRadius: 8,
+                            border: '1px solid rgba(46,170,220,0.12)',
+                          }}>
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
-          </div>
+            </div>
+          )}
 
           {usage && (
             <div style={{ marginTop: 12, padding: '8px 14px', background: '#161b22', border: '1px solid #30363d',
@@ -1158,6 +1320,10 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
               <span style={{ color: '#484f58' }}>|</span>
               <span style={{ color: '#8b949e' }}>
                 预估 ¥{(usage.totalTokens / 1_000_000 * 2).toFixed(4)}（DeepSeek ¥2/1M tokens）
+              </span>
+              <span style={{ color: '#484f58' }}>|</span>
+              <span style={{ color: '#8b949e' }}>
+                {recommendations.sourceLabel || '外部'} 发现 {recommendations.candidateCount} 部
               </span>
             </div>
           )}
@@ -1178,7 +1344,7 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
         <div style={{ marginTop: 14, textAlign: 'center' }}>
           <Button size="small" icon={<ReloadOutlined />} onClick={runLLM}
             style={{ background: '#21262d', borderColor: '#30363d', color: '#8b949e', fontSize: 11 }}>
-            重新生成
+            换一批
           </Button>
         </div>
       )}
@@ -1266,7 +1432,7 @@ const TasteReportModal: React.FC<TasteReportModalProps> = ({
             key: 'recommend',
             label: (
               <span>
-                <GiftOutlined /> 智能推荐
+                <GiftOutlined /> 发现新番
               </span>
             ),
             children: <RecommendPanel animeList={animeList} />,

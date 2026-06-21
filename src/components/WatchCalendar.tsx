@@ -21,19 +21,19 @@ function formatYM(iso: string): string {
 const WatchTimeline: React.FC<WatchTimelineProps> = ({ animeList, onAnimeClick }) => {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
-  // 按首刷时间分组
+  // 按观看时间分组
   const timelineData = useMemo(() => {
-    // 筛选有首刷时间的条目
+    // 筛选有观看时间的条目
     const dated = animeList.filter((a) => a.createdAt && a.createdAt.length >= 7);
     const sorted = [...dated].sort((a, b) => {
-      const cmp = a.createdAt.localeCompare(b.createdAt);
+      const cmp = (a.createdAt || '').localeCompare(b.createdAt || '');
       return sortOrder === 'desc' ? -cmp : cmp;
     });
 
     // 按年月分组
     const groups: { label: string; items: AnimeEntry[] }[] = [];
     for (const anime of sorted) {
-      const ym = anime.createdAt.slice(0, 7); // YYYY-MM
+      const ym = (anime.createdAt || '').slice(0, 7); // YYYY-MM
       const last = groups[groups.length - 1];
       if (last && last.label === ym) {
         last.items.push(anime);
@@ -114,7 +114,7 @@ const WatchTimeline: React.FC<WatchTimelineProps> = ({ animeList, onAnimeClick }
                   {anime.title}
                 </span>
                 <span style={{ fontSize: 10, color: '#484f58' }}>
-                  {anime.releaseDate || ''}
+                  {(anime.watchDate || anime.createdAt || '').slice(5, 10)}
                 </span>
               </div>
             ))}

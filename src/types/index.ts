@@ -42,12 +42,18 @@ export interface AnimeEntry {
   scores: DimensionScore[];
   releaseDate?: string;
   bangumiScore?: number;
+  /** Bangumi subject ID，用于关联和跳转 */
+  bangumiId?: number;
   characters?: string[];
   episodes?: number;
   /** 制作组/动画公司 */
   studio?: string;
   /** 总张数（中割统计） */
   frameCount?: number;
+  /** AniList 评分 */
+  aniListScore?: number;
+  /** 观看时间（首刷日期） */
+  watchDate?: string;
   /** 全局评价 */
   review?: string;
   /** 备注 */

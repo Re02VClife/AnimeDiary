@@ -257,6 +257,9 @@ export function buildGraph(animeList: AnimeEntry[]): GraphData {
     }
   }
 
+  // ── Step 3: 生成番剧间连线 ──
+  generateAnimeAnimeEdges(animeList, edges);
+
   // ── 后处理：大小 → 颜色 ──
   applyNodeSizingByDegree(nodes, edges);
   applyColorPropagation(nodes, edges);
@@ -274,7 +277,7 @@ const COLOR_PROPAGATION_STRENGTH = 0.65;
  *   番剧默认灰，连接实体越多越趋近实体颜色的混合
  *   无连接的番剧保持灰色
  */
-function applyColorPropagation(
+export function applyColorPropagation(
   nodes: GraphNodeDef[],
   edges: GraphEdgeDef[],
 ): void {
@@ -380,6 +383,84 @@ function applyNodeSizingByDegree(
       const deg = degreeMap.get(n.id) || 0;
       const t = (deg - minDeg) / (maxDeg - minDeg);
       n.symbolSize = Math.round(minSize + t * (maxSize - minSize));
+    }
+  }
+}
+
+/**
+ * 生成番剧间连线（同制作公司、共享标签、评分相似）
+ *   与番剧网络 KnowledgeGraphModal 的连接方式一致
+ */
+function generateAnimeAnimeEdges(
+  animeList: AnimeEntry[],
+  edges: GraphEdgeDef[],
+): void {
+  if (animeList.length < 2) return;
+
+  // ── same_studio：同制作公司 ──
+  const studioGroups = new Map<string, string[]>();
+  for (const a of animeList) {
+    if (a.studio) {
+      const s = a.studio.trim();
+      if (s) {
+        if (!studioGroups.has(s)) studioGroups.set(s, []);
+        studioGroups.get(s)!.push(a.id);
+      }
+    }
+  }
+  for (const [, ids] of studioGroups) {
+    if (ids.length < 2) continue;
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        edges.push({
+          source: `anime:${ids[i]}`,
+          target: `anime:${ids[j]}`,
+          relation: 'same_studio',
+        });
+      }
+    }
+  }
+
+  // ── shared_tags：共享标签 Jaccard ≥ 0.25 ──
+  const tagSets = animeList.map((a) => new Set(a.tags.map((t) => t.name.trim()).filter(Boolean)));
+  for (let i = 0; i < animeList.length; i++) {
+    for (let j = i + 1; j < animeList.length; j++) {
+      const sim = jaccardSimilarity(tagSets[i], tagSets[j]);
+      if (sim >= 0.25) {
+        edges.push({
+          source: `anime:${animeList[i].id}`,
+          target: `anime:${animeList[j].id}`,
+          relation: 'shared_tags',
+          weight: sim,
+        });
+      }
+    }
+  }
+
+  // ── similar_scores：评分向量余弦相似 top-3/番剧 ──
+  const scoreVecs = animeList.map((a) => [
+    (a.bangumiScore ?? 0) / 10,
+    (a.aniListScore ?? 0) / 100,
+  ]);
+  const TOP_N = 3;
+  for (let i = 0; i < animeList.length; i++) {
+    const sims: { j: number; sim: number }[] = [];
+    for (let j = 0; j < animeList.length; j++) {
+      if (i === j) continue;
+      const sim = cosineSimilarity(scoreVecs[i], scoreVecs[j]);
+      if (sim > 0.7) sims.push({ j, sim });
+    }
+    sims.sort((a, b) => b.sim - a.sim);
+    for (let k = 0; k < Math.min(TOP_N, sims.length); k++) {
+      const j = sims[k].j;
+      if (i < j) {
+        edges.push({
+          source: `anime:${animeList[i].id}`,
+          target: `anime:${animeList[j].id}`,
+          relation: 'similar_scores',
+          weight: sims[k].sim,
+        });
+      }
     }
   }
 }
