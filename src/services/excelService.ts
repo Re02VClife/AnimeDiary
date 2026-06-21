@@ -5,7 +5,7 @@
  */
 import type { AnimeEntry, AnimeTag, DimensionScore, DimensionReview } from '../types';
 import { EXCEL_COL, MAIN_SHEET, DIMENSION_COL_MAP, EDITABLE_COLS } from './excelMapping';
-import { loadCategoryMap, loadWatchingDeleted, loadDimReviews, loadPosterBlacklist, loadPosterOverrides } from './storageService';
+import { loadCategoryMap, loadWatchingDeleted, loadDimReviews, loadPosterBlacklist, loadPosterOverrides, savePosterOverride } from './storageService';
 
 // ── API 基础路径 ──
 const API_BASE = '/api/excel';
@@ -100,7 +100,7 @@ function mapRowToAnime(row: unknown[], rowIndex: number): AnimeEntry | null {
     excelRowIndex: rowIndex,
     title,
     searchAlias: String(row[EXCEL_COL.SEARCH_ALIAS] || '').trim(),
-    posterUrl: '',
+    posterUrl: String(row[EXCEL_COL.POSTER_URL] || '').trim(),
     // 数据质量分类：无评分或无评价 → 在看
     category: (!hasScores || !reviewText) ? 'watching' : 'watched',
     tags: parseTags(String(row[EXCEL_COL.TAG] || '')),
@@ -183,6 +183,11 @@ function mapAnimeToUpdates(entry: AnimeEntry): ExcelUpdate[] {
     updates.push({ sheetName: MAIN_SHEET, rowIndex: rowIdx, colIndex: EXCEL_COL.FRAME_COUNT, value: entry.frameCount });
   }
 
+  // 海报 URL
+  if (entry.posterUrl) {
+    updates.push({ sheetName: MAIN_SHEET, rowIndex: rowIdx, colIndex: EXCEL_COL.POSTER_URL, value: entry.posterUrl });
+  }
+
   return updates;
 }
 
@@ -209,22 +214,29 @@ export async function loadAnimeList(): Promise<AnimeEntry[]> {
     const dimReviews = loadDimReviews();
     const posterOverrides = await loadPosterOverrides();
 
-    // ── 加载 AniList 海报缓存 ──
+    // ── 加载 AniList 海报缓存（仅对 Excel 中无海报的条目进行补完） ──
     const posterBlacklist = loadPosterBlacklist();
-    let posterMap: Record<string, string> = {};
+    const posterMap: Record<string, string> = {};
     try {
       const posterResp = await fetch('/api/anilist/cache');
       if (posterResp.ok) {
         const posterCache = await posterResp.json();
-        // 规范化匹配函数
-        const norm = (s: string) => s.replace(/[\s\-_:：・().]+/g, '').toLowerCase();
+        // 规范化匹配函数：去除所有空白和特殊字符后全等比较
+        const norm = (s: string) => s.replace(/[\s\-_:：・().、，。！？]+/g, '').toLowerCase();
         const cacheEntries = Object.entries(posterCache) as [string, { images?: { large?: string } }][];
         for (const entry of entries) {
+          // 已有海报（来自 Excel 列或用户覆盖）则跳过匹配
+          if (entry.posterUrl) continue;
           // 跳过黑名单中删过的海报
           if (posterBlacklist.has(entry.id)) continue;
           const keyNorm = norm(entry.title);
+          // 同时检查 searchAlias
+          const aliasNorm = entry.searchAlias ? norm(entry.searchAlias) : '';
           for (const [cacheKey, cacheVal] of cacheEntries) {
-            if (norm(cacheKey).includes(keyNorm) || keyNorm.includes(norm(cacheKey))) {
+            const cacheNorm = norm(cacheKey);
+            // 改为精确匹配：归一化后全等，杜绝"spy"匹配"spyfamily"这类误匹配
+            const isExactMatch = cacheNorm === keyNorm || (aliasNorm && cacheNorm === aliasNorm);
+            if (isExactMatch) {
               if (cacheVal.images?.large) {
                 posterMap[entry.id] = cacheVal.images.large;
                 break;
@@ -247,12 +259,15 @@ export async function loadAnimeList(): Promise<AnimeEntry[]> {
         if (dimReviews[entry.id]) {
           entry.dimensionReviews = dimReviews[entry.id];
         }
-        // 应用海报（用户手动 > 缓存匹配）
+        // 应用海报优先级：用户手动覆盖 > Excel 列持久化 > AniList 缓存匹配
         if (posterOverrides[entry.id]) {
           entry.posterUrl = posterOverrides[entry.id];
-          console.log('[excel] 海报覆盖:', entry.title, posterOverrides[entry.id].slice(0, 50));
+        } else if (entry.posterUrl) {
+          // 已有 Excel 列中的海报，保持不变
         } else if (posterMap[entry.id]) {
           entry.posterUrl = posterMap[entry.id];
+          // 新匹配到的海报自动持久化到 IndexedDB，下次可直接加载
+          savePosterOverride(entry.id, posterMap[entry.id]).catch(() => {});
         }
         return entry;
       });
@@ -262,6 +277,56 @@ export async function loadAnimeList(): Promise<AnimeEntry[]> {
     console.error('Excel 读取失败，使用 Mock 数据:', e);
     return getMockAnimeList();
   }
+}
+
+/** 仅保存海报 URL 到 Excel（独立写入，不需依赖主保存按钮） */
+export async function savePosterUrlToExcel(entry: AnimeEntry): Promise<void> {
+  if (entry.excelRowIndex === undefined || !entry.posterUrl) return;
+  const updates: ExcelUpdate[] = [{
+    sheetName: MAIN_SHEET,
+    rowIndex: entry.excelRowIndex,
+    colIndex: EXCEL_COL.POSTER_URL,
+    value: entry.posterUrl,
+  }];
+  const response = await fetch(`${API_BASE}/write`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({ error: '请求失败' }));
+    throw new Error(data.error || `HTTP ${response.status}`);
+  }
+  const data = await response.json();
+  if (data.error) throw new Error(data.error);
+}
+
+/** 批量将所有番剧的海报 URL 写入 Excel（一次 API 调用） */
+export async function batchSaveAllPosters(entries: AnimeEntry[]): Promise<number> {
+  const allUpdates: ExcelUpdate[] = [];
+  for (const entry of entries) {
+    if (entry.excelRowIndex === undefined || !entry.posterUrl) continue;
+    allUpdates.push({
+      sheetName: MAIN_SHEET,
+      rowIndex: entry.excelRowIndex,
+      colIndex: EXCEL_COL.POSTER_URL,
+      value: entry.posterUrl,
+    });
+  }
+  if (allUpdates.length === 0) return 0;
+
+  const response = await fetch(`${API_BASE}/write`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(allUpdates),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({ error: '请求失败' }));
+    throw new Error(data.error || `HTTP ${response.status}`);
+  }
+  const data = await response.json();
+  if (data.error) throw new Error(data.error);
+  return allUpdates.length;
 }
 
 /** 保存单条番剧的修改到 Excel */

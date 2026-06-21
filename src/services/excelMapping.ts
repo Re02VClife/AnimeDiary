@@ -42,6 +42,7 @@ export const EXCEL_COL = {
   CHAR4_NAME: 35,     // AJ - 角色4
   ANILIST_SCORE: 36,  // AK - AniList 评分
   WATCH_DATE: 17,     // R - 首刷时间（别名，同 FIRST_WATCH）
+  POSTER_URL: 37,     // AL - 海报 URL（持久化存储）
 } as const;
 
 /** Excel 工作表名称 */
@@ -91,4 +92,5 @@ export const EDITABLE_COLS: number[] = [
   EXCEL_COL.FIRST_WATCH,
   EXCEL_COL.BGM_SCORE,
   EXCEL_COL.ANILIST_SCORE,
+  EXCEL_COL.POSTER_URL,
 ];

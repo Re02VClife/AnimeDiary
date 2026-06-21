@@ -35,6 +35,7 @@ interface SidebarProps {
   onOpenExcel?: () => void;
   onOpenAISettings?: () => void;
   onOpenTasteReport?: () => void;
+  onBatchSavePosters?: () => void;
 }
 
 /** Tag 预设存储 key */
@@ -83,6 +84,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onOpenExcel,
   onOpenAISettings,
   onOpenTasteReport,
+  onBatchSavePosters,
 }) => {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [showCalendar, setShowCalendar] = useState(true);
@@ -577,6 +579,11 @@ const Sidebar: React.FC<SidebarProps> = ({
           {onOpenExcel && (
             <div className="settings-item" onClick={onOpenExcel}>
               <span>📋 查看 Excel</span>
+            </div>
+          )}
+          {onBatchSavePosters && (
+            <div className="settings-item" onClick={onBatchSavePosters}>
+              <span>🖼 持久化所有海报</span>
             </div>
           )}
           {onExportUserData && (

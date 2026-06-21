@@ -10,7 +10,7 @@ import DimensionManager from './components/DimensionManager';
 import KnowledgeGraphModal from './components/KnowledgeGraphModal';
 import AISettings from './components/AISettings';
 import TasteReportModal from './components/TasteReportModal';
-import { loadAnimeList, updateAnimeEntry } from './services/excelService';
+import { loadAnimeList, updateAnimeEntry, batchSaveAllPosters } from './services/excelService';
 import { saveCategory, addToWatchingDeleted, loadImgHeight, saveImgHeight, exportAllUserData, importUserData } from './services/storageService';
 import { rankByDimension } from './services/rankingService';
 import type { AnimeCategory, AnimeEntry, DimensionScore, AnimeTag } from './types';
@@ -247,6 +247,22 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // 一键持久化所有海报到 Excel
+  const handleBatchSavePosters = useCallback(async () => {
+    const candidates = animeList.filter((a) => a.excelRowIndex !== undefined && a.posterUrl);
+    if (candidates.length === 0) { message.warning('没有需要持久化的海报'); return; }
+
+    const hide = message.loading(`正在持久化海报 (0/${candidates.length})…`, 0);
+    try {
+      const count = await batchSaveAllPosters(candidates);
+      hide();
+      message.success(`✅ 已持久化 ${count} 张海报到 Excel`);
+    } catch (e) {
+      hide();
+      message.error('持久化失败：' + (e instanceof Error ? e.message : '未知错误'));
+    }
+  }, [animeList]);
+
   // 一键修正检索名：调 AniList API 取日文名填入检索名列
   const handleFixSearchAlias = useCallback(async () => {
     const candidates = animeList.filter((a) => a.excelRowIndex !== undefined);
@@ -459,6 +475,7 @@ const App: React.FC = () => {
           onOpenExcel={handleOpenExcel}
           onOpenAISettings={() => setAiSettingsOpen(true)}
           onOpenTasteReport={() => setTasteReportOpen(true)}
+          onBatchSavePosters={handleBatchSavePosters}
         />
       </Sider>
 
