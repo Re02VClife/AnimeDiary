@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { ConfigProvider, theme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
+import { AnimeProvider } from '../context/AnimeContext';
 import App from './App';
 import './index.css';
 
@@ -24,7 +25,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         },
       }}
     >
-      <App />
+      <AnimeProvider>
+        <App />
+      </AnimeProvider>
     </ConfigProvider>
   </React.StrictMode>
 );

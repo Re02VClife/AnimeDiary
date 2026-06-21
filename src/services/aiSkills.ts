@@ -12,21 +12,12 @@ import { DEFAULT_DIMENSIONS } from '../types';
 import { buildPercentileMap, getPercentileScores } from './rankingService';
 import { chat } from './llmService';
 
-/** 从 LLM 原始输出中提取 JSON（处理 markdown 代码块等） */
-function extractJSON(raw: string): string {
-  // 去掉 ```json ... ``` 包裹
-  const codeBlock = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (codeBlock) return codeBlock[1].trim();
-  // 尝试找到第一个 { 到最后一个 }
-  const start = raw.indexOf('{');
-  const end = raw.lastIndexOf('}');
-  if (start >= 0 && end > start) return raw.slice(start, end + 1);
-  return raw.trim();
-}
+// ── core/ 工具函数 ──
+import { cosineSimilarity, jaccardArrays } from '../../core/math';
+import { extractJSON, extractKeywords } from '../../core/text';
 
 // ════════════════════════════════════════════════════════════════════
 // 工具函数
-// ════════════════════════════════════════════════════════════════════
 
 /** 获取番剧某维度分数 */
 function getScore(a: AnimeEntry, dimKey: string): number {
@@ -59,39 +50,6 @@ function calcTasteDeviation(a: AnimeEntry): number | null {
   const vibe = getScore(a, 'vibe');
   if (overall <= 0 || vibe <= 0) return null;
   return (overall * 0.4 + vibe * 0.6) - bgm;
-}
-
-/** 简单中文分词 + 关键词提取（频次统计，不调 LLM） */
-function extractKeywords(
-  texts: string[],
-  topN: number = 20,
-): string[] {
-  const stopWords = new Set([
-    '的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一',
-    '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会', '着',
-    '没有', '看', '好', '自己', '这', '他', '她', '它', '们', '那', '但',
-    '而', '且', '或', '与', '及', '之', '为', '以', '可以', '这个', '那个',
-    '还', '更', '最', '被', '把', '从', '让', '对', '所以', '因为', '如果',
-    '虽然', '但是', '然而', '然后', '于是', '因此', '不过', '只是', '觉得',
-    '感觉', '真的', '非常', '比较', '特别', '一些', '很多', '这部', '这部番',
-    '番', '动漫', '动画', '作品', '剧情', '角色', '制作', '画面', '音乐',
-  ]);
-
-  const wordFreq: Record<string, number> = {};
-  for (const text of texts) {
-    // 按标点/空格分割
-    const segments = text.split(/[，,。.!！？?、；;：:（）()【】\[\]""''\s\n\r]+/);
-    for (const seg of segments) {
-      if (!seg || seg.length < 2 || seg.length > 8) continue;
-      if (stopWords.has(seg)) continue;
-      wordFreq[seg] = (wordFreq[seg] || 0) + 1;
-    }
-  }
-
-  return Object.entries(wordFreq)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, topN)
-    .map(([w]) => w);
 }
 
 /** 格式化维度分数为一行 */
@@ -620,26 +578,7 @@ function buildScoreVector(a: AnimeEntry): number[] {
     .map((d) => getScore(a, d.key));
 }
 
-/** 余弦相似度 */
-export function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0, normA = 0, normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  if (normA === 0 || normB === 0) return 0;
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
-/** Jaccard 相似度 */
-function jaccard(a: string[], b: string[]): number {
-  const setA = new Set(a);
-  const setB = new Set(b);
-  const intersection = [...setA].filter((x) => setB.has(x)).length;
-  const union = new Set([...a, ...b]).size;
-  return union === 0 ? 0 : intersection / union;
-}
+/** Jaccard 相似度（数组版本 — 已从 core/math 导入 jaccardArrays） */
 
 /** AniList 搜索结果条目 */
 interface DiscoverItem {
@@ -1149,7 +1088,7 @@ export async function graphOptimize(
     for (let j = i + 1; j < tagNames.length; j++) {
       const idsA = new Set(tagAnimeMap[tagNames[i]].map((a) => a.id));
       const idsB = new Set(tagAnimeMap[tagNames[j]].map((a) => a.id));
-      const jac = jaccard([...idsA], [...idsB]);
+      const jac = jaccardArrays([...idsA], [...idsB]);
       if (jac >= 0.4 && tagNames[i] !== tagNames[j]) {
         const aLen = idsA.size;
         const bLen = idsB.size;

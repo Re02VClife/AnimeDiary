@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react';
 import { Modal, Input, InputNumber, Select, Button, List, Space, message, Popconfirm, Form } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { AnimeEntry, EpisodeReview as EpisodeReviewType } from '../types';
-import { loadEpisodeReviews, saveEpisodeReview, deleteEpisodeReview } from '../services/storageService';
+import { loadEpisodeReviews, saveEpisodeReview, deleteEpisodeReview } from '../../features/anime-data/storage-service';
 
 const { TextArea } = Input;
 

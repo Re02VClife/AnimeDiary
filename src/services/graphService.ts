@@ -12,101 +12,10 @@ import type {
 } from '../types/graph';
 import { CATEGORY_TO_INDEX } from '../types/graph';
 
-// ── 工具函数 ──
-
-/** 字符串哈希 → 0-360 的色相值（同一名称始终同色） */
-function nameToHue(name: string): number {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
-  }
-  return Math.abs(hash) % 360;
-}
-
-/** HSL → HEX（s/l 为 0-100 的百分比） */
-function hslToHex(h: number, s: number, l: number): string {
-  const sNorm = s / 100;
-  const lNorm = l / 100;
-  const a = sNorm * Math.min(lNorm, 1 - lNorm);
-  const f = (n: number) => {
-    const k = (n + h / 30) % 12;
-    return lNorm - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
-  };
-  const r = Math.round(f(0) * 255);
-  const g = Math.round(f(8) * 255);
-  const b = Math.round(f(4) * 255);
-  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-}
-
-/** HEX → { h, s, l }（用于颜色混合） */
-function hexToHsl(hex: string): { h: number; s: number; l: number } {
-  const r = parseInt(hex.slice(1, 3), 16) / 255;
-  const g = parseInt(hex.slice(3, 5), 16) / 255;
-  const b = parseInt(hex.slice(5, 7), 16) / 255;
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const l = (max + min) / 2;
-  let h = 0;
-  let s = 0;
-  if (max !== min) {
-    const d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
-    else if (max === g) h = ((b - r) / d + 2) / 6;
-    else h = ((r - g) / d + 4) / 6;
-  }
-  return { h: h * 360, s: s * 100, l: l * 100 };
-}
-
-/** 混合多个 HSL 颜色，取平均色相（环形均值）和平均饱和/亮度 */
-function mixHslColors(colors: { h: number; s: number; l: number }[]): { h: number; s: number; l: number } {
-  if (colors.length === 0) return { h: 0, s: 0, l: 45 };
-  // 色相用环形均值（sin/cos 平均）
-  let sinSum = 0, cosSum = 0, sSum = 0, lSum = 0;
-  for (const c of colors) {
-    const rad = (c.h * Math.PI) / 180;
-    sinSum += Math.sin(rad);
-    cosSum += Math.cos(rad);
-    sSum += c.s;
-    lSum += c.l;
-  }
-  const avgH = ((Math.atan2(sinSum / colors.length, cosSum / colors.length) * 180) / Math.PI + 360) % 360;
-  return {
-    h: avgH,
-    s: sSum / colors.length,
-    l: lSum / colors.length,
-  };
-}
-
-/** 计算两个向量的余弦相似度 */
-export function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  if (normA === 0 || normB === 0) return 0;
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
-/** 计算两个标签集合的 Jaccard 相似度 */
-export function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
-  let intersection = 0;
-  for (const item of a) {
-    if (b.has(item)) intersection++;
-  }
-  const union = a.size + b.size - intersection;
-  return union === 0 ? 0 : intersection / union;
-}
-
-/** 安全截断字符串（用于节点标签） */
-function truncate(str: string, maxLen: number): string {
-  if (str.length <= maxLen) return str;
-  return str.slice(0, maxLen) + '…';
-}
+// ── core/ 工具函数 ──
+import { cosineSimilarity, jaccardSimilarity } from '../../core/math';
+import { nameToHue, hslToHex, hexToHsl, mixHslColors } from '../../core/color';
+import { truncate } from '../../core/text';
 
 // ── 核心构建函数 ──
 

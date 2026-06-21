@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Popconfirm } from 'antd';
 import { DeleteOutlined } from '@ant-design/icons';
 import type { AnimeEntry } from '../types';
-import { loadPosterPositions } from '../services/storageService';
+import { loadPosterPositions } from '../../features/anime-data/storage-service';
 
 interface AnimeGridProps {
   animeList: AnimeEntry[];
