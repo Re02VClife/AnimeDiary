@@ -2,7 +2,7 @@
  * 排名计算服务
  *   计算各维度在全体数据中的百分位排名
  */
-import type { AnimeEntry, DimensionScore } from '../types';
+import type { AnimeEntry, Dimension, DimensionScore } from '../types';
 import { DEFAULT_DIMENSIONS } from '../types';
 
 /** 某维度在所有番剧中的分数分布 */
@@ -24,11 +24,8 @@ type AllStats = Record<string, DimensionStats>;
 export function buildPercentileMap(allAnime: AnimeEntry[]): AllStats {
   const stats: AllStats = {};
 
-  // 收集每个维度的所有分数
+  // 从数据中动态收集所有维度的分数（不再硬编码 DEFAULT_DIMENSIONS）
   const dimScores: Record<string, number[]> = {};
-  for (const dim of DEFAULT_DIMENSIONS) {
-    dimScores[dim.key] = [];
-  }
 
   for (const anime of allAnime) {
     for (const score of anime.scores) {
@@ -69,10 +66,12 @@ export function buildPercentileMap(allAnime: AnimeEntry[]): AllStats {
 export function getPercentileScores(
   anime: AnimeEntry,
   stats: AllStats,
+  dimensions?: Dimension[],
 ): { dimensionKey: string; label: string; percentile: number; rawScore: number }[] {
   const result: { dimensionKey: string; label: string; percentile: number; rawScore: number }[] = [];
+  const dims = dimensions || DEFAULT_DIMENSIONS;
 
-  for (const dim of DEFAULT_DIMENSIONS) {
+  for (const dim of dims) {
     const score = anime.scores.find((s) => s.dimensionKey === dim.key);
     const rawScore = score?.score ?? 0;
 

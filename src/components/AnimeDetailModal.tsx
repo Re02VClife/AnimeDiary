@@ -1,8 +1,11 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Modal, InputNumber, Input, Tag, Descriptions, Button, Space, message, Tooltip, Select, Popover, Image, Typography, Checkbox } from 'antd';
+import { Modal, InputNumber, Input, Tag, Descriptions, Button, Space, Tooltip, Select, Popover, Image, Typography, Checkbox, Slider, Segmented } from 'antd';
 import { SaveOutlined, PlusOutlined, EditOutlined, LeftOutlined, RightOutlined, PictureOutlined, ImportOutlined, ThunderboltOutlined, TagOutlined, SearchOutlined } from '@ant-design/icons';
-import type { AnimeEntry, AnimeTag, DimensionScore, DimensionReview, AnimeCategory, BangumiSearchItem } from '../types';
-import { DEFAULT_DIMENSIONS, DIMENSION_LABEL_MAP, CATEGORY_CONFIG } from '../types';
+import type { AnimeEntry, AnimeTag, DimensionScore, DimensionReview, AnimeCategory, BangumiSearchItem, Dimension, DetailLayoutConfig } from '../types';
+import { DEFAULT_DIMENSIONS, DIMENSION_LABEL_MAP, CATEGORY_CONFIG, DEFAULT_FIELD_CONFIG, DEFAULT_DETAIL_LAYOUT } from '../types';
+import { getTemplate, loadTemplates, updateTemplate } from '../../features/anime-data/template-service';
+import { catgirlMessage } from '../theme';
+import type { TemplateFieldConfig } from '../types';
 import { fetchPoster, savePosterUrlToExcel } from '../../features/anime-data/excel-service';
 import { loadImages, saveImage as saveImageToLocal } from '../services/imageService';
 import { addToPosterBlacklist, loadPosterBlacklist, savePosterOverride, loadPosterPositions, savePosterPosition } from '../../features/anime-data/storage-service';
@@ -25,10 +28,14 @@ interface AnimeDetailModalProps {
   allAnime?: AnimeEntry[];
   onPosterChange?: (animeId: string, posterUrl: string) => void;
   imgHeight?: number;
+  editMode?: boolean;
+  radarMode?: 'percentile' | 'fixed';
+  radarMin?: number;
 }
 
 const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   anime, open, onClose, onSave, onNavigate, allAnime = [], onPosterChange, imgHeight = 360,
+  editMode = false, radarMode = 'percentile', radarMin,
 }) => {
   const [scores, setScores] = useState<DimensionScore[]>([]);
   const [review, setReview] = useState('');
@@ -53,6 +60,9 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   const [editFrameCount, setEditFrameCount] = useState<number | undefined>();
   const [editSearchAlias, setEditSearchAlias] = useState('');
   const [editBangumiId, setEditBangumiId] = useState<number | undefined>();
+  const [templateId, setTemplateId] = useState<string | undefined>();
+  const [customFields, setCustomFields] = useState<Record<string, string | number>>({});
+  const [link, setLink] = useState('');
   const [posterUrl, setPosterUrl] = useState('');
   const [allImages, setAllImages] = useState<string[]>([]);
   const [slideIdx, setSlideIdx] = useState(0);
@@ -62,6 +72,13 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   const [dragging, setDragging] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false); // 原图预览
   const [savingPoster, setSavingPoster] = useState(false); // 保存封面中
+
+  // ── 布局自定义状态（编辑模式下可拖动调整） ──
+  const [layoutCfg, setLayoutCfg] = useState<DetailLayoutConfig>(DEFAULT_DETAIL_LAYOUT);
+  const [dragKey, setDragKey] = useState<string | null>(null); // 正在拖拽的区块 key
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null); // 拖拽悬停目标 key
+  const [colDividerDragging, setColDividerDragging] = useState(false); // 正在拖动分栏分隔条
+  const layoutSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── 前后番剧导航 ──
   const navIndex = useMemo(() => {
@@ -93,7 +110,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   /** 执行单番深度分析 */
   const handleAIAnalysis = async () => {
     if (!anime || !hasAIConfig()) {
-      message.warning('请先在侧栏 AI 设置中配置 API Key');
+      catgirlMessage.warning('请先在侧栏 AI 设置中配置 API Key');
       return;
     }
     setAiAnalysisLoading(true);
@@ -112,7 +129,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   /** 执行智能打 Tag */
   const handleAutoTag = async () => {
     if (!anime || !hasAIConfig()) {
-      message.warning('请先在侧栏 AI 设置中配置 API Key');
+      catgirlMessage.warning('请先在侧栏 AI 设置中配置 API Key');
       return;
     }
     setAutoTagLoading(true);
@@ -121,7 +138,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       const result = await autoTag(anime);
       setAutoTagResult(result);
     } catch (e) {
-      message.error(e instanceof Error ? e.message : '打标签失败');
+      catgirlMessage.error(e instanceof Error ? e.message : '打标签失败');
     } finally {
       setAutoTagLoading(false);
     }
@@ -130,7 +147,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   /** 采纳建议标签 */
   const adoptTag = (name: string) => {
     if (tags.some((t) => t.name === name)) {
-      message.warning('标签已存在');
+      catgirlMessage.warning('标签已存在');
       return;
     }
     setTags((prev) => [...prev, { name, highlighted: true }]);
@@ -141,7 +158,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
         suggestedTags: prev.suggestedTags.filter((t) => t.name !== name),
       };
     });
-    message.success(`已添加标签「${name}」`);
+    catgirlMessage.success(`已添加标签「${name}」`);
   };
 
   /** 重新检索：中文名 + 检索名各搜一遍，合并去重 */
@@ -198,7 +215,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       setReSearchResults(allResults);
     } catch {
       setReSearchResults([]);
-      message.info('搜索暂不可用');
+      catgirlMessage.info('搜索暂不可用');
     } finally {
       setReSearching(false);
     }
@@ -249,7 +266,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
     setImportItem(null);
     setShowReSearch(false);
     setReSearchResults([]);
-    message.success(`已导入「${name}」的信息`);
+    catgirlMessage.success(`已导入「${name}」的信息`);
   };
   const handleSavePoster = async () => {
     if (!anime) return;
@@ -278,9 +295,9 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       onPosterChange?.(anime.id, entry.dataUrl);
       // 同步写入 Excel
       savePosterUrlToExcel({ ...anime, posterUrl: entry.dataUrl }).catch(() => {});
-      message.success(`封面已保存到本地：${entry.fileName}`);
+      catgirlMessage.success(`封面已保存到本地：${entry.fileName}`);
     } catch (e) {
-      message.error('保存封面失败');
+      catgirlMessage.error('保存封面失败');
     } finally {
       setSavingPoster(false);
     }
@@ -325,6 +342,9 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       setEditFrameCount(anime.frameCount);
       setEditSearchAlias(anime.searchAlias || '');
       setEditBangumiId(anime.bangumiId);
+      setTemplateId(anime.templateId);
+      setCustomFields(anime.customFields || {});
+      setLink(anime.link || '');
       // 构建图片列表：封面 + 本地存储的图片
       loadImages(anime.title).then(stored => {
         const storedUrls = stored.map((img) => img.dataUrl);
@@ -360,6 +380,28 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
     return stopSlide;
   }, [anime]);
 
+  // editMode 时自动进入编辑状态（用于新增后直接编辑）
+  useEffect(() => {
+    if (open && editMode && anime) {
+      setEditing(true);
+    }
+  }, [open, editMode, anime]);
+
+  // 切换评分模板时：保留同名维度分数，新维度初始化为 0，旧维度丢弃
+  useEffect(() => {
+    if (!templateId) return;
+    const t = getTemplate(templateId);
+    if (!t) return;
+    const newKeys = t.dimensions.map((d) => d.key);
+    setScores((prev) => {
+      const prevMap = new Map(prev.map((s) => [s.dimensionKey, s.score]));
+      return newKeys.map((key) => ({
+        dimensionKey: key,
+        score: prevMap.get(key) ?? 0,
+      }));
+    });
+  }, [templateId]);
+
   // 轮播翻页
   const prevSlide = () => { stopSlide(); setSlideIdx((p) => (p - 1 + allImages.length) % allImages.length); };
   const nextSlide = () => { stopSlide(); setSlideIdx((p) => (p + 1) % allImages.length); };
@@ -388,16 +430,19 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   };
 
 
-  // 计算总评
+  // 计算总评（使用当前选中模板的维度和权重）
   const overallScore = useMemo(() => {
-    const dims = DEFAULT_DIMENSIONS.filter((d) => d.key !== 'overall' && d.weight > 0);
+    const tid = templateId;
+    const t = tid ? getTemplate(tid) : null;
+    const templateDims = t?.dimensions || DEFAULT_DIMENSIONS;
+    const dims = templateDims.filter((d) => d.key !== 'overall' && d.weight > 0);
     let tw = 0, ws = 0;
     for (const dim of dims) {
       const score = scores.find((s) => s.dimensionKey === dim.key)?.score ?? 0;
       if (score > 0) { ws += score * dim.weight; tw += dim.weight; }
     }
     return tw > 0 ? (ws / tw).toFixed(2) : '-';
-  }, [scores]);
+  }, [scores, templateId]);
 
   // 更新维度分数
   const handleScoreChange = (dimKey: string, value: number | null) => {
@@ -423,14 +468,17 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
 
   /** 将全部维度评分+专项评价按模板批量插入全局评价底部 */
   const importAllDimsToReview = () => {
+    const tid = templateId;
+    const t = tid ? getTemplate(tid) : null;
+    const templateDims = t?.dimensions || DEFAULT_DIMENSIONS;
     const lines: string[] = [];
 
     // 总评（首行）
-    const overallScore = scores.find((sc) => sc.dimensionKey === 'overall')?.score;
-    const overallScoreStr = overallScore && overallScore > 0 ? overallScore.toFixed(2) : '-';
+    const overallScoreVal = scores.find((sc) => sc.dimensionKey === 'overall')?.score;
+    const overallScoreStr = overallScoreVal && overallScoreVal > 0 ? overallScoreVal.toFixed(2) : '-';
     lines.push(`${padRight('总评', 4)} ${overallScoreStr.padStart(5)}`);
 
-    for (const dim of DEFAULT_DIMENSIONS) {
+    for (const dim of templateDims) {
       if (dim.key === 'overall') continue;
       const s = scores.find((sc) => sc.dimensionKey === dim.key);
       const rawScore = s?.score ?? 0;
@@ -443,7 +491,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       const trimmed = prev.trimEnd();
       return trimmed ? `${trimmed}\n${lines.join('\n')}` : lines.join('\n');
     });
-    message.success(`已导入 ${lines.length} 个维度评分到评价`);
+    catgirlMessage.success(`已导入 ${lines.length} 个维度评分到评价`);
   };
 
   // ── 可选标签：从全部番剧中收集，排除已在当前番剧的，按使用次数排序 ──
@@ -469,7 +517,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
     const name = tagInput.trim();
     if (name) {
       // 有输入内容 → 直接添加
-      if (tags.some((t) => t.name === name)) { message.warning('标签已存在'); return; }
+      if (tags.some((t) => t.name === name)) { catgirlMessage.warning('标签已存在'); return; }
       setTags((prev) => [...prev, { name, highlighted: true }]);
       setTagInput('');
     } else {
@@ -480,7 +528,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
 
   /** 从标签选择器中点选标签 */
   const selectTagFromPicker = (name: string) => {
-    if (tags.some((t) => t.name === name)) { message.warning('标签已存在'); return; }
+    if (tags.some((t) => t.name === name)) { catgirlMessage.warning('标签已存在'); return; }
     setTags((prev) => [...prev, { name, highlighted: true }]);
     setShowTagPicker(false);
   };
@@ -509,6 +557,8 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
         ...anime!,
         title: editTitle.trim() || anime!.title,
         scores, review, tags, dimensionReviews: dimReviews, category, posterUrl,
+        templateId, customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
+        link: link.trim() || undefined,
         releaseDate: editReleaseDate || undefined,
         watchDate: editWatchDate || undefined,
         bangumiScore: editBgmScore,
@@ -518,18 +568,120 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
         searchAlias: editSearchAlias || undefined,
         bangumiId: editBangumiId,
       });
-      message.success('已保存到 Excel');
+      catgirlMessage.success('已保存到 Excel');
       setEditing(false);
     } catch (e) {
-      message.error('保存失败：' + (e instanceof Error ? e.message : '未知错误'));
+      catgirlMessage.error('保存失败：' + (e instanceof Error ? e.message : '未知错误'));
     } finally {
       setSaving(false);
     }
   };
 
-  if (!anime) return null;
+  // 当前模板的字段配置（依赖本地 templateId 以支持即时切换）
+  const templateCfg: TemplateFieldConfig = useMemo(() => {
+    try {
+      const tid = templateId;
+      const t = tid ? getTemplate(tid) : null;
+      return t?.fieldConfig || { ...DEFAULT_FIELD_CONFIG, customFields: [] };
+    } catch { return { ...DEFAULT_FIELD_CONFIG, customFields: [] }; }
+  }, [templateId]);
 
-  const displayDims = DEFAULT_DIMENSIONS.filter((d) => d.key !== 'overall');
+  // 当前模板的分类标签
+  const categoryLabels = useMemo(() => {
+    try {
+      const tid = templateId;
+      const t = tid ? getTemplate(tid) : null;
+      if (!t?.categoryLabels || Object.keys(t.categoryLabels).length === 0) return CATEGORY_CONFIG;
+      const merged = { ...CATEGORY_CONFIG };
+      for (const [k, v] of Object.entries(t.categoryLabels)) {
+        if (v && merged[k as AnimeCategory]) merged[k as AnimeCategory] = { ...merged[k as AnimeCategory], label: v };
+      }
+      return merged;
+    } catch { return CATEGORY_CONFIG; }
+  }, [templateId]);
+
+  // 当前模板的展示维度（依赖本地 templateId 以支持即时切换）
+  const displayDims = useMemo(() => {
+    const tid = templateId;
+    const t = tid ? getTemplate(tid) : null;
+    return (t?.dimensions || DEFAULT_DIMENSIONS).filter((d) => d.key !== 'overall');
+  }, [templateId]);
+
+  // 当前模板的布局配置（缺省使用默认布局）
+  const templateLayout = useMemo(() => {
+    const tid = templateId;
+    const t = tid ? getTemplate(tid) : null;
+    return t?.layoutConfig || DEFAULT_DETAIL_LAYOUT;
+  }, [templateId]);
+
+  // 打开面板 / 切换模板时同步布局配置
+  useEffect(() => {
+    setLayoutCfg(structuredClone(templateLayout));
+  }, [templateLayout]);
+
+  // 布局变更防抖持久化到模板（仅在编辑模式且有模板时）
+  useEffect(() => {
+    if (!editing || !templateId) return;
+    if (layoutSaveTimer.current) clearTimeout(layoutSaveTimer.current);
+    layoutSaveTimer.current = setTimeout(() => {
+      // 比较当前配置与模板原始配置，避免无变更写入
+      if (JSON.stringify(layoutCfg) === JSON.stringify(templateLayout)) return;
+      updateTemplate(templateId, { layoutConfig: layoutCfg });
+    }, 500);
+    return () => { if (layoutSaveTimer.current) clearTimeout(layoutSaveTimer.current); };
+  }, [layoutCfg, editing, templateId, templateLayout]);
+
+  // ── 拖拽排序处理 ──
+  const handleDragStart = (key: string, column: 'left' | 'right') => (e: React.DragEvent) => {
+    e.dataTransfer.setData('text/plain', key);
+    e.dataTransfer.effectAllowed = 'move';
+    setDragKey(key);
+    setDragOverKey(null);
+  };
+
+  const handleDragOver = (key: string, column: 'left' | 'right') => (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragKey && dragKey !== key) {
+      setDragOverKey(key);
+    }
+  };
+
+  const handleDrop = (targetKey: string, column: 'left' | 'right') => (e: React.DragEvent) => {
+    e.preventDefault();
+    const srcKey = e.dataTransfer.getData('text/plain');
+    if (!srcKey || srcKey === targetKey) { setDragKey(null); setDragOverKey(null); return; }
+
+    const orderKey = column === 'left' ? 'leftOrder' : 'rightOrder';
+    const currentOrder = [...layoutCfg[orderKey]];
+    const srcIdx = currentOrder.indexOf(srcKey);
+    const tgtIdx = currentOrder.indexOf(targetKey);
+
+    if (srcIdx === -1 || tgtIdx === -1) { setDragKey(null); setDragOverKey(null); return; }
+
+    // 移动源 key 到目标位置
+    currentOrder.splice(srcIdx, 1);
+    const newTgtIdx = currentOrder.indexOf(targetKey);
+    currentOrder.splice(newTgtIdx, 0, srcKey);
+
+    setLayoutCfg((prev) => ({ ...prev, [orderKey]: currentOrder }));
+    setDragKey(null);
+    setDragOverKey(null);
+  };
+
+  const handleDragEnd = () => {
+    setDragKey(null);
+    setDragOverKey(null);
+  };
+
+  // 获取区块在排序数组中的 order 值（用于 CSS order）
+  const getSectionOrder = (key: string, column: 'left' | 'right'): number => {
+    const orderArr = column === 'left' ? layoutCfg.leftOrder : layoutCfg.rightOrder;
+    const idx = orderArr.indexOf(key);
+    return idx === -1 ? 99 : idx;
+  };
+
+  if (!anime) return null;
 
   return (
     <Modal
@@ -539,13 +691,24 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)}
-                  style={{ fontSize: 23, fontWeight: 600, background: '#0d1117', borderColor: '#30363d', color: '#e6edf3', width: 300 }} />
+                  style={{ fontSize: 23, fontWeight: 600, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)', width: 300 }} />
+                <Input
+                  size="small"
+                  value={link}
+                  onChange={(e) => setLink(e.target.value)}
+                  placeholder="绑定链接（可选）"
+                  style={{
+                    width: 200, marginTop: 4,
+                    background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-secondary)',
+                    fontSize: 12,
+                  }}
+                />
                 <Button
                   size="small"
                   icon={<SearchOutlined />}
                   loading={reSearching}
                   onClick={() => handleReSearch(false)}
-                  style={{ background: '#21262d', borderColor: '#30363d', color: '#8b949e', fontSize: 11 }}
+                  style={{ background: 'var(--bg-quaternary)', borderColor: 'var(--border-primary)', color: 'var(--text-secondary)', fontSize: 11 }}
                 >
                   重新检索
                 </Button>
@@ -553,7 +716,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                   size="small"
                   loading={reSearching}
                   onClick={() => handleReSearch(true)}
-                  style={{ background: '#21262d', borderColor: '#f85149', color: '#f85149', fontSize: 11 }}
+                  style={{ background: 'var(--bg-quaternary)', borderColor: 'var(--color-error)', color: 'var(--color-error)', fontSize: 11 }}
                   title="跳过缓存，强制从 API 重新获取"
                 >
                   🔄 强制刷新
@@ -567,7 +730,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{
-                      fontSize: 10, color: '#fb7299', opacity: 0.6,
+                      fontSize: 10, color: 'var(--brand-primary)', opacity: 0.6,
                       textDecoration: 'none', flexShrink: 0,
                       fontFamily: 'monospace',
                     }}
@@ -585,7 +748,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                     disabled={!prevAnime}
                     onClick={() => prevAnime && handleNavigate(prevAnime)}
                     title={prevAnime ? `上一个：${prevAnime.title}` : '已是第一部'}
-                    style={{ color: prevAnime ? '#e6edf3' : '#30363d', fontSize: 12, minWidth: 28 }}
+                    style={{ color: prevAnime ? 'var(--text-primary)' : 'var(--border-primary)', fontSize: 12, minWidth: 28 }}
                   />
                   <Button
                     size="small"
@@ -594,7 +757,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                     disabled={!nextAnime}
                     onClick={() => nextAnime && handleNavigate(nextAnime)}
                     title={nextAnime ? `下一个：${nextAnime.title}` : '已是最后一部'}
-                    style={{ color: nextAnime ? '#e6edf3' : '#30363d', fontSize: 12, minWidth: 28 }}
+                    style={{ color: nextAnime ? 'var(--text-primary)' : 'var(--border-primary)', fontSize: 12, minWidth: 28 }}
                   />
                 </div>
               </div>
@@ -603,10 +766,10 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
             {showReSearch && (
               <div style={{
                 marginTop: 8, maxHeight: 200, overflowY: 'auto',
-                background: '#0d1117', border: '1px solid #30363d', borderRadius: 8,
+                background: 'var(--bg-primary)', border: '1px solid #30363d', borderRadius: 8,
               }}>
                 {reSearchResults.length === 0 && !reSearching ? (
-                  <div style={{ padding: 12, textAlign: 'center', color: '#484f58', fontSize: 12 }}>
+                  <div style={{ padding: 12, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
                     未找到结果
                   </div>
                 ) : (
@@ -619,7 +782,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                         borderBottom: i < reSearchResults.length - 1 ? '1px solid #21262d' : 'none',
                         transition: 'background 0.15s',
                       }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = '#161b22'; }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                     >
                       {item.images?.small && (
@@ -629,15 +792,15 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                       <div
                         style={{ flex: 1, minWidth: 0 }}
                       >
-                        <div style={{ fontSize: 12, color: '#e6edf3', fontWeight: 600 }}>
+                        <div style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>
                           {item.name_cn || item.name}
                         </div>
                         {item.name_cn && item.name !== item.name_cn && (
-                          <div style={{ fontSize: 10, color: '#8b949e', opacity: 0.7 }}>
+                          <div style={{ fontSize: 10, color: 'var(--text-secondary)', opacity: 0.7 }}>
                             {item.name}
                           </div>
                         )}
-                        <div style={{ fontSize: 10, color: '#484f58', marginTop: 1 }}>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>
                           {item.air_date || ''} {item.rating?.score ? `· ${item.rating.score}分` : ''}
                           {item.id ? ` · ${item.source === 'anilist' ? 'AL' : 'BGM'}#${item.id}` : ''}
                           {(item as { searchTerm?: string }).searchTerm && (
@@ -663,19 +826,19 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                                 }}
                               />
                             )}
-                            <div style={{ fontWeight: 600, fontSize: 14, color: '#e6edf3', marginBottom: 2 }}>
+                            <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)', marginBottom: 2 }}>
                               {item.name_cn || item.name}
                             </div>
                             {item.name_cn && item.name !== item.name_cn && (
-                              <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 6 }}>
+                              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 6 }}>
                                 {item.name}
                               </div>
                             )}
-                            <div style={{ display: 'flex', gap: 12, marginBottom: 6, fontSize: 11, color: '#8b949e' }}>
+                            <div style={{ display: 'flex', gap: 12, marginBottom: 6, fontSize: 11, color: 'var(--text-secondary)' }}>
                               {item.air_date && <span>📅 {item.air_date}</span>}
                               {item.eps > 0 && <span>📺 {item.eps}集</span>}
                               {item.rating?.score > 0 && (
-                                <span style={{ color: '#fb7299', fontWeight: 600 }}>
+                                <span style={{ color: 'var(--brand-primary)', fontWeight: 600 }}>
                                   ⭐ {item.rating.score}
                                   {item.rating.total > 0 && ` (${item.rating.total}人)`}
                                 </span>
@@ -684,12 +847,12 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                             {item.summary && (
                               <Paragraph
                                 ellipsis={{ rows: 8, expandable: true, symbol: '展开' }}
-                                style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.7, marginBottom: 0 }}
+                                style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.7, marginBottom: 0 }}
                               >
                                 {item.summary}
                               </Paragraph>
                             )}
-                            <div style={{ marginTop: 6, fontSize: 10, color: '#484f58' }}>
+                            <div style={{ marginTop: 6, fontSize: 10, color: 'var(--text-muted)' }}>
                               来源：{item.source === 'anilist' ? 'AniList' : 'Bangumi'}
                               {item.id ? ` · #${item.id}` : ''}
                             </div>
@@ -725,51 +888,51 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                         }}
                         content={
                           <div style={{ minWidth: 180 }}>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: '#e6edf3', marginBottom: 8 }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>
                               选择导入项
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
                               <Checkbox checked={importChecks.title} onChange={(e) => setImportChecks((c) => ({ ...c, title: e.target.checked }))}>
-                                <span style={{ fontSize: 12, color: '#e6edf3' }}>主标题</span>
-                                <span style={{ fontSize: 10, color: '#484f58', marginLeft: 4 }}>{item.name_cn || item.name}</span>
+                                <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>主标题</span>
+                                <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>{item.name_cn || item.name}</span>
                               </Checkbox>
                               {item.name_cn && item.name !== item.name_cn && (
                                 <Checkbox checked={importChecks.searchAlias} onChange={(e) => setImportChecks((c) => ({ ...c, searchAlias: e.target.checked }))}>
-                                  <span style={{ fontSize: 12, color: '#e6edf3' }}>检索名</span>
-                                  <span style={{ fontSize: 10, color: '#484f58', marginLeft: 4 }}>{item.name}</span>
+                                  <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>检索名</span>
+                                  <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>{item.name}</span>
                                 </Checkbox>
                               )}
                               {item.rating?.score > 0 && (
                                 <Checkbox checked={importChecks.bgmScore} onChange={(e) => setImportChecks((c) => ({ ...c, bgmScore: e.target.checked }))}>
-                                  <span style={{ fontSize: 12, color: '#e6edf3' }}>评分</span>
-                                  <span style={{ fontSize: 10, color: '#fb7299', marginLeft: 4 }}>{item.rating.score}分</span>
+                                  <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>评分</span>
+                                  <span style={{ fontSize: 10, color: 'var(--brand-primary)', marginLeft: 4 }}>{item.rating.score}分</span>
                                 </Checkbox>
                               )}
                               {item.images?.large && (
                                 <Checkbox checked={importChecks.poster} onChange={(e) => setImportChecks((c) => ({ ...c, poster: e.target.checked }))}>
-                                  <span style={{ fontSize: 12, color: '#e6edf3' }}>海报图</span>
+                                  <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>海报图</span>
                                 </Checkbox>
                               )}
                               {item.air_date && (
                                 <Checkbox checked={importChecks.date} onChange={(e) => setImportChecks((c) => ({ ...c, date: e.target.checked }))}>
-                                  <span style={{ fontSize: 12, color: '#e6edf3' }}>上映日期</span>
-                                  <span style={{ fontSize: 10, color: '#484f58', marginLeft: 4 }}>{item.air_date}</span>
+                                  <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>上映日期</span>
+                                  <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>{item.air_date}</span>
                                 </Checkbox>
                               )}
                               {item.summary && (
                                 <Checkbox checked={importChecks.summary} onChange={(e) => setImportChecks((c) => ({ ...c, summary: e.target.checked }))}>
-                                  <span style={{ fontSize: 12, color: '#e6edf3' }}>简介→评价</span>
+                                  <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>简介→评价</span>
                                 </Checkbox>
                               )}
                               {item.id && item.source === 'bangumi' && (
                                 <Checkbox checked={importChecks.bangumiId} onChange={(e) => setImportChecks((c) => ({ ...c, bangumiId: e.target.checked }))}>
-                                  <span style={{ fontSize: 12, color: '#e6edf3' }}>BGM ID</span>
-                                  <span style={{ fontSize: 10, color: '#484f58', marginLeft: 4 }}>#{item.id}</span>
+                                  <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>BGM ID</span>
+                                  <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>#{item.id}</span>
                                 </Checkbox>
                               )}
                             </div>
                             <Button type="primary" block size="small" onClick={(e) => { e.stopPropagation(); doImport(); }}
-                              style={{ background: '#fb7299', borderColor: '#fb7299', fontWeight: 600 }}>
+                              style={{ background: 'var(--brand-primary)', borderColor: 'var(--brand-primary)', fontWeight: 600 }}>
                               确认导入
                             </Button>
                           </div>
@@ -802,7 +965,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                 placeholder="检索名（日文原名/别名）"
                 style={{
                   width: 300, fontSize: 11,
-                  background: '#0d1117', borderColor: '#30363d', color: '#8b949e',
+                  background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-secondary)',
                 }}
               />
             </div>
@@ -810,12 +973,20 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
         ) : (
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
             <div>
-              <span style={{ fontSize: 23, fontWeight: 600 }}>
-                {anime.title}
-              </span>
+              {anime.link ? (
+                <a href={anime.link} target="_blank" rel="noopener noreferrer"
+                  style={{ fontSize: 23, fontWeight: 600, color: 'var(--text-primary)', textDecoration: 'none', borderBottom: '2px dashed #30363d' }}
+                  title={`打开：${anime.link}`}>
+                  {anime.title} 🔗
+                </a>
+              ) : (
+                <span style={{ fontSize: 23, fontWeight: 600 }}>
+                  {anime.title}
+                </span>
+              )}
               {/* 副标题：检索名或日文名 */}
               {(anime.searchAlias || anime.titleJa) && (
-                <div style={{ fontSize: 12, color: '#8b949e', opacity: 0.7, marginTop: 2 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', opacity: 0.7, marginTop: 2 }}>
                   {anime.searchAlias && anime.searchAlias.trim() !== anime.title.trim()
                     ? anime.searchAlias
                     : anime.titleJa || ''}
@@ -830,7 +1001,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{
-                    fontSize: 10, color: '#fb7299', opacity: 0.6,
+                    fontSize: 10, color: 'var(--brand-primary)', opacity: 0.6,
                     textDecoration: 'none', flexShrink: 0,
                     fontFamily: 'monospace',
                   }}
@@ -848,7 +1019,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                   disabled={!prevAnime}
                   onClick={() => prevAnime && handleNavigate(prevAnime)}
                   title={prevAnime ? `上一个：${prevAnime.title}` : '已是第一部'}
-                  style={{ color: prevAnime ? '#e6edf3' : '#30363d', fontSize: 12, minWidth: 28 }}
+                  style={{ color: prevAnime ? 'var(--text-primary)' : 'var(--border-primary)', fontSize: 12, minWidth: 28 }}
                 />
                 <Button
                   size="small"
@@ -857,7 +1028,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                   disabled={!nextAnime}
                   onClick={() => nextAnime && handleNavigate(nextAnime)}
                   title={nextAnime ? `下一个：${nextAnime.title}` : '已是最后一部'}
-                  style={{ color: nextAnime ? '#e6edf3' : '#30363d', fontSize: 12, minWidth: 28 }}
+                  style={{ color: nextAnime ? 'var(--text-primary)' : 'var(--border-primary)', fontSize: 12, minWidth: 28 }}
                 />
               </div>
             </div>
@@ -869,7 +1040,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       width={1050}
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ color: '#8b949e', fontSize: 12 }}>
+          <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
             {editing ? '修改将直接写回 Excel 文件' : '点击「修改」进入编辑模式'}
           </span>
           <Space>
@@ -909,47 +1080,83 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       }
       styles={{ body: { maxHeight: '75vh', overflowY: 'auto' } }}
     >
-      {/* ── 上部：基本信息（横向） ── */}
+      {/* ── 上部：基本信息（横向，按模板字段配置显示） ── */}
       <Descriptions size="small" column={4} style={{ marginBottom: 12 }}>
-        <Descriptions.Item label="上映">
-          {editing ? (
-            <Input size="small" value={editReleaseDate} onChange={(e) => setEditReleaseDate(e.target.value)}
-              placeholder="如 2021-04" style={{ width: 100, background: '#0d1117', borderColor: '#30363d', color: '#e6edf3' }} />
-          ) : (anime.releaseDate || '-')}
-        </Descriptions.Item>
+        {templateCfg.showReleaseDate && (
+          <Descriptions.Item label="上映">
+            {editing ? (
+              <Input size="small" value={editReleaseDate} onChange={(e) => setEditReleaseDate(e.target.value)}
+                placeholder="如 2021-04" style={{ width: 100, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
+            ) : (anime.releaseDate || '-')}
+          </Descriptions.Item>
+        )}
         <Descriptions.Item label="观看时间">
           {editing ? (
             <Input size="small" value={editWatchDate} onChange={(e) => setEditWatchDate(e.target.value)}
-              placeholder="如 2024-03-15" style={{ width: 110, background: '#0d1117', borderColor: '#30363d', color: '#e6edf3' }} />
+              placeholder="如 2024-03-15" style={{ width: 110, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
           ) : (anime.watchDate || anime.createdAt || '-')}
         </Descriptions.Item>
-        <Descriptions.Item label="Bangumi">
-          {editing ? (
-            <InputNumber size="small" min={0} max={10} step={0.1}
-              value={editBgmScore} onChange={(v) => setEditBgmScore(v ?? undefined)}
-              style={{ width: 70 }} />
-          ) : (anime.bangumiScore ? <span style={{ color: '#fb7299', fontWeight: 600 }}>{anime.bangumiScore}</span> : '-')}
-        </Descriptions.Item>
-        <Descriptions.Item label="AniList">
-          {editing ? (
-            <InputNumber size="small" min={0} max={10} step={0.1}
-              value={editAnilistScore} onChange={(v) => setEditAnilistScore(v ?? undefined)}
-              style={{ width: 70 }} />
-          ) : (anime.aniListScore ? <span style={{ color: '#00a1d6', fontWeight: 600 }}>{anime.aniListScore}</span> : '-')}
-        </Descriptions.Item>
-        <Descriptions.Item label="制作组">
-          {editing ? (
-            <Input size="small" value={editStudio} onChange={(e) => setEditStudio(e.target.value)}
-              placeholder="动画公司" style={{ width: 120, background: '#0d1117', borderColor: '#30363d', color: '#e6edf3' }} />
-          ) : (anime.studio || '-')}
-        </Descriptions.Item>
-        <Descriptions.Item label="张数">
-          {editing ? (
-            <InputNumber size="small" min={0} step={1}
-              value={editFrameCount} onChange={(v) => setEditFrameCount(v ?? undefined)}
-              placeholder="中割张数" style={{ width: 90 }} />
-          ) : (anime.frameCount ? <span style={{ color: '#e6edf3', fontWeight: 500 }}>{anime.frameCount.toLocaleString()} 张</span> : '-')}
-        </Descriptions.Item>
+        {templateCfg.showBangumiId && (
+          <Descriptions.Item label="Bangumi">
+            {editing ? (
+              <InputNumber size="small" min={0} max={15} step={0.1}
+                value={editBgmScore} onChange={(v) => setEditBgmScore(v ?? undefined)}
+                style={{ width: 70 }} />
+            ) : (anime.bangumiScore ? <span style={{ color: 'var(--brand-primary)', fontWeight: 600 }}>{anime.bangumiScore}</span> : '-')}
+          </Descriptions.Item>
+        )}
+        {templateCfg.showAnilistScore && (
+          <Descriptions.Item label="AniList">
+            {editing ? (
+              <InputNumber size="small" min={0} max={15} step={0.1}
+                value={editAnilistScore} onChange={(v) => setEditAnilistScore(v ?? undefined)}
+                style={{ width: 70 }} />
+            ) : (anime.aniListScore ? <span style={{ color: 'var(--color-info)', fontWeight: 600 }}>{anime.aniListScore}</span> : '-')}
+          </Descriptions.Item>
+        )}
+        {templateCfg.showStudio && (
+          <Descriptions.Item label="制作组">
+            {editing ? (
+              <Input size="small" value={editStudio} onChange={(e) => setEditStudio(e.target.value)}
+                placeholder="制作组" style={{ width: 120, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
+            ) : (anime.studio || '-')}
+          </Descriptions.Item>
+        )}
+        {templateCfg.showFrameCount && (
+          <Descriptions.Item label="张数">
+            {editing ? (
+              <InputNumber size="small" min={0} step={1}
+                value={editFrameCount} onChange={(v) => setEditFrameCount(v ?? undefined)}
+                placeholder="数量" style={{ width: 90 }} />
+            ) : (anime.frameCount ? <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{anime.frameCount.toLocaleString()}</span> : '-')}
+          </Descriptions.Item>
+        )}
+        {templateCfg.showEpisodes && (
+          <Descriptions.Item label="集数">
+            {editing ? (
+              <InputNumber size="small" min={0} step={1}
+                value={undefined /* TODO: add episodes state */} style={{ width: 70 }} />
+            ) : (anime.episodes ? <span>{anime.episodes} 集</span> : '-')}
+          </Descriptions.Item>
+        )}
+        {/* 模板自定义字段 */}
+        {(templateCfg.customFields || []).map((cf) => (
+          <Descriptions.Item key={cf.key} label={cf.label}>
+            {editing ? (
+              cf.type === 'number' ? (
+                <InputNumber size="small" step={1}
+                  value={customFields[cf.key] ? Number(customFields[cf.key]) : undefined}
+                  onChange={(v) => setCustomFields((prev) => ({ ...prev, [cf.key]: v ?? '' }))}
+                  style={{ width: 90 }} />
+              ) : (
+                <Input size="small"
+                  value={String(customFields[cf.key] || '')}
+                  onChange={(e) => setCustomFields((prev) => ({ ...prev, [cf.key]: e.target.value }))}
+                  style={{ width: 120, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
+              )
+            ) : (customFields[cf.key] ? <span style={{ color: 'var(--text-primary)' }}>{customFields[cf.key]}</span> : '-')}
+          </Descriptions.Item>
+        ))}
         <Descriptions.Item label="分类">
           <Select
             size="small"
@@ -957,29 +1164,76 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
             onChange={(v) => setCategory(v)}
             disabled={!editing}
             style={{ width: 80 }}
-            options={Object.entries(CATEGORY_CONFIG).map(([key, cfg]) => ({ value: key, label: cfg.label }))}
+            options={Object.entries(categoryLabels).map(([key, cfg]) => ({ value: key, label: cfg.label }))}
+          />
+        </Descriptions.Item>
+        <Descriptions.Item label="评分模板">
+          <Select
+            size="small"
+            value={templateId || 'default'}
+            onChange={(v) => setTemplateId(v === 'default' ? undefined : v)}
+            disabled={!editing}
+            style={{ width: 120 }}
+            options={loadTemplates().map((t) => ({ value: t.id, label: t.name }))}
           />
         </Descriptions.Item>
       </Descriptions>
 
-      <div style={{ display: 'flex', gap: 24, minHeight: 600 }}>
-        {/* ── 左侧 2/3 ── */}
-        <div style={{ flex: 2, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', gap: editing ? 4 : 24, minHeight: 600, position: 'relative' }}>
+        {/* ── 左侧栏（宽度可拖动调整） ── */}
+        <div style={{ flex: layoutCfg.leftRatio / (100 - layoutCfg.leftRatio), display: 'flex', flexDirection: 'column' }}>
           {/* 雷达图（上方） */}
-          <div style={{ height: 300, marginBottom: 14 }}>
-            <RadarChart anime={anime} allAnime={allAnime} />
+          <div
+            data-section-key="radar"
+            style={{
+              order: getSectionOrder('radar', 'left'),
+              border: dragOverKey === 'radar' ? '2px dashed #fb7299' : '2px solid transparent',
+              borderRadius: dragOverKey === 'radar' ? 8 : 0,
+              padding: editing ? 4 : 0,
+              transition: 'border 0.15s, border-radius 0.15s',
+            }}
+            onDragOver={editing ? handleDragOver('radar', 'left') : undefined}
+            onDrop={editing ? handleDrop('radar', 'left') : undefined}
+          >
+            {editing && (
+              <div draggable onDragStart={handleDragStart('radar', 'left')} onDragEnd={handleDragEnd}
+                style={{ cursor: 'grab', color: 'var(--text-muted)', fontSize: 14, textAlign: 'center', padding: '1px 0', userSelect: 'none', lineHeight: 1 }}>
+                ⠿
+              </div>
+            )}
+            <div style={{ height: 300, marginBottom: editing ? 0 : 14 }}>
+              <RadarChart anime={anime} allAnime={allAnime} templateId={templateId} radarMode={radarMode} radarMin={radarMin} />
+            </div>
           </div>
 
           {/* 维度评分编辑 */}
-          <div style={{ marginBottom: 10 }}>
+          <div
+            data-section-key="scores"
+            style={{
+              order: getSectionOrder('scores', 'left'),
+              border: dragOverKey === 'scores' ? '2px dashed #fb7299' : '2px solid transparent',
+              borderRadius: dragOverKey === 'scores' ? 8 : 0,
+              padding: editing ? 4 : 0,
+              marginBottom: 10,
+              transition: 'border 0.15s, border-radius 0.15s',
+            }}
+            onDragOver={editing ? handleDragOver('scores', 'left') : undefined}
+            onDrop={editing ? handleDrop('scores', 'left') : undefined}
+          >
+            {editing && (
+              <div draggable onDragStart={handleDragStart('scores', 'left')} onDragEnd={handleDragEnd}
+                style={{ cursor: 'grab', color: 'var(--text-muted)', fontSize: 14, textAlign: 'center', padding: '1px 0', userSelect: 'none', lineHeight: 1 }}>
+                ⠿
+              </div>
+            )}
             <span style={{ fontWeight: 600, fontSize: 14, display: 'block', marginBottom: 6 }}>
               📊 维度评分
-              <span style={{ fontSize: 16, fontWeight: 700, color: '#fb7299', marginLeft: 12 }}>总评 {overallScore}</span>
+              <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--brand-primary)', marginLeft: 12 }}>总评 {overallScore}</span>
               {editing && (
                 <Tooltip title="将全部维度评分+专项评价按模板导入到评价底部">
                   <Button size="small" type="text" icon={<ImportOutlined />}
                     onClick={importAllDimsToReview}
-                    style={{ color: '#8b949e', marginLeft: 8, fontSize: 12 }}>
+                    style={{ color: 'var(--text-secondary)', marginLeft: 8, fontSize: 12 }}>
                     导入评价
                   </Button>
                 </Tooltip>
@@ -1002,11 +1256,11 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                     }}
                   >
                     <Tooltip title={dim.description}>
-                      <span style={{ fontSize: 12, color: '#e6edf3', minWidth: 36, textAlign: 'right', cursor: 'help' }}>
+                      <span style={{ fontSize: 12, color: 'var(--text-primary)', minWidth: 36, textAlign: 'right', cursor: 'help' }}>
                         {dim.label}
                       </span>
                     </Tooltip>
-                    <InputNumber size="small" min={0} max={10}
+                    <InputNumber size="small" min={0} max={15}
                       step={dim.key === 'vibe' ? 0.01 : 0.1}
                       precision={dim.key === 'vibe' ? 2 : undefined}
                       value={score || null} onChange={(v) => handleScoreChange(dim.key, v)}
@@ -1014,11 +1268,11 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                       onFocus={() => { if (editing) setSliderDim(dim.key); }}
                       style={{
                         width: dim.key === 'vibe' ? 64 : 56,
-                        borderColor: isSliderActive ? '#fb7299' : undefined,
+                        borderColor: isSliderActive ? 'var(--brand-primary)' : undefined,
                       }} placeholder="0" />
                     {editing && (
                       <span onClick={(e) => { e.stopPropagation(); setEditingDimReview(editingDimReview === dim.key ? null : dim.key); }}
-                        style={{ cursor: 'pointer', color: hasReview ? '#fb7299' : '#484f58', fontSize: 12 }}>
+                        style={{ cursor: 'pointer', color: hasReview ? 'var(--brand-primary)' : 'var(--text-muted)', fontSize: 12 }}>
                         <EditOutlined />
                       </span>
                     )}
@@ -1051,23 +1305,23 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                   style={{
                     background: 'linear-gradient(135deg, rgba(251,114,153,0.15), rgba(251,114,153,0.04))',
                     borderColor: 'rgba(251,114,153,0.25)',
-                    color: '#fb7299',
+                    color: 'var(--brand-primary)',
                     fontWeight: 600,
                     fontSize: 12,
                   }}
                 >
                   🤖 深度分析
                 </Button>
-                <span style={{ fontSize: 10, color: '#484f58', marginLeft: 8 }}>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 8 }}>
                   AI 分析这部番为什么打动你（约 800 token / ¥0.002）
                 </span>
 
                 {/* 错误提示 */}
                 {aiAnalysisError && (
-                  <div style={{ marginTop: 8, color: '#f85149', fontSize: 11 }}>
+                  <div style={{ marginTop: 8, color: 'var(--color-error)', fontSize: 11 }}>
                     {aiAnalysisError}
                     <Button type="link" size="small" onClick={handleAIAnalysis}
-                      style={{ color: '#fb7299', fontSize: 11, padding: 0, marginLeft: 6 }}>
+                      style={{ color: 'var(--brand-primary)', fontSize: 11, padding: 0, marginLeft: 6 }}>
                       重试
                     </Button>
                   </div>
@@ -1079,21 +1333,21 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                     {/* 核心吸引力 */}
                     {aiAnalysisResult.coreAppeal.length > 0 && (
                       <div>
-                        <div style={{ fontSize: 11, fontWeight: 600, color: '#fb7299', marginBottom: 4 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--brand-primary)', marginBottom: 4 }}>
                           🎯 核心吸引力
                         </div>
                         {aiAnalysisResult.coreAppeal.map((item, i) => (
                           <div key={i} style={{
-                            background: '#161b22', border: '1px solid #30363d',
+                            background: 'var(--bg-secondary)', border: '1px solid #30363d',
                             borderRadius: 6, padding: '8px 12px', marginBottom: 4,
                           }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                              <span style={{ fontSize: 12, fontWeight: 600, color: '#e6edf3' }}>{item.aspect}</span>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{item.aspect}</span>
                               <Tag color="pink" style={{ fontSize: 9, lineHeight: '16px', margin: 0 }}>
                                 {Math.round(item.confidence * 100)}%
                               </Tag>
                             </div>
-                            <div style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.5 }}>{item.evidence}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{item.evidence}</div>
                           </div>
                         ))}
                       </div>
@@ -1106,8 +1360,8 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                         border: '1px solid rgba(0,161,214,0.12)',
                         borderRadius: 6, padding: '8px 12px',
                       }}>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: '#00a1d6' }}>📡 电波模式：</span>
-                        <span style={{ fontSize: 11, color: '#8b949e' }}>{aiAnalysisResult.vibePattern}</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-info)' }}>📡 电波模式：</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{aiAnalysisResult.vibePattern}</span>
                       </div>
                     )}
 
@@ -1118,8 +1372,8 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                         border: '1px solid rgba(255,179,71,0.12)',
                         borderRadius: 6, padding: '8px 12px',
                       }}>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: '#ffb347' }}>🌐 社区差异：</span>
-                        <span style={{ fontSize: 11, color: '#8b949e' }}>{aiAnalysisResult.communityGap}</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-warning)' }}>🌐 社区差异：</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{aiAnalysisResult.communityGap}</span>
                       </div>
                     )}
 
@@ -1131,10 +1385,10 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                         </div>
                         {aiAnalysisResult.similarAnime.map((item, i) => (
                           <div key={i} style={{
-                            fontSize: 11, color: '#8b949e', lineHeight: 1.6,
+                            fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6,
                             padding: '2px 8px', borderLeft: '2px solid #a371f7', marginBottom: 3,
                           }}>
-                            <span style={{ color: '#e6edf3', fontWeight: 600 }}>{item.title}</span> — {item.why}
+                            <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{item.title}</span> — {item.why}
                           </div>
                         ))}
                       </div>
@@ -1147,36 +1401,106 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
 
           {/* 维度专项评价 */}
           {editingDimReview && (
-            <div style={{ marginBottom: 10, padding: 8, background: '#1c2128', borderRadius: 6, border: '1px solid #30363d' }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: '#fb7299', marginBottom: 4 }}>
+            <div style={{ marginBottom: 10, padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6, border: '1px solid #30363d' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--brand-primary)', marginBottom: 4 }}>
                 {DIMENSION_LABEL_MAP[editingDimReview] || editingDimReview} 专项评价
               </div>
               <TextArea value={getDimReview(editingDimReview)}
                 onChange={(e) => setDimReview(editingDimReview, e.target.value)}
                 placeholder="对该维度的专项评价…" rows={2}
-                style={{ background: '#0d1117', borderColor: '#30363d', color: '#e6edf3' }} />
+                style={{ background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
             </div>
           )}
 
           {/* 全局评价 */}
-          <div>
+          <div
+            data-section-key="review"
+            style={{
+              order: getSectionOrder('review', 'left'),
+              border: dragOverKey === 'review' ? '2px dashed #fb7299' : '2px solid transparent',
+              borderRadius: dragOverKey === 'review' ? 8 : 0,
+              padding: editing ? 4 : 0,
+              transition: 'border 0.15s, border-radius 0.15s',
+            }}
+            onDragOver={editing ? handleDragOver('review', 'left') : undefined}
+            onDrop={editing ? handleDrop('review', 'left') : undefined}
+          >
+            {editing && (
+              <div draggable onDragStart={handleDragStart('review', 'left')} onDragEnd={handleDragEnd}
+                style={{ cursor: 'grab', color: 'var(--text-muted)', fontSize: 14, textAlign: 'center', padding: '1px 0', userSelect: 'none', lineHeight: 1 }}>
+                ⠿
+              </div>
+            )}
             <span style={{ fontWeight: 600, fontSize: 14, display: 'block', marginBottom: 6 }}>📝 评价</span>
             <TextArea value={review} onChange={(e) => setReview(e.target.value)}
               placeholder="写下你对这部番的评价…" rows={5}
               readOnly={!editing}
-              style={{ background: editing ? '#1c2128' : '#161b22', borderColor: '#30363d', color: '#e6edf3' }} />
+              style={{ background: editing ? 'var(--bg-tertiary)' : 'var(--bg-secondary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
           </div>
         </div>
 
-        {/* ── 右侧 1/3：海报轮播 + 标签 ── */}
+        {/* 分栏拖拽分隔条（仅编辑模式） */}
+        {editing && (
+          <div
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData('text/plain', 'divider');
+              e.dataTransfer.effectAllowed = 'move';
+              (e.currentTarget as HTMLElement).style.background = 'var(--brand-primary)';
+            }}
+            onDrag={(e) => {
+              if (e.clientX === 0) return;
+              const container = (e.currentTarget as HTMLElement).parentElement;
+              if (!container) return;
+              const rect = container.getBoundingClientRect();
+              const pct = ((e.clientX - rect.left) / rect.width) * 100;
+              setLayoutCfg((prev) => ({ ...prev, leftRatio: Math.round(Math.min(80, Math.max(30, pct))) }));
+            }}
+            onDragEnd={(e) => {
+              (e.currentTarget as HTMLElement).style.background = '';
+            }}
+            style={{
+              width: 12, cursor: 'col-resize', flexShrink: 0,
+              background: colDividerDragging ? 'var(--brand-primary)' : 'transparent',
+              borderRadius: 3, transition: 'background 0.15s',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(251,114,153,0.2)'; }}
+            onMouseLeave={(e) => { if (!colDividerDragging) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+            onMouseDown={() => setColDividerDragging(true)}
+            onMouseUp={() => setColDividerDragging(false)}
+          >
+            <div style={{ width: 3, height: 40, borderRadius: 2, background: 'rgba(251,114,153,0.4)' }} />
+          </div>
+        )}
+
+        {/* ── 右侧栏：海报轮播 + 标签 ── */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {/* 海报轮播 */}
-          <div style={{
-            position: 'relative', width: '100%', aspectRatio: '3/4',
-            borderRadius: 8, overflow: 'hidden',
-            border: '1px solid #30363d', background: 'linear-gradient(135deg, #1a1030, #2d1a2c)',
-            cursor: dragging ? 'grabbing' : allImages.length > 0 ? 'grab' : 'default',
-          }}
+          <div
+            data-section-key="poster"
+            style={{
+              order: getSectionOrder('poster', 'right'),
+              border: dragOverKey === 'poster' ? '2px dashed #fb7299' : '2px solid transparent',
+              borderRadius: dragOverKey === 'poster' ? 8 : 0,
+              padding: editing ? 4 : 0,
+              transition: 'border 0.15s, border-radius 0.15s',
+            }}
+            onDragOver={editing ? handleDragOver('poster', 'right') : undefined}
+            onDrop={editing ? handleDrop('poster', 'right') : undefined}
+          >
+            {editing && (
+              <div draggable onDragStart={handleDragStart('poster', 'right')} onDragEnd={handleDragEnd}
+                style={{ cursor: 'grab', color: 'var(--text-muted)', fontSize: 14, textAlign: 'center', padding: '1px 0', userSelect: 'none', lineHeight: 1 }}>
+                ⠿
+              </div>
+            )}
+            <div style={{
+              position: 'relative', width: `${layoutCfg.posterWidth}%`, aspectRatio: layoutCfg.posterAspectRatio,
+              borderRadius: 8, overflow: 'hidden',
+              border: '1px solid #30363d', background: 'linear-gradient(135deg, #1a1030, #2d1a2c)',
+              cursor: dragging ? 'grabbing' : allImages.length > 0 ? 'grab' : 'default',
+            }}
             onMouseDown={handlePosterMouseDown}
             onMouseMove={handlePosterMouseMove}
             onMouseUp={handlePosterMouseUp}
@@ -1192,7 +1516,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                 }} />
             ) : (
               <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ fontSize: '4rem', color: '#fb7299', opacity: 0.4 }}>🎬</span>
+                <span style={{ fontSize: '4rem', color: 'var(--brand-primary)', opacity: 0.4 }}>🎬</span>
               </div>
             )}
             {/* 焦点十字准星（拖拽时显示） */}
@@ -1209,12 +1533,13 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
               <div onClick={(e)=>{e.stopPropagation();prevSlide();}} style={{ position:'absolute',left:4,top:'50%',transform:'translateY(-50%)',width:26,height:26,borderRadius:'50%',background:'rgba(0,0,0,0.6)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',color:'#fff',fontSize:13,zIndex:3 }}><LeftOutlined /></div>
               <div onClick={(e)=>{e.stopPropagation();nextSlide();}} style={{ position:'absolute',right:4,top:'50%',transform:'translateY(-50%)',width:26,height:26,borderRadius:'50%',background:'rgba(0,0,0,0.6)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',color:'#fff',fontSize:13,zIndex:3 }}><RightOutlined /></div>
               <div style={{ position:'absolute',bottom:6,left:'50%',transform:'translateX(-50%)',display:'flex',gap:4,zIndex:3 }}>
-                {allImages.map((_,i)=><div key={i} style={{ width:6,height:6,borderRadius:'50%',background:i===slideIdx?'#fb7299':'rgba(255,255,255,0.4)' }} />)}
+                {allImages.map((_,i)=><div key={i} style={{ width:6,height:6,borderRadius:'50%',background:i===slideIdx?'var(--brand-primary)':'rgba(255,255,255,0.4)' }} />)}
               </div>
             </>)}
             {allImages[slideIdx]===posterUrl && allImages.length>0 && (
               <div style={{ position:'absolute',top:6,left:6,background:'rgba(251,114,153,0.85)',borderRadius:4,padding:'1px 6px',fontSize:10,color:'#fff',fontWeight:600 }}>封面</div>
             )}
+          </div>
           </div>
 
           {/* 按钮 */}
@@ -1233,15 +1558,80 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
             )}
           </div>
 
-          {/* 角色 */}
-          {anime.characters && anime.characters.length > 0 && (
-            <div><Space wrap size={[2,2]}>{anime.characters.map((c,i)=><Tag key={i} color="purple" style={{fontSize:10}}>{c}</Tag>)}</Space></div>
+          {/* 海报布局控件（仅编辑模式） */}
+          {editing && (
+            <div style={{ padding: '6px 8px', background: 'var(--bg-tertiary)', borderRadius: 6, border: '1px solid #30363d' }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>🖼️ 海报宽度</div>
+              <Slider
+                min={30} max={100} step={5}
+                value={layoutCfg.posterWidth}
+                onChange={(v) => setLayoutCfg((prev) => ({ ...prev, posterWidth: v }))}
+                tooltip={{ formatter: (v) => `${v}%` }}
+                style={{ margin: '0 0 6px' }}
+              />
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 2 }}>宽高比</div>
+              <Segmented
+                size="small"
+                value={layoutCfg.posterAspectRatio}
+                onChange={(v) => setLayoutCfg((prev) => ({ ...prev, posterAspectRatio: v as DetailLayoutConfig['posterAspectRatio'] }))}
+                options={[
+                  { value: '3/4', label: '3:4' },
+                  { value: '2/3', label: '2:3' },
+                  { value: '16/9', label: '16:9' },
+                  { value: '1/1', label: '1:1' },
+                ]}
+                block
+                style={{ background: 'var(--bg-primary)' }}
+              />
+            </div>
+          )}
+
+          {/* 角色（按模板配置显示） */}
+          {templateCfg.showCharacters && anime.characters && anime.characters.length > 0 && (
+            <div
+              data-section-key="characters"
+              style={{
+                order: getSectionOrder('characters', 'right'),
+                border: dragOverKey === 'characters' ? '2px dashed #fb7299' : '2px solid transparent',
+                borderRadius: dragOverKey === 'characters' ? 8 : 0,
+                padding: editing ? 4 : 0,
+                transition: 'border 0.15s, border-radius 0.15s',
+              }}
+              onDragOver={editing ? handleDragOver('characters', 'right') : undefined}
+              onDrop={editing ? handleDrop('characters', 'right') : undefined}
+            >
+              {editing && (
+                <div draggable onDragStart={handleDragStart('characters', 'right')} onDragEnd={handleDragEnd}
+                  style={{ cursor: 'grab', color: 'var(--text-muted)', fontSize: 14, textAlign: 'center', padding: '1px 0', userSelect: 'none', lineHeight: 1 }}>
+                  ⠿
+                </div>
+              )}
+              <Space wrap size={[2,2]}>{anime.characters.map((c,i)=><Tag key={i} color="purple" style={{fontSize:10}}>{c}</Tag>)}</Space>
+            </div>
           )}
 
           {/* 标签编辑 */}
-          <div>
+          <div
+            data-section-key="tags"
+            style={{
+              order: getSectionOrder('tags', 'right'),
+              border: dragOverKey === 'tags' ? '2px dashed #fb7299' : '2px solid transparent',
+              borderRadius: dragOverKey === 'tags' ? 8 : 0,
+              padding: editing ? 4 : 0,
+              transition: 'border 0.15s, border-radius 0.15s',
+            }}
+            onDragOver={editing ? handleDragOver('tags', 'right') : undefined}
+            onDrop={editing ? handleDrop('tags', 'right') : undefined}
+          >
+            {editing && (
+              <div draggable onDragStart={handleDragStart('tags', 'right')} onDragEnd={handleDragEnd}
+                style={{ cursor: 'grab', color: 'var(--text-muted)', fontSize: 14, textAlign: 'center', padding: '1px 0', userSelect: 'none', lineHeight: 1 }}>
+                ⠿
+              </div>
+            )}
+            <div>
             <Space wrap size={[4,4]}>
-              {tags.map((t,i)=>(<Tag key={i} color={t.highlighted?'#fb7299':undefined} onClick={()=>toggleTag(i)} closable={editing} onClose={e=>{e.preventDefault();removeTag(i)}} style={{cursor:'pointer',fontSize:11}}>{t.name}</Tag>))}
+              {tags.map((t,i)=>(<Tag key={i} color={t.highlighted?'var(--brand-primary)':undefined} onClick={()=>toggleTag(i)} closable={editing} onClose={e=>{e.preventDefault();removeTag(i)}} style={{cursor:'pointer',fontSize:11}}>{t.name}</Tag>))}
             </Space>
             {editing && (
             <Space.Compact size="small" style={{marginTop:4}}>
@@ -1258,7 +1648,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                 content={
                   <div style={{ maxWidth: 260, maxHeight: 240, overflowY: 'auto' }}>
                     {availableTags.length === 0 ? (
-                      <span style={{ color: '#8b949e', fontSize: 12 }}>暂无可用标签</span>
+                      <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>暂无可用标签</span>
                     ) : (
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                         {availableTags.map(([name, count]) => (
@@ -1288,8 +1678,8 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                   onClick={handleAutoTag}
                   loading={autoTagLoading}
                   style={{
-                    background: '#21262d', borderColor: '#30363d',
-                    color: '#8b949e', fontSize: 11,
+                    background: 'var(--bg-quaternary)', borderColor: 'var(--border-primary)',
+                    color: 'var(--text-secondary)', fontSize: 11,
                   }}
                 >
                   🤖 智能打Tag
@@ -1311,6 +1701,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                 )}
               </div>
             )}
+          </div>
           </div>
         </div>
 

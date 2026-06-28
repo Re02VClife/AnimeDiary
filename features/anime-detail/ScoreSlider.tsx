@@ -66,7 +66,7 @@ const ScoreSlider: React.FC<ScoreSliderProps> = ({
       const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
       const raw = pct * 10;
       const rounded = Math.round(raw / step) * step;
-      return Math.max(0, Math.min(10, +rounded.toFixed(precision)));
+      return Math.max(0, Math.min(15, +rounded.toFixed(precision)));
     },
     [localScore, step, precision],
   );
@@ -91,7 +91,7 @@ const ScoreSlider: React.FC<ScoreSliderProps> = ({
       const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       const raw = pct * 10;
       const rounded = Math.round(raw / step) * step;
-      const clamped = Math.max(0, Math.min(10, +rounded.toFixed(precision)));
+      const clamped = Math.max(0, Math.min(15, +rounded.toFixed(precision)));
       setLocalScore(clamped);
       onChange(clamped);
     };
@@ -111,16 +111,16 @@ const ScoreSlider: React.FC<ScoreSliderProps> = ({
       ref={sliderRef}
       style={{
         marginTop: 8, padding: '10px 14px',
-        background: '#161b22', borderRadius: 8,
+        background: 'var(--bg-secondary)', borderRadius: 8,
         border: '1px solid rgba(251,114,153,0.2)',
         display: 'flex', alignItems: 'center', gap: 12,
       }}
     >
-      <span style={{ fontSize: 12, fontWeight: 600, color: '#e6edf3', minWidth: 36 }}>
+      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', minWidth: 36 }}>
         {dimLabel}
       </span>
       <span style={{
-        fontSize: 14, fontWeight: 700, color: '#fb7299',
+        fontSize: 14, fontWeight: 700, color: 'var(--brand-primary)',
         minWidth: isVibe ? 48 : 36, textAlign: 'center', fontVariantNumeric: 'tabular-nums',
       }}>
         {localScore.toFixed(precision)}
@@ -131,7 +131,7 @@ const ScoreSlider: React.FC<ScoreSliderProps> = ({
         onMouseDown={handleMouseDown}
         style={{
           flex: 1, height: 20, borderRadius: 10,
-          background: '#21262d', cursor: 'pointer',
+          background: 'var(--bg-quaternary)', cursor: 'pointer',
           position: 'relative', overflow: 'visible',
           userSelect: 'none',
         }}
@@ -172,7 +172,7 @@ const ScoreSlider: React.FC<ScoreSliderProps> = ({
       <span
         onClick={onClose}
         style={{
-          cursor: 'pointer', color: '#484f58', fontSize: 14,
+          cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14,
           width: 20, textAlign: 'center', lineHeight: '20px',
         }}
         title="取消选中 (Esc)"

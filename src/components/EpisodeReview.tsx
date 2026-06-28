@@ -83,12 +83,12 @@ const EpisodeReviewComponent: React.FC<EpisodeReviewProps> = ({ anime, open, onC
           >
             <List.Item.Meta
               title={
-                <span style={{ color: '#e6edf3' }}>
-                  第 {r.episodeNumber} 集 · 评分 <span style={{ color: '#fb7299' }}>{r.score}</span>
+                <span style={{ color: 'var(--text-primary)' }}>
+                  第 {r.episodeNumber} 集 · 评分 <span style={{ color: 'var(--brand-primary)' }}>{r.score}</span>
                 </span>
               }
               description={
-                <div style={{ color: '#8b949e', fontSize: 12 }}>
+                <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
                   {r.plot && <div>📖 {r.plot}</div>}
                   {r.highlights && <div>🌟 {r.highlights}</div>}
                   {r.impression && <div>💭 {r.impression}</div>}
@@ -105,21 +105,21 @@ const EpisodeReviewComponent: React.FC<EpisodeReviewProps> = ({ anime, open, onC
           添加单集评价
         </Button>
       ) : (
-        <div style={{ marginTop: 12, padding: 12, background: '#1c2128', borderRadius: 8 }}>
+        <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-tertiary)', borderRadius: 8 }}>
           <Form layout="inline" style={{ marginBottom: 8 }}>
             <Form.Item label="剧集">
               <Select value={epNum} onChange={setEpNum} options={epOptions} style={{ width: 100 }} size="small" />
             </Form.Item>
             <Form.Item label="评分">
-              <InputNumber min={0} max={10} step={0.1} value={score} onChange={(v) => setScore(v || 0)} size="small" style={{ width: 72 }} />
+              <InputNumber min={0} max={15} step={0.1} value={score} onChange={(v) => setScore(v || 0)} size="small" style={{ width: 72 }} />
             </Form.Item>
           </Form>
           <Input placeholder="主要剧情" value={plot} onChange={(e) => setPlot(e.target.value)}
-            style={{ marginBottom: 8, background: '#0d1117', borderColor: '#30363d', color: '#e6edf3' }} />
+            style={{ marginBottom: 8, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
           <Input placeholder="名场面" value={highlights} onChange={(e) => setHighlights(e.target.value)}
-            style={{ marginBottom: 8, background: '#0d1117', borderColor: '#30363d', color: '#e6edf3' }} />
+            style={{ marginBottom: 8, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
           <TextArea placeholder="观后感" value={impression} onChange={(e) => setImpression(e.target.value)}
-            rows={3} style={{ marginBottom: 8, background: '#0d1117', borderColor: '#30363d', color: '#e6edf3' }} />
+            rows={3} style={{ marginBottom: 8, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
           <Space>
             <Button size="small" type="primary" onClick={handleSave}>保存</Button>
             <Button size="small" onClick={() => setEditing(false)}>取消</Button>

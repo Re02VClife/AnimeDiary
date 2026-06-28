@@ -8,6 +8,9 @@
 
 import { loadAIConfig } from './ai-config';
 
+// 猫娘系统提示词 — 从 theme 读取猫娘模式状态
+import { catgirlSystemPrompt, isCatgirlMode } from '../../src/theme/catgirl';
+
 export interface LLMCallOptions {
   maxTokens?: number;
   temperature?: number;
@@ -56,7 +59,7 @@ export async function chat(
   const body: Record<string, unknown> = {
     model: config.model,
     messages: [
-      { role: 'system', content: systemPrompt },
+      { role: 'system', content: isCatgirlMode() ? catgirlSystemPrompt(systemPrompt) : systemPrompt },
       { role: 'user', content: userPrompt },
     ],
     max_tokens: options?.maxTokens ?? 1000,

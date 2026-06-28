@@ -43,6 +43,9 @@ export const EXCEL_COL = {
   ANILIST_SCORE: 36,  // AK - AniList 评分
   WATCH_DATE: 17,     // R - 首刷时间（别名，同 FIRST_WATCH）
   POSTER_URL: 37,     // AL - 海报 URL（持久化存储）
+  TEMPLATE_JSON: 19,  // T - 扩展评分 JSON（非默认模板的评分序列化）
+  TEMPLATE_ID: 38,    // AM - 模板 ID
+  LINK: 39,           // AN - 外部链接
 } as const;
 
 /** Excel 工作表名称 */
@@ -93,4 +96,7 @@ export const EDITABLE_COLS: number[] = [
   EXCEL_COL.BGM_SCORE,
   EXCEL_COL.ANILIST_SCORE,
   EXCEL_COL.POSTER_URL,
+  EXCEL_COL.TEMPLATE_JSON,
+  EXCEL_COL.TEMPLATE_ID,
+  EXCEL_COL.LINK,
 ];

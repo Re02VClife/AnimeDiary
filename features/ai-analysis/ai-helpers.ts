@@ -1,7 +1,7 @@
 /**
  * features/ai-analysis/ai-helpers — 各 Skill 共享的内部工具函数
  */
-import type { AnimeEntry } from '../../src/types';
+import type { AnimeEntry, Dimension } from '../../src/types';
 import { DEFAULT_DIMENSIONS } from '../../src/types';
 
 /** 获取番剧某维度的分数 */
@@ -9,11 +9,12 @@ export function getScore(a: AnimeEntry, dimKey: string): number {
   return a.scores.find((s) => s.dimensionKey === dimKey)?.score ?? 0;
 }
 
-/** 计算加权总评（使用 DEFAULT_DIMENSIONS 权重表） */
-export function calcOverall(a: AnimeEntry): number {
+/** 计算加权总评（使用指定模板维度权重表，默认 DEFAULT_DIMENSIONS） */
+export function calcOverall(a: AnimeEntry, dimensions?: Dimension[]): number {
   let total = 0;
   let totalWeight = 0;
-  for (const dim of DEFAULT_DIMENSIONS) {
+  const dims = dimensions || DEFAULT_DIMENSIONS;
+  for (const dim of dims) {
     if (dim.key === 'overall') continue;
     const s = getScore(a, dim.key);
     if (s > 0) {
@@ -38,16 +39,18 @@ export function calcTasteDeviation(a: AnimeEntry): number | null {
 }
 
 /** 格式化维度分数为单行文本 */
-export function fmtDims(a: AnimeEntry): string {
-  return DEFAULT_DIMENSIONS
+export function fmtDims(a: AnimeEntry, dimensions?: Dimension[]): string {
+  const dims = dimensions || DEFAULT_DIMENSIONS;
+  return dims
     .filter((d) => d.key !== 'overall')
     .map((d) => `${d.label}${getScore(a, d.key).toFixed(d.key === 'vibe' ? 2 : 1)}`)
     .join(' ');
 }
 
-/** 构建 8 维评分向量（排除 overall） */
-export function buildScoreVector(a: AnimeEntry): number[] {
-  return DEFAULT_DIMENSIONS
+/** 构建评分向量（排除 overall），维度数由模板决定 */
+export function buildScoreVector(a: AnimeEntry, dimensions?: Dimension[]): number[] {
+  const dims = dimensions || DEFAULT_DIMENSIONS;
+  return dims
     .filter((d) => d.key !== 'overall')
     .map((d) => getScore(a, d.key));
 }

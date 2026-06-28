@@ -83,6 +83,45 @@ function excelApiPlugin(): Plugin {
         });
       });
 
+      // 追加新行到 Excel（用于新建条目首次保存）
+      server.middlewares.use('/api/excel/append', (req, res) => {
+        if (req.method !== 'POST') {
+          res.statusCode = 405;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        req.on('data', (chunk: Buffer) => { chunks.push(chunk); });
+        req.on('end', () => {
+          try {
+            const { sheetName, row } = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+            const wb = XLSX.readFile(EXCEL_PATH);
+            const ws = wb.Sheets[sheetName];
+            if (!ws) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: 'Sheet 不存在' }));
+              return;
+            }
+            // 找到最后有数据的行号，新行追加到其后
+            const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+            const newRowIdx = range.e.r + 1;
+            for (const [colIdx, value] of Object.entries(row)) {
+              const cellAddr = XLSX.utils.encode_cell({ r: newRowIdx, c: parseInt(colIdx) });
+              XLSX.utils.sheet_add_aoa(ws, [[value]], { origin: cellAddr });
+            }
+            const wbOut = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+            fs.writeFileSync(EXCEL_PATH, wbOut);
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ success: true, rowIndex: newRowIdx }));
+          } catch (e) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: e instanceof Error ? e.message : '追加失败' }));
+          }
+        });
+      });
+
       // 文件信息
       server.middlewares.use('/api/excel/info', (_req, res) => {
         try {
@@ -1106,5 +1145,8 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+  },
+  optimizeDeps: {
+    include: ['xlsx'],
   },
 });

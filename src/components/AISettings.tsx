@@ -82,7 +82,7 @@ const AISettings: React.FC<AISettingsProps> = ({ open, onClose }) => {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {/* Base URL */}
         <div>
-          <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>
             API 地址
           </div>
           <Input
@@ -92,12 +92,12 @@ const AISettings: React.FC<AISettingsProps> = ({ open, onClose }) => {
             }
             placeholder="https://api.deepseek.com/v1"
             style={{
-              background: '#0d1117',
-              borderColor: '#30363d',
-              color: '#e6edf3',
+              background: 'var(--bg-primary)',
+              borderColor: 'var(--border-primary)',
+              color: 'var(--text-primary)',
             }}
           />
-          <div style={{ fontSize: 10, color: '#484f58', marginTop: 2 }}>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
             支持 DeepSeek / OpenAI / 通义千问 / Ollama 等兼容 OpenAI
             协议的 provider
           </div>
@@ -105,7 +105,7 @@ const AISettings: React.FC<AISettingsProps> = ({ open, onClose }) => {
 
         {/* API Key */}
         <div>
-          <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>
             API Key
           </div>
           <Input.Password
@@ -115,19 +115,19 @@ const AISettings: React.FC<AISettingsProps> = ({ open, onClose }) => {
             }
             placeholder="sk-…"
             style={{
-              background: '#0d1117',
-              borderColor: '#30363d',
-              color: '#e6edf3',
+              background: 'var(--bg-primary)',
+              borderColor: 'var(--border-primary)',
+              color: 'var(--text-primary)',
             }}
           />
-          <div style={{ fontSize: 10, color: '#484f58', marginTop: 2 }}>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
             存储在本地 localStorage，不会上传到任何服务器
           </div>
         </div>
 
         {/* 模型 */}
         <div>
-          <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>
             模型
           </div>
           <Input
@@ -137,9 +137,9 @@ const AISettings: React.FC<AISettingsProps> = ({ open, onClose }) => {
             }
             placeholder="deepseek-chat"
             style={{
-              background: '#0d1117',
-              borderColor: '#30363d',
-              color: '#e6edf3',
+              background: 'var(--bg-primary)',
+              borderColor: 'var(--border-primary)',
+              color: 'var(--text-primary)',
             }}
           />
         </div>
@@ -150,15 +150,15 @@ const AISettings: React.FC<AISettingsProps> = ({ open, onClose }) => {
           loading={testing}
           onClick={handleTest}
           style={{
-            background: '#21262d',
-            borderColor: '#30363d',
-            color: '#8b949e',
+            background: 'var(--bg-quaternary)',
+            borderColor: 'var(--border-primary)',
+            color: 'var(--text-secondary)',
           }}
         >
           🔌 测试连接
         </Button>
 
-        <Divider style={{ margin: '4px 0', borderColor: '#30363d' }} />
+        <Divider style={{ margin: '4px 0', borderColor: 'var(--border-primary)' }} />
 
         {/* 深度模式开关 */}
         <div
@@ -169,10 +169,10 @@ const AISettings: React.FC<AISettingsProps> = ({ open, onClose }) => {
           }}
         >
           <div>
-            <div style={{ fontSize: 13, color: '#e6edf3' }}>
+            <div style={{ fontSize: 13, color: 'var(--text-primary)' }}>
               🔬 深度偏好分析
             </div>
-            <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
               启用后偏好画像将额外采集 Bangumi 评论数据（约 5 万
               token，¥0.1-0.2/次，二期实现）
             </div>

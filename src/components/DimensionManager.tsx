@@ -59,8 +59,8 @@ const DimensionManager: React.FC<DimensionManagerProps> = ({ open, onClose }) =>
       okText={<><SaveOutlined /> 保存</>}
       width={560}
     >
-      <div style={{ marginBottom: 12, color: '#8b949e', fontSize: 12 }}>
-        权重总和：<span style={{ color: totalWeight === 1 ? '#52c41a' : '#fb7299', fontWeight: 600 }}>{totalWeight.toFixed(2)}</span>
+      <div style={{ marginBottom: 12, color: 'var(--text-secondary)', fontSize: 12 }}>
+        权重总和：<span style={{ color: totalWeight === 1 ? 'var(--color-success)' : 'var(--brand-primary)', fontWeight: 600 }}>{totalWeight.toFixed(2)}</span>
         （建议 = 1.0）
       </div>
 
@@ -75,12 +75,12 @@ const DimensionManager: React.FC<DimensionManagerProps> = ({ open, onClose }) =>
             }
           >
             <List.Item.Meta
-              title={<span style={{ color: '#e6edf3', fontSize: 14 }}>{dim.label}</span>}
+              title={<span style={{ color: 'var(--text-primary)', fontSize: 14 }}>{dim.label}</span>}
               description={
                 <div>
-                  <span style={{ color: '#8b949e', fontSize: 12 }}>{dim.description}</span>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{dim.description}</span>
                   <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ color: '#8b949e', fontSize: 12 }}>权重：</span>
+                    <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>权重：</span>
                     <Slider
                       min={0} max={0.5} step={0.01}
                       value={dim.weight}
@@ -102,7 +102,7 @@ const DimensionManager: React.FC<DimensionManagerProps> = ({ open, onClose }) =>
         )}
       />
 
-      <div style={{ display: 'flex', gap: 8, marginTop: 12, padding: 10, background: '#1c2128', borderRadius: 8 }}>
+      <div style={{ display: 'flex', gap: 8, marginTop: 12, padding: 10, background: 'var(--bg-tertiary)', borderRadius: 8 }}>
         <Input size="small" placeholder="维度名称" value={newLabel}
           onChange={(e) => setNewLabel(e.target.value)} style={{ width: 100 }} />
         <Input size="small" placeholder="描述" value={newDesc}

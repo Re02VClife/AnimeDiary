@@ -246,6 +246,7 @@ const ALL_LOCAL_KEYS = [
   KEYS.EPISODE_REVIEWS,
   KEYS.DIM_REVIEWS,
   'anime_diary_tag_presets',
+  'anime_diary_templates',  // 评分模板
   POSTER_POS_KEY,
   POSTER_BLACKLIST_KEY,
   IMG_HEIGHT_KEY,
