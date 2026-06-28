@@ -1,6 +1,6 @@
 /**
  * features/anime-data — 数据持久层
- *   统一导出 Excel 读写、本地存储、数据加载编排
+ *   统一导出 Excel 读写、本地存储、数据加载编排、模板管理
  */
 export { EXCEL_COL, EXCEL_SHEETS, MAIN_SHEET, DIMENSION_COL_MAP, EDITABLE_COLS } from './excel-mapping';
 export {
@@ -37,3 +37,14 @@ export {
   exportAllUserData,
   importUserData,
 } from './storage-service';
+export {
+  loadTemplates,
+  saveTemplates,
+  getTemplate,
+  getDefaultTemplate,
+  getActiveDimensions,
+  addTemplate,
+  updateTemplate,
+  deleteTemplate,
+  migrateLegacyDimensions,
+} from './template-service';

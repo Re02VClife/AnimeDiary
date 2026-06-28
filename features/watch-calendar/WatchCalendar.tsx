@@ -46,8 +46,8 @@ const WatchTimeline: React.FC<WatchTimelineProps> = ({ animeList, onAnimeClick }
 
   if (timelineData.length === 0) {
     return (
-      <div style={{ padding: '20px 10px', textAlign: 'center', color: '#484f58', fontSize: 13 }}>
-        暂无追番时间数据
+      <div style={{ padding: '20px 10px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+        暂无追番时间数据喵
       </div>
     );
   }
@@ -72,22 +72,22 @@ const WatchTimeline: React.FC<WatchTimelineProps> = ({ animeList, onAnimeClick }
             {/* 时间线竖线 */}
             <div style={{
               position: 'absolute', left: 5, top: 0, bottom: 0,
-              width: 2, background: '#30363d',
+              width: 2, background: 'var(--border-primary)',
             }} />
             {/* 时间点 */}
             <div style={{
               position: 'absolute', left: 1, top: 4,
               width: 10, height: 10, borderRadius: '50%',
-              background: '#fb7299', border: '2px solid #161b22',
+              background: 'var(--brand-primary)', border: '2px solid #161b22',
             }} />
 
             {/* 月份标签 */}
             <div style={{
-              fontSize: 11, color: '#fb7299', fontWeight: 600,
+              fontSize: 11, color: 'var(--brand-primary)', fontWeight: 600,
               marginBottom: 2, paddingTop: 2,
             }}>
               {formatYM(group.label)}
-              <span style={{ color: '#484f58', fontWeight: 400, marginLeft: 6 }}>
+              <span style={{ color: 'var(--text-muted)', fontWeight: 400, marginLeft: 6 }}>
                 {group.items.length}部
               </span>
             </div>
@@ -104,16 +104,16 @@ const WatchTimeline: React.FC<WatchTimelineProps> = ({ animeList, onAnimeClick }
                   background: 'transparent',
                   transition: 'background 0.15s',
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = '#1c2128'; }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-tertiary)'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
               >
                 <span style={{
-                  fontSize: 12, color: '#e6edf3', flex: 1,
+                  fontSize: 12, color: 'var(--text-primary)', flex: 1,
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>
                   {anime.title}
                 </span>
-                <span style={{ fontSize: 10, color: '#484f58' }}>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
                   {(anime.watchDate || anime.createdAt || '').slice(5, 10)}
                 </span>
               </div>

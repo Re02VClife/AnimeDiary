@@ -1,3 +1,41 @@
+/* ── CSS 变量默认值（深色主题，JS 加载前使用） ── */
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #1c2128;
+  --bg-quaternary: #21262d;
+  --border-primary: #30363d;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #484f58;
+  --brand-primary: #fb7299;
+  --color-success: #3fb950;
+  --color-warning: #d29922;
+  --color-error: #f85149;
+  --color-info: #58a6ff;
+  --scrollbar-thumb: #30363d;
+  --scrollbar-thumb-hover: #484f58;
+}
+
+/* ── 浅色主题覆盖（作为 CSS 后备，JS 也会同步设置） ── */
+[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f6f8fa;
+  --bg-tertiary: #ffffff;
+  --bg-quaternary: #f0f0f0;
+  --border-primary: #d0d7de;
+  --text-primary: #1f2328;
+  --text-secondary: #656d76;
+  --text-muted: #8b949e;
+  --brand-primary: #cf2256;
+  --color-success: #1a7f37;
+  --color-warning: #9a6700;
+  --color-error: #cf222e;
+  --color-info: #0969da;
+  --scrollbar-thumb: #d0d7de;
+  --scrollbar-thumb-hover: #8b949e;
+}
+
 /* ── 全局重置 ── */
 *,
 *::before,
@@ -16,8 +54,8 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: #0d1117;
-  color: #e6edf3;
+  background: var(--bg-primary);
+  color: var(--text-primary);
 }
 
 .hidden {
@@ -28,17 +66,17 @@ body {
 
 /* 侧边栏 */
 .ant-layout-sider {
-  background: #161b22 !important;
+  background: var(--bg-secondary) !important;
 }
 
 /* Empty 组件 */
 .ant-empty-description {
-  color: #484f58 !important;
+  color: var(--text-muted) !important;
 }
 
 /* Input 清除按钮 */
 .ant-input-clear-icon {
-  color: #484f58 !important;
+  color: var(--text-muted) !important;
 }
 
 /* Layout */

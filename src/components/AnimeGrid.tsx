@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Popconfirm } from 'antd';
 import { DeleteOutlined } from '@ant-design/icons';
-import type { AnimeEntry } from '../types';
+import type { AnimeEntry, Dimension } from '../types';
 import { loadPosterPositions } from '../../features/anime-data/storage-service';
+import { getTemplate } from '../../features/anime-data/template-service';
 
 interface AnimeGridProps {
   animeList: AnimeEntry[];
@@ -12,22 +13,39 @@ interface AnimeGridProps {
   batchMode?: boolean;
   selectedBatchAnime?: string[];
   onBatchAnimeChange?: (ids: string[]) => void;
+  /** 当前激活模板的维度列表（用于维度标签查找） */
+  templateDims?: Dimension[];
 }
-
-const DIM_LABELS: Record<string, string> = {
-  audio: '音声', production: '制作', animation: '作画', immersion: '沉浸',
-  plot: '剧情', character: '人设', depth: '深度', vibe: '电波', bgm: 'BGM',
-};
 
 const AnimeGrid: React.FC<AnimeGridProps> = ({
   animeList, onAnimeClick, activeDim, onDeleteFromWatching,
   batchMode, selectedBatchAnime, onBatchAnimeChange,
+  templateDims,
 }) => {
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
 
   useEffect(() => {
     setPositions(loadPosterPositions());
   }, [animeList]);
+
+  /** 动态计算条目的加权总评（根据条目自身模板的维度和权重） */
+  const calcOverall = useCallback((entry: AnimeEntry): number => {
+    const allDims = getTemplate(entry.templateId).dimensions
+      .filter((d) => d.key !== 'overall');
+    if (allDims.length === 0) return 0;
+
+    const hasWeights = allDims.some((d) => d.weight > 0);
+    const effectiveDims = hasWeights
+      ? allDims.filter((d) => d.weight > 0)
+      : allDims.map((d) => ({ ...d, weight: 1 / allDims.length }));
+
+    let tw = 0, ws = 0;
+    for (const d of effectiveDims) {
+      const s = entry.scores.find((sc) => sc.dimensionKey === d.key)?.score ?? 0;
+      if (s > 0) { ws += s * d.weight; tw += d.weight; }
+    }
+    return tw > 0 ? ws / tw : 0;
+  }, []);
 
   /** 批量模式下切换番剧选中 */
   const toggleAnimeSelect = useCallback((id: string) => {
@@ -41,7 +59,7 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
       <div className="empty-state">
         <div className="empty-icon" style={{ fontSize: 64, opacity: 0.5, marginBottom: 16 }}>🎬</div>
         <div className="empty-text">这里还没有番剧</div>
-        <div style={{ color: '#484f58', fontSize: 13, marginTop: 8 }}>搜索添加你喜欢的番剧吧～</div>
+        <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 8 }}>搜索添加你喜欢的番剧吧～</div>
       </div>
     );
   }
@@ -51,11 +69,15 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
       {animeList.map((anime) => {
         // 当前维度分数
         let dimScore: string | null = null;
-        if (activeDim === 'bgm' && anime.bangumiScore) {
+        if (activeDim === 'overall') {
+          const ov = calcOverall(anime);
+          if (ov > 0) dimScore = `总评 ${ov.toFixed(2)}`;
+        } else if (activeDim === 'bgm' && anime.bangumiScore) {
           dimScore = `BGM ${anime.bangumiScore}`;
         } else if (activeDim) {
           const s = anime.scores.find((sc) => sc.dimensionKey === activeDim);
-          if (s && s.score > 0) dimScore = `${DIM_LABELS[activeDim] || activeDim} ${s.score.toFixed(activeDim === 'vibe' ? 2 : 1)}`;
+          const label = (templateDims || []).find((d) => d.key === activeDim)?.label || activeDim;
+          if (s && s.score > 0) dimScore = `${label} ${s.score.toFixed(activeDim === 'vibe' ? 2 : 1)}`;
         }
 
         const isSelected = batchMode && selectedBatchAnime?.includes(anime.id);
@@ -64,7 +86,7 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
           <div
             key={anime.id}
             className="anime-card"
-            style={isSelected ? { borderColor: '#fb7299', boxShadow: '0 0 12px rgba(251,114,153,0.3)' } : undefined}
+            style={isSelected ? { borderColor: 'var(--brand-primary)', boxShadow: '0 0 12px rgba(251,114,153,0.3)' } : undefined}
             onClick={() => batchMode ? toggleAnimeSelect(anime.id) : onAnimeClick(anime)}
           >
             {/* 海报区 */}
@@ -74,8 +96,8 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
                 <div style={{
                   position: 'absolute', top: 8, left: 8, zIndex: 5,
                   width: 22, height: 22, borderRadius: 4,
-                  background: isSelected ? '#fb7299' : 'rgba(0,0,0,0.6)',
-                  border: `2px solid ${isSelected ? '#fb7299' : '#484f58'}`,
+                  background: isSelected ? 'var(--brand-primary)' : 'rgba(0,0,0,0.6)',
+                  border: `2px solid ${isSelected ? 'var(--brand-primary)' : 'var(--text-muted)'}`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   color: '#fff', fontSize: 13, fontWeight: 700,
                   transition: 'all 0.15s',

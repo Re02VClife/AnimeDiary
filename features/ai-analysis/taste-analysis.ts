@@ -2,7 +2,7 @@
  * features/ai-analysis/taste-analysis — Skill 1: 品味分析
  */
 
-import type { AnimeEntry } from '../../src/types';
+import type { AnimeEntry, Dimension } from '../../src/types';
 import { DEFAULT_DIMENSIONS } from '../../src/types';
 import { buildPercentileMap, getPercentileScores } from '../ranking/ranking-service';
 import { chat } from './llm-service';
@@ -12,13 +12,14 @@ import type { TasteStats, TasteReport } from './ai-types';
 import { TASTE_SCHEMA } from './ai-types';
 
 /** 计算全体番剧的数据统计（独立导出，供 UI 展示中间过程） */
-export function buildTasteStats(animeList: AnimeEntry[]): TasteStats {
+export function buildTasteStats(animeList: AnimeEntry[], dimensions?: Dimension[]): TasteStats {
   const stats = buildPercentileMap(animeList);
   const scored = animeList.filter((a) => a.scores.some((s) => s.score > 0));
+  const dims = dimensions || DEFAULT_DIMENSIONS;
 
   // 各维度平均百分位
   const dimAvg: Record<string, number> = {};
-  for (const dim of DEFAULT_DIMENSIONS) {
+  for (const dim of dims) {
     if (dim.key === 'overall') continue;
     const vals: number[] = [];
     for (const a of scored) {
@@ -34,7 +35,7 @@ export function buildTasteStats(animeList: AnimeEntry[]): TasteStats {
 
   // 评分标准差最大的维度
   const dimStdDev: { key: string; label: string; std: number }[] = [];
-  for (const dim of DEFAULT_DIMENSIONS) {
+  for (const dim of dims) {
     if (dim.key === 'overall') continue;
     const rawScores = scored
       .map((a) => getScore(a, dim.key))

@@ -2,7 +2,7 @@
  * features/ai-analysis/preference-profile — Skill 2: 偏好画像 + 深度模式
  */
 
-import type { AnimeEntry } from '../../src/types';
+import type { AnimeEntry, Dimension } from '../../src/types';
 import { DEFAULT_DIMENSIONS } from '../../src/types';
 import { buildPercentileMap, getPercentileScores } from '../ranking/ranking-service';
 import { chat } from './llm-service';
@@ -14,7 +14,7 @@ import { PROFILE_SCHEMA } from './ai-types';
 // ── 数据准备 ──
 
 /** 计算口味偏差相关数据 */
-export function buildDeviationData(animeList: AnimeEntry[]): DeviationData {
+export function buildDeviationData(animeList: AnimeEntry[], dimensions?: Dimension[]): DeviationData {
   const withDev = animeList
     .map((a) => ({ anime: a, deviation: calcTasteDeviation(a) }))
     .filter((d): d is { anime: AnimeEntry; deviation: number } => d.deviation !== null);
@@ -73,9 +73,10 @@ export function buildDeviationData(animeList: AnimeEntry[]): DeviationData {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8);
 
+  const dims = dimensions || DEFAULT_DIMENSIONS;
   const dimAvgHi: Record<string, number> = {};
   const dimAvgLo: Record<string, number> = {};
-  for (const dim of DEFAULT_DIMENSIONS) {
+  for (const dim of dims) {
     if (dim.key === 'overall') continue;
     const hiScores = topPos.map((d) => getScore(d.anime, dim.key)).filter((s) => s > 0);
     const loScores = topNeg.map((d) => getScore(d.anime, dim.key)).filter((s) => s > 0);

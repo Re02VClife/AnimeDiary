@@ -255,7 +255,7 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
       target: e.target,
       relation: e.relation,
       lineStyle: {
-        color: RELATION_COLORS[e.relation] || '#484f58',
+        color: RELATION_COLORS[e.relation] || 'var(--text-muted)',
         width: e.relation === 'similar_scores' ? (0.5 + (e.weight || 0) * 2) : 0.5,
         curveness: e.relation === 'similar_scores' ? 0.3 : 0.1,
         opacity: 0.5,
@@ -268,9 +268,9 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
       animationEasingUpdate: 'quinticInOut',
       tooltip: {
         trigger: 'item',
-        backgroundColor: '#1c2128',
-        borderColor: '#30363d',
-        textStyle: { color: '#e6edf3', fontSize: 12 },
+        backgroundColor: 'var(--bg-tertiary)',
+        borderColor: 'var(--border-primary)',
+        textStyle: { color: 'var(--text-primary)', fontSize: 12 },
         formatter: (params: { dataType?: string; name?: string; data?: EChartsGraphNode & { source?: string; target?: string; relation?: GraphEdgeRelation } }) => {
           if (params.dataType === 'node' && params.data) {
             const catName = GRAPH_CATEGORIES[params.data.category]?.name || '';
@@ -305,7 +305,7 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
           links: graphLinks,
           categories: GRAPH_CATEGORIES,
           itemStyle: {
-            borderColor: '#30363d',
+            borderColor: 'var(--border-primary)',
             borderWidth: 1,
           },
           label: {
@@ -324,7 +324,7 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
             },
           },
           lineStyle: {
-            color: '#484f58',
+            color: 'var(--text-muted)',
             curveness: 0.2,
             opacity: 0.4,
           },
@@ -436,8 +436,8 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
     <Modal
       title={
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ color: '#e6edf3', fontSize: 16 }}>🔗 知识图谱</span>
-          <span style={{ fontSize: 12, color: '#8b949e', fontWeight: 400 }}>
+          <span style={{ color: 'var(--text-primary)', fontSize: 16 }}>🔗 知识图谱</span>
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 400 }}>
             {animeList.length} 部番剧 · {fullGraph?.edges.length || 0} 条关系
           </span>
         </div>
@@ -447,11 +447,11 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
       width="95vw"
       style={{ top: 20 }}
       styles={{
-        body: { height: '82vh', padding: 0, background: '#0d1117' },
-        header: { background: '#161b22', borderBottom: '1px solid #30363d' },
+        body: { height: '82vh', padding: 0, background: 'var(--bg-primary)' },
+        header: { background: 'var(--bg-secondary)', borderBottom: '1px solid #30363d' },
       }}
       footer={null}
-      destroyOnClose
+      destroyOnHidden
     >
       {notEnough ? (
         <div
@@ -464,7 +464,7 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
         >
           <Empty
             description={
-              <span style={{ color: '#8b949e' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>
                 需要至少 3 部番剧才能构建知识图谱
               </span>
             }
@@ -477,7 +477,7 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
             {/* 搜索框 */}
             <div style={{ marginBottom: 12 }}>
               <Input
-                prefix={<SearchOutlined style={{ color: '#484f58' }} />}
+                prefix={<SearchOutlined style={{ color: 'var(--text-muted)' }} />}
                 placeholder="搜索番剧…"
                 value={searchKeyword}
                 onChange={(e) => setSearchKeyword(e.target.value)}
@@ -485,15 +485,15 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
                 size="small"
                 className="graph-search-input"
                 style={{
-                  background: '#0d1117',
-                  borderColor: '#30363d',
-                  color: '#e6edf3',
+                  background: 'var(--bg-primary)',
+                  borderColor: 'var(--border-primary)',
+                  color: 'var(--text-primary)',
                 }}
               />
             </div>
 
             {/* 关系类型筛选 */}
-            <div style={{ marginBottom: 6, fontSize: 12, color: '#8b949e', fontWeight: 600 }}>
+            <div style={{ marginBottom: 6, fontSize: 12, color: 'var(--text-secondary)', fontWeight: 600 }}>
               实体关系
               <Checkbox
                 checked={entityAllChecked}
@@ -536,7 +536,7 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
             </div>
 
             {/* 图例 */}
-            <div style={{ fontSize: 11, color: '#484f58', marginBottom: 4, fontWeight: 600 }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600 }}>
               节点图例
             </div>
             <div className="graph-legend">
@@ -548,11 +548,11 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
                       width: 10,
                       height: 10,
                       borderRadius: '50%',
-                      background: cat.itemStyle?.color || '#484f58',
+                      background: cat.itemStyle?.color || 'var(--text-muted)',
                       border: '1px solid #30363d',
                     }}
                   />
-                  <span style={{ color: '#8b949e', fontSize: 11 }}>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: 11 }}>
                     {cat.name}
                   </span>
                 </div>
@@ -572,24 +572,24 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
                 style={{
                   display: 'flex', alignItems: 'center', gap: 8,
                   padding: '8px 12px', borderRadius: 8, cursor: 'pointer',
-                  background: linkingMode ? 'rgba(251,114,153,0.12)' : '#21262d',
-                  border: `1px solid ${linkingMode ? '#fb7299' : '#30363d'}`,
+                  background: linkingMode ? 'rgba(251,114,153,0.12)' : 'var(--bg-quaternary)',
+                  border: `1px solid ${linkingMode ? 'var(--brand-primary)' : 'var(--border-primary)'}`,
                   transition: 'all 0.2s',
                 }}
               >
                 <span style={{ fontSize: 15 }}>🔗</span>
                 <div>
-                  <div style={{ fontSize: 12, color: linkingMode ? '#fb7299' : '#8b949e', fontWeight: 600 }}>
+                  <div style={{ fontSize: 12, color: linkingMode ? 'var(--brand-primary)' : 'var(--text-secondary)', fontWeight: 600 }}>
                     连线模式
                   </div>
-                  <div style={{ fontSize: 10, color: '#484f58' }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
                     {linkingMode ? '点击番剧 → 点击实体关联' : '点击开启后建立关联'}
                   </div>
                 </div>
                 <div style={{
                   marginLeft: 'auto',
                   width: 36, height: 20, borderRadius: 10,
-                  background: linkingMode ? '#fb7299' : '#30363d',
+                  background: linkingMode ? 'var(--brand-primary)' : 'var(--border-primary)',
                   transition: 'background 0.2s',
                   position: 'relative',
                 }}>
@@ -609,7 +609,7 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
               style={{
                 marginTop: 10,
                 fontSize: 10,
-                color: '#484f58',
+                color: 'var(--text-muted)',
                 lineHeight: 1.8,
               }}
             >
@@ -656,7 +656,7 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
                   y1={linkSourcePosRef.current.y}
                   x2={linkTargetPosRef.current?.x ?? mousePosRef.current.x}
                   y2={linkTargetPosRef.current?.y ?? mousePosRef.current.y}
-                  stroke={linkHoverTarget ? '#52c41a' : '#fb7299'}
+                  stroke={linkHoverTarget ? 'var(--color-success)' : 'var(--brand-primary)'}
                   strokeWidth={linkHoverTarget ? 3 : 2}
                   strokeDasharray={linkHoverTarget ? 'none' : '6 4'}
                   opacity={0.85}
@@ -666,7 +666,7 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
                   cy={linkSourcePosRef.current.y}
                   r={18}
                   fill="none"
-                  stroke="#fb7299"
+                  stroke="var(--brand-primary)"
                   strokeWidth={2}
                   opacity={0.7}
                 >
@@ -690,7 +690,7 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
                     cy={linkTargetPosRef.current.y}
                     r={20}
                     fill="rgba(82, 196, 26, 0.12)"
-                    stroke="#52c41a"
+                    stroke="var(--color-success)"
                     strokeWidth={2}
                     opacity={0.9}
                   />
@@ -705,11 +705,11 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
                   top: 12,
                   left: '50%',
                   transform: 'translateX(-50%)',
-                  background: '#1c2128',
-                  border: `1px solid ${linkHoverTarget ? '#52c41a' : '#fb7299'}`,
+                  background: 'var(--bg-tertiary)',
+                  border: `1px solid ${linkHoverTarget ? 'var(--color-success)' : 'var(--brand-primary)'}`,
                   borderRadius: 16,
                   padding: '6px 18px',
-                  color: linkHoverTarget ? '#52c41a' : '#fb7299',
+                  color: linkHoverTarget ? 'var(--color-success)' : 'var(--brand-primary)',
                   fontSize: 13,
                   zIndex: 11,
                   pointerEvents: 'none',
@@ -727,24 +727,24 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
 
           {/* ── 连线确认对话框 ── */}
           <Modal
-            title={<span style={{ color: '#e6edf3' }}>建立关联</span>}
+            title={<span style={{ color: 'var(--text-primary)' }}>建立关联</span>}
             open={linkConfirmOpen}
             onOk={confirmCreateRelation}
             onCancel={() => { setLinkConfirmOpen(false); cancelLinking(); }}
             okText="确认"
             cancelText="取消"
             styles={{
-              body: { background: '#161b22', padding: '20px 24px' },
-              header: { background: '#161b22', borderBottom: '1px solid #30363d' },
-              footer: { background: '#161b22', borderTop: '1px solid #30363d' },
+              body: { background: 'var(--bg-secondary)', padding: '20px 24px' },
+              header: { background: 'var(--bg-secondary)', borderBottom: '1px solid #30363d' },
+              footer: { background: 'var(--bg-secondary)', borderTop: '1px solid #30363d' },
             }}
           >
-            <div style={{ color: '#8b949e', fontSize: 13, marginBottom: 8, textAlign: 'center' }}>
+            <div style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 8, textAlign: 'center' }}>
               番剧{' '}
-              <span style={{ color: '#fb7299', fontWeight: 600 }}>{linkSource?.name}</span>
+              <span style={{ color: 'var(--brand-primary)', fontWeight: 600 }}>{linkSource?.name}</span>
             </div>
-            <div style={{ textAlign: 'center', color: '#8b949e', fontSize: 20, marginBottom: 8 }}>⬇️</div>
-            <div style={{ color: '#8b949e', fontSize: 13, marginBottom: 16, textAlign: 'center' }}>
+            <div style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: 20, marginBottom: 8 }}>⬇️</div>
+            <div style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 16, textAlign: 'center' }}>
               {linkTarget?.type === 'tag' && (
                 <>添加标签 <span style={{ color: '#2eaadc', fontWeight: 600 }}>{linkTarget.name}</span></>
               )}
@@ -777,7 +777,7 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
                   />
                 )}
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: '#e6edf3', marginBottom: 2 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>
                     {selectedAnime.title}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -785,7 +785,7 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
                       {CATEGORY_CONFIG[selectedAnime.category].label}
                     </AntTag>
                     {selectedAnime.bangumiScore && (
-                      <span style={{ fontSize: 11, color: '#8b949e' }}>
+                      <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
                         BGM: {selectedAnime.bangumiScore.toFixed(1)}
                       </span>
                     )}
@@ -795,7 +795,7 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
                       </span>
                     )}
                     {selectedAnime.tags.slice(0, 4).map((t) => (
-                      <AntTag key={t.name} style={{ fontSize: 10, background: '#21262d', border: '1px solid #30363d', color: '#8b949e', margin: 0 }}>
+                      <AntTag key={t.name} style={{ fontSize: 10, background: 'var(--bg-quaternary)', border: '1px solid #30363d', color: 'var(--text-secondary)', margin: 0 }}>
                         {t.name}
                       </AntTag>
                     ))}

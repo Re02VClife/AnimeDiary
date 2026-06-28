@@ -96,16 +96,16 @@ const ImageManager: React.FC<ImageManagerProps> = ({ anime, open, onClose, onSet
           添加图片
         </Button>
         <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileSelect} />
-        <span style={{ color: '#8b949e', fontSize: 11, marginLeft: 12 }}>
+        <span style={{ color: 'var(--text-secondary)', fontSize: 11, marginLeft: 12 }}>
           支持高清大图 · 选中图片点 📌 设为海报 · 双击图片查看原图
         </span>
       </div>
 
       {images.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: 60, color: '#484f58' }}>
+        <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>
           <span style={{ fontSize: 48, opacity: 0.3, display: 'block', marginBottom: 8 }}>🖼️</span>
           暂无图片 · 点击上方按钮添加
-          <div style={{ fontSize: 11, marginTop: 4, color: '#30363d' }}>
+          <div style={{ fontSize: 11, marginTop: 4, color: 'var(--border-primary)' }}>
             图片保存在 images/{anime.title.replace(/[\\/:*?"<>|]/g, '_')}/ 目录
           </div>
         </div>
@@ -115,7 +115,7 @@ const ImageManager: React.FC<ImageManagerProps> = ({ anime, open, onClose, onSet
             <div key={img.id} style={{
               position: 'relative', borderRadius: 8, overflow: 'hidden',
               border: anime.posterUrl === img.dataUrl ? '2px solid #fb7299' : '1px solid #30363d',
-              background: '#0d1117', flexShrink: 0,
+              background: 'var(--bg-primary)', flexShrink: 0,
             }}>
               {/* 双击查看原图 */}
               <Image src={img.dataUrl} alt={img.fileName}
@@ -131,7 +131,7 @@ const ImageManager: React.FC<ImageManagerProps> = ({ anime, open, onClose, onSet
               {anime.posterUrl === img.dataUrl && (
                 <div style={{
                   position: 'absolute', top: 6, left: 6,
-                  background: '#fb7299', borderRadius: 3, padding: '2px 8px',
+                  background: 'var(--brand-primary)', borderRadius: 3, padding: '2px 8px',
                   fontSize: 11, color: '#fff', fontWeight: 600,
                 }}>海报</div>
               )}
@@ -139,9 +139,9 @@ const ImageManager: React.FC<ImageManagerProps> = ({ anime, open, onClose, onSet
               <div style={{
                 padding: '4px 6px',
                 display: 'flex', gap: 4, justifyContent: 'space-between', alignItems: 'center',
-                background: '#161b22',
+                background: 'var(--bg-secondary)',
               }}>
-                <span style={{ fontSize: 10, color: '#484f58', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>
                   {img.fileName}
                 </span>
                 <Space.Compact size="small">

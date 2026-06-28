@@ -3,10 +3,12 @@
  *   用 useReducer 替代 prop drilling
  */
 import React, { createContext, useContext, useReducer, useEffect, useCallback, useMemo, useRef } from 'react';
-import { message } from 'antd';
+import { catgirlMessage } from '../src/theme';
 import type { AnimeCategory, AnimeEntry, AnimeTag } from '../src/types';
-import { loadAnimeList, updateAnimeEntry, batchSaveAllPosters } from '../features/anime-data/excel-service';
+import { loadAnimeList, updateAnimeEntry, appendAnimeEntry, batchSaveAllPosters } from '../features/anime-data/excel-service';
 import { saveCategory, addToWatchingDeleted, loadImgHeight, saveImgHeight, exportAllUserData, importUserData } from '../features/anime-data/storage-service';
+import { migrateLegacyDimensions, loadTemplates } from '../features/anime-data/template-service';
+import { getVisibleCategories } from '../src/types';
 import { rankByDimension } from '../features/ranking/ranking-service';
 import { DIMENSION_COL_MAP, EXCEL_COL } from '../features/anime-data/excel-mapping';
 
@@ -28,11 +30,15 @@ export interface AnimeState {
   sortByDim: string | null;
   sortOrder: 'asc' | 'desc';
 
+  // 模板筛选
+  activeTemplateId: string;
+
   // 弹窗
   detailOpen: boolean;
   selectedAnime: AnimeEntry | null;
-  searchModalOpen: boolean;
+  searchOpen: boolean;
   dimManagerOpen: boolean;
+  templateManagerOpen: boolean;
   knowledgeGraphOpen: boolean;
   aiSettingsOpen: boolean;
   tasteReportOpen: boolean;
@@ -44,6 +50,13 @@ export interface AnimeState {
 
   // 布局
   imgHeight: number;
+
+  // 雷达图显示配置
+  radarMode: 'percentile' | 'fixed';
+  radarMin: number;
+
+  // 新增条目后自动进入编辑模式
+  detailEditMode: boolean;
 }
 
 // ── Action 类型 ──
@@ -57,15 +70,21 @@ export type AnimeAction =
   | { type: 'ADD_ANIME'; payload: AnimeEntry }
   | { type: 'SET_CATEGORY'; payload: AnimeCategory }
   | { type: 'SET_SEARCH'; text: string; mode: 'title' | 'tag' }
+  | { type: 'SET_SEARCH_TEXT'; payload: string }
+  | { type: 'SET_SEARCH_MODE'; payload: 'title' | 'tag' }
   | { type: 'SET_ACTIVE_TAG'; payload: string | null }
   | { type: 'SET_SORT'; dimKey: string | null; order: 'asc' | 'desc' }
   | { type: 'SET_ACTIVE_DIM'; payload: string }
+  | { type: 'SET_ACTIVE_TEMPLATE'; payload: string }
+  | { type: 'SET_DETAIL_EDIT_MODE'; payload: boolean }
   | { type: 'OPEN_MODAL'; modal: string; anime?: AnimeEntry }
   | { type: 'CLOSE_MODAL'; modal: string }
   | { type: 'SET_BATCH_MODE'; payload: boolean }
   | { type: 'SET_BATCH_TAGS'; payload: string[] }
   | { type: 'SET_BATCH_ANIME'; payload: string[] }
   | { type: 'SET_IMG_HEIGHT'; payload: number }
+  | { type: 'SET_RADAR_MODE'; payload: 'percentile' | 'fixed' }
+  | { type: 'SET_RADAR_MIN'; payload: number }
   | { type: 'SET_ANIME_POSTER'; animeId: string; posterUrl: string }
   | { type: 'RENAME_TAG'; oldName: string; newName: string }
   | { type: 'DELETE_TAG'; tagName: string }
@@ -84,14 +103,19 @@ const initialState: AnimeState = {
   activeDim: 'overall',
   sortByDim: null,
   sortOrder: 'desc',
+  activeTemplateId: localStorage.getItem('anime_diary_active_template') || 'default',
   detailOpen: false,
   selectedAnime: null,
-  searchModalOpen: false,
+  searchOpen: false,
   dimManagerOpen: false,
+  templateManagerOpen: false,
   knowledgeGraphOpen: false,
   aiSettingsOpen: false,
   tasteReportOpen: false,
   batchMode: false,
+  detailEditMode: false,
+  radarMode: (localStorage.getItem('anime_diary_radar_mode') as 'percentile' | 'fixed') || 'percentile',
+  radarMin: Number(localStorage.getItem('anime_diary_radar_min')) || 0,
   selectedBatchTags: [],
   selectedBatchAnime: [],
   imgHeight: loadImgHeight(),
@@ -135,6 +159,12 @@ function animeReducer(state: AnimeState, action: AnimeAction): AnimeState {
     case 'SET_SEARCH':
       return { ...state, searchText: action.text, searchMode: action.mode };
 
+    case 'SET_SEARCH_TEXT':
+      return { ...state, searchText: action.payload };
+
+    case 'SET_SEARCH_MODE':
+      return { ...state, searchMode: action.payload };
+
     case 'SET_ACTIVE_TAG':
       return { ...state, activeTag: action.payload };
 
@@ -143,6 +173,13 @@ function animeReducer(state: AnimeState, action: AnimeAction): AnimeState {
 
     case 'SET_ACTIVE_DIM':
       return { ...state, activeDim: action.payload };
+
+    case 'SET_ACTIVE_TEMPLATE':
+      localStorage.setItem('anime_diary_active_template', action.payload);
+      return { ...state, activeTemplateId: action.payload };
+
+    case 'SET_DETAIL_EDIT_MODE':
+      return { ...state, detailEditMode: action.payload };
 
     case 'OPEN_MODAL': {
       const key = `${action.modal}Open` as keyof AnimeState;
@@ -174,6 +211,14 @@ function animeReducer(state: AnimeState, action: AnimeAction): AnimeState {
     case 'SET_IMG_HEIGHT':
       saveImgHeight(action.payload);
       return { ...state, imgHeight: action.payload };
+
+    case 'SET_RADAR_MODE':
+      localStorage.setItem('anime_diary_radar_mode', action.payload);
+      return { ...state, radarMode: action.payload };
+
+    case 'SET_RADAR_MIN':
+      localStorage.setItem('anime_diary_radar_min', String(action.payload));
+      return { ...state, radarMin: action.payload };
 
     case 'SET_ANIME_POSTER':
       return {
@@ -279,6 +324,9 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // 加载数据
   const fetchData = useCallback(async () => {
+    // 一次性迁移：旧版维度数据 → 模板系统
+    migrateLegacyDimensions();
+
     dispatch({ type: 'SET_LOADING', payload: true });
     dispatch({ type: 'SET_ERROR', payload: null });
     try {
@@ -295,8 +343,14 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // 筛选排序
   const filteredAnime = useMemo(() => {
+    // 计算当前模板的可见分类：[]>0=按分类筛选，[]=全部留空不筛选
+    const templates = loadTemplates();
+    const activeTemplate = templates.find((t) => t.id === state.activeTemplateId);
+    const visibleCats = activeTemplate ? getVisibleCategories(activeTemplate.categoryLabels) : [];
+    const hasCategoryFilter = visibleCats.length > 0;
+
     let list = state.animeList.filter((a) => {
-      const matchCategory = a.category === state.activeCategory;
+      const matchCategory = hasCategoryFilter ? a.category === state.activeCategory : true;
       let matchSearch = true;
       if (state.searchText) {
         if (state.searchMode === 'tag') {
@@ -306,11 +360,35 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       }
       const matchTag = !state.activeTag || a.tags.some((t) => t.name === state.activeTag);
-      return matchCategory && matchSearch && matchTag;
+      // 模板筛选：始终按模板分类，'default'=缺省模板，其他=匹配指定模板ID
+      const matchTemplate = state.activeTemplateId === 'default'
+        ? (!a.templateId || a.templateId === 'default')
+        : a.templateId === state.activeTemplateId;
+      return matchCategory && matchSearch && matchTag && matchTemplate;
     });
 
     if (state.sortByDim) {
-      if (state.sortByDim === 'bgm') {
+      if (state.sortByDim === 'overall') {
+        // 总评是计算值，不存于 scores 中，需单独处理
+        const calcOv = (entry: AnimeEntry): number => {
+          const dims = (activeTemplate?.dimensions || [])
+            .filter((d) => d.key !== 'overall');
+          if (dims.length === 0) return 0;
+          const hasWeights = dims.some((d) => d.weight > 0);
+          const eff = hasWeights ? dims.filter((d) => d.weight > 0) : dims.map((d) => ({ ...d, weight: 1 / dims.length }));
+          let tw = 0, ws = 0;
+          for (const d of eff) {
+            const s = entry.scores.find((sc) => sc.dimensionKey === d.key)?.score ?? 0;
+            if (s > 0) { ws += s * d.weight; tw += d.weight; }
+          }
+          return tw > 0 ? ws / tw : 0;
+        };
+        list = [...list]
+          .map((a) => ({ entry: a, ov: calcOv(a) }))
+          .filter((x) => x.ov > 0)
+          .sort((a, b) => state.sortOrder === 'asc' ? a.ov - b.ov : b.ov - a.ov)
+          .map((x) => x.entry);
+      } else if (state.sortByDim === 'bgm') {
         list = list
           .filter((a) => a.bangumiScore && a.bangumiScore > 0)
           .sort((a, b) => (b.bangumiScore || 0) - (a.bangumiScore || 0));
@@ -326,7 +404,7 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     }
     return list;
-  }, [state.animeList, state.activeCategory, state.searchText, state.searchMode, state.activeTag, state.sortByDim, state.sortOrder]);
+  }, [state.animeList, state.activeCategory, state.searchText, state.searchMode, state.activeTag, state.sortByDim, state.sortOrder, state.activeTemplateId]);
 
   // ── 业务方法 ──
 
@@ -335,15 +413,28 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const handleSaveAnime = useCallback(async (updated: AnimeEntry) => {
-    await updateAnimeEntry(updated);
+    let savedEntry = updated;
+    // 新条目（无 excelRowIndex）→ 追加到 Excel 末尾，并获取分配的行号
+    if (updated.excelRowIndex === undefined) {
+      try {
+        const newRowIdx = await appendAnimeEntry(updated);
+        savedEntry = { ...updated, excelRowIndex: newRowIdx, id: `excel-${newRowIdx}` };
+      } catch (e) {
+        catgirlMessage.error('追加到 Excel 失败：' + (e instanceof Error ? e.message : '未知错误'));
+        return;
+      }
+    } else {
+      await updateAnimeEntry(updated);
+    }
     const old = state.animeList.find((a) => a.id === updated.id);
     if (old && old.category !== updated.category) {
-      saveCategory(updated.id, updated.category);
+      saveCategory(savedEntry.id, savedEntry.category);
     }
     dispatch({
       type: 'UPDATE_ANIME_IN_LIST',
-      payload: { ...updated, updatedAt: new Date().toISOString().split('T')[0] },
+      payload: { ...savedEntry, updatedAt: new Date().toISOString().split('T')[0] },
     });
+    dispatch({ type: 'SET_DETAIL_EDIT_MODE', payload: false });
     dispatch({ type: 'CLOSE_MODAL', modal: 'detail' });
   }, [state.animeList]);
 
@@ -355,25 +446,28 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const handleExportUserData = useCallback(async () => {
     try {
       await exportAllUserData();
-      message.success('备份已导出（含图片）');
+      catgirlMessage.success('备份已导出（含图片）');
     } catch (e) {
-      message.error('导出失败：' + (e instanceof Error ? e.message : '未知错误'));
+      catgirlMessage.error('导出失败：' + (e instanceof Error ? e.message : '未知错误'));
     }
   }, []);
 
   const handleImportUserData = useCallback(async (file: File) => {
     try {
       await importUserData(file);
-      message.success('已导入，正在刷新…');
+      catgirlMessage.success('已导入，正在刷新…');
       fetchData();
     } catch (e) {
-      message.error('导入失败：' + (e instanceof Error ? e.message : '未知错误'));
+      catgirlMessage.error('导入失败：' + (e instanceof Error ? e.message : '未知错误'));
     }
   }, [fetchData]);
 
   const handleAddAnime = useCallback((anime: AnimeEntry) => {
     dispatch({ type: 'ADD_ANIME', payload: anime });
     dispatch({ type: 'CLOSE_MODAL', modal: 'search' });
+    // 新增后直接打开详情面板，并自动进入编辑模式
+    dispatch({ type: 'SET_DETAIL_EDIT_MODE', payload: true });
+    dispatch({ type: 'OPEN_MODAL', modal: 'detail', anime });
   }, []);
 
   const handleOpenExcel = useCallback(async () => {
@@ -384,21 +478,21 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         throw new Error((errData as { error?: string }).error || `HTTP ${resp.status}`);
       }
     } catch (e) {
-      message.error('打开 Excel 失败：' + (e instanceof Error ? e.message : '请检查 Excel 文件是否存在'));
+      catgirlMessage.error('打开 Excel 失败：' + (e instanceof Error ? e.message : '请检查 Excel 文件是否存在'));
     }
   }, []);
 
   const handleBatchSavePosters = useCallback(async () => {
     const candidates = state.animeList.filter((a) => a.excelRowIndex !== undefined && a.posterUrl);
-    if (candidates.length === 0) { message.warning('没有需要持久化的海报'); return; }
-    const hide = message.loading(`正在持久化海报 (0/${candidates.length})…`, 0);
+    if (candidates.length === 0) { catgirlMessage.warning('没有需要持久化的海报'); return; }
+    const hide = catgirlMessage.loading(`正在持久化海报 (0/${candidates.length})…`, 0);
     try {
       await batchSaveAllPosters(candidates);
       hide();
-      message.success(`已持久化 ${candidates.length} 张海报到 Excel`);
+      catgirlMessage.success(`已持久化 ${candidates.length} 张海报到 Excel`);
     } catch (e) {
       hide();
-      message.error('持久化失败：' + (e instanceof Error ? e.message : '未知错误'));
+      catgirlMessage.error('持久化失败：' + (e instanceof Error ? e.message : '未知错误'));
     }
   }, [state.animeList]);
 
@@ -421,7 +515,7 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         tags: a.tags.map((t) => t.name === oldName ? { ...t, name: newName } : t),
       }));
     Promise.all(affected.map((a) => updateAnimeEntry(a).catch(() => {})));
-    message.success(`已将「${oldName}」重命名为「${newName}」`);
+    catgirlMessage.success(`已将「${oldName}」重命名为「${newName}」`);
   }, [state.animeList]);
 
   const handleDeleteTag = useCallback((tagName: string) => {
@@ -433,12 +527,12 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         tags: a.tags.filter((t) => t.name !== tagName),
       }));
     Promise.all(affected.map((a) => updateAnimeEntry(a).catch(() => {})));
-    message.success(`已全局删除标签「${tagName}」`);
+    catgirlMessage.success(`已全局删除标签「${tagName}」`);
   }, [state.animeList]);
 
   const handleBatchAddTags = useCallback(() => {
     if (state.selectedBatchTags.length === 0 || state.selectedBatchAnime.length === 0) {
-      message.warning('请至少选择一个标签和一部番剧');
+      catgirlMessage.warning('请至少选择一个标签和一部番剧');
       return;
     }
     dispatch({
@@ -456,7 +550,7 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
       .filter(Boolean) as AnimeEntry[];
     Promise.all(affected.map((a) => updateAnimeEntry(a).catch(() => {})));
-    message.success(`已将 ${state.selectedBatchTags.length} 个标签添加到 ${state.selectedBatchAnime.length} 部番剧`);
+    catgirlMessage.success(`已将 ${state.selectedBatchTags.length} 个标签添加到 ${state.selectedBatchAnime.length} 部番剧`);
   }, [state.selectedBatchTags, state.selectedBatchAnime, state.animeList]);
 
   const handleCancelBatch = useCallback(() => {
@@ -467,8 +561,8 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const handleFixSearchAlias = useCallback(async () => {
     const candidates = state.animeList.filter((a) => a.excelRowIndex !== undefined);
-    if (candidates.length === 0) { message.warning('没有可修正的番剧'); return; }
-    const hide = message.loading('正在修正检索名 (0/' + candidates.length + ')…', 0);
+    if (candidates.length === 0) { catgirlMessage.warning('没有可修正的番剧'); return; }
+    const hide = catgirlMessage.loading('正在修正检索名 (0/' + candidates.length + ')…', 0);
     let done = 0;
     for (const anime of candidates) {
       try {
@@ -485,7 +579,7 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (done < candidates.length) await new Promise((r) => setTimeout(r, 800));
     }
     hide();
-    message.success(`检索名修正完成 (${done}/${candidates.length})`);
+    catgirlMessage.success(`检索名修正完成 (${done}/${candidates.length})`);
   }, [state.animeList]);
 
   const handleCreateRelation = useCallback(
@@ -508,7 +602,7 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       dispatch({ type: 'UPDATE_ANIME_IN_LIST', payload: updated });
       if (anime.excelRowIndex !== undefined) updateAnimeEntry(updated).catch(() => {});
       const label = targetType === 'tag' ? '标签' : targetType === 'studio' ? '制作公司' : '角色';
-      message.success(`已将「${targetName}」${targetType === 'studio' ? '设为' : '添加到'}「${anime.title}」的${label}`);
+      catgirlMessage.success(`已将「${targetName}」${targetType === 'studio' ? '设为' : '添加到'}「${anime.title}」的${label}`);
     },
     [state.animeList],
   );
@@ -540,25 +634,44 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const v = Number(row[colIdx]);
           if (v > 0) scores.push({ dimensionKey: dimKey, score: v });
         }
+        // 读取模板数据
+        const templateId = String(row[EXCEL_COL.TEMPLATE_ID] || '').trim() || undefined;
+        const templateJson = String(row[EXCEL_COL.TEMPLATE_JSON] || '').trim();
+        let customFields: Record<string, string | number> | undefined;
+        if (templateId && templateId !== 'default' && templateJson) {
+          try {
+            const parsed = JSON.parse(templateJson);
+            if (Array.isArray(parsed)) {
+              if (parsed.length > 0) { scores.length = 0; scores.push(...parsed.filter((s: { score: number }) => s.score > 0)); }
+            } else {
+              const cs = parsed.scores;
+              if (cs && cs.length > 0) { scores.length = 0; scores.push(...cs.filter((s: { score: number }) => s.score > 0)); }
+              customFields = parsed.customFields;
+            }
+          } catch { /* ignore */ }
+        }
         entries.push({
           id: `import-${i}-${Date.now()}`,
           title,
           posterUrl: '',
           category: 'watched' as AnimeCategory,
           tags: String(row[EXCEL_COL.TAG] || '').split(/[/、]/).filter(Boolean).map((n: string) => ({ name: n.trim(), highlighted: false })),
+          templateId,
+          customFields,
           scores,
           releaseDate: String(row[EXCEL_COL.RELEASE_DATE] || ''),
           bangumiScore: Number(row[EXCEL_COL.BGM_SCORE]) || undefined,
           review: String(row[EXCEL_COL.REVIEW] || ''),
           studio: String(row[EXCEL_COL.STUDIO] || ''),
+          link: String(row[EXCEL_COL.LINK] || '').trim() || undefined,
           createdAt: new Date().toISOString().split('T')[0],
           updatedAt: new Date().toISOString().split('T')[0],
         });
       }
       dispatch({ type: 'SET_ANIME_LIST', payload: entries });
-      message.success(`已导入 ${entries.length} 条记录`);
+      catgirlMessage.success(`已导入 ${entries.length} 条记录`);
     } catch (err) {
-      message.error('导入失败：' + (err instanceof Error ? err.message : '文件格式错误'));
+      catgirlMessage.error('导入失败：' + (err instanceof Error ? err.message : '文件格式错误'));
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, []);
@@ -577,9 +690,17 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         row[EXCEL_COL.RELEASE_DATE] = a.releaseDate || '';
         row[EXCEL_COL.BGM_SCORE] = a.bangumiScore || '';
         row[EXCEL_COL.TAG] = a.tags.map((t) => t.name).join('/');
+        row[EXCEL_COL.LINK] = a.link || '';
         for (const s of a.scores) {
           const col = DIMENSION_COL_MAP[s.dimensionKey];
           if (col !== undefined) row[col] = s.score;
+        }
+        // 写入模板数据（新格式：{ scores, customFields }）
+        if (a.templateId && a.templateId !== 'default') {
+          row[EXCEL_COL.TEMPLATE_JSON] = JSON.stringify({ scores: a.scores, customFields: a.customFields });
+        }
+        if (a.templateId) {
+          row[EXCEL_COL.TEMPLATE_ID] = a.templateId;
         }
         rows.push(row);
       }
@@ -587,8 +708,8 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, '番剧列表');
       XLSX.writeFile(wb, '番评分_导出.xlsx');
-      message.success(`已导出 ${state.animeList.length} 条记录`);
-    } catch { message.error('导出失败'); }
+      catgirlMessage.success(`已导出 ${state.animeList.length} 条记录`);
+    } catch { catgirlMessage.error('导出失败'); }
   }, [state.animeList]);
 
   const value: AnimeContextValue = {

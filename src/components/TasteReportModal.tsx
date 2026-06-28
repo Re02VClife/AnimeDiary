@@ -61,7 +61,7 @@ const StatBar: React.FC<{ value: number; max: number; label?: string }> = ({
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
       {label !== undefined && (
-        <span style={{ width: 50, fontSize: 11, color: '#8b949e', textAlign: 'right', flexShrink: 0 }}>
+        <span style={{ width: 50, fontSize: 11, color: 'var(--text-secondary)', textAlign: 'right', flexShrink: 0 }}>
           {label}
         </span>
       )}
@@ -69,7 +69,7 @@ const StatBar: React.FC<{ value: number; max: number; label?: string }> = ({
         style={{
           flex: 1,
           height: 14,
-          background: '#21262d',
+          background: 'var(--bg-quaternary)',
           borderRadius: 7,
           overflow: 'hidden',
         }}
@@ -84,7 +84,7 @@ const StatBar: React.FC<{ value: number; max: number; label?: string }> = ({
           }}
         />
       </div>
-      <span style={{ width: 36, fontSize: 11, color: '#e6edf3', textAlign: 'right', flexShrink: 0 }}>
+      <span style={{ width: 36, fontSize: 11, color: 'var(--text-primary)', textAlign: 'right', flexShrink: 0 }}>
         {value}%
       </span>
     </div>
@@ -94,7 +94,7 @@ const StatBar: React.FC<{ value: number; max: number; label?: string }> = ({
 const SectionTitle: React.FC<{ icon: string; title: string; color?: string }> = ({
   icon,
   title,
-  color = '#e6edf3',
+  color = 'var(--text-primary)',
 }) => (
   <div
     style={{
@@ -129,9 +129,9 @@ const PhaseDivider: React.FC<{ label: string; active: boolean; done: boolean }> 
     }}
   >
     {done ? (
-      <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 13 }} />
+      <CheckCircleOutlined style={{ color: 'var(--color-success)', fontSize: 13 }} />
     ) : active ? (
-      <LoadingOutlined style={{ color: '#fb7299', fontSize: 13 }} />
+      <LoadingOutlined style={{ color: 'var(--brand-primary)', fontSize: 13 }} />
     ) : (
       <span style={{ width: 13, height: 13, borderRadius: '50%', border: '2px solid #30363d' }} />
     )}
@@ -139,7 +139,7 @@ const PhaseDivider: React.FC<{ label: string; active: boolean; done: boolean }> 
       style={{
         fontSize: 12,
         fontWeight: 600,
-        color: active ? '#fb7299' : done ? '#52c41a' : '#484f58',
+        color: active ? 'var(--brand-primary)' : done ? 'var(--color-success)' : 'var(--text-muted)',
       }}
     >
       {label}
@@ -222,27 +222,27 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
       <div
         style={{
           display: 'flex', gap: 16, marginBottom: 16,
-          background: '#0d1117', borderRadius: 8, padding: '10px 16px',
+          background: 'var(--bg-primary)', borderRadius: 8, padding: '10px 16px',
           border: '1px solid #30363d',
         }}
       >
         <div style={{ textAlign: 'center', flex: 1 }}>
-          <div style={{ fontSize: 20, fontWeight: 700, color: '#fb7299' }}>{stats.animeCount}</div>
-          <div style={{ fontSize: 10, color: '#484f58' }}>总番剧</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--brand-primary)' }}>{stats.animeCount}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>总番剧</div>
         </div>
         <div style={{ textAlign: 'center', flex: 1 }}>
-          <div style={{ fontSize: 20, fontWeight: 700, color: '#00a1d6' }}>{stats.scoredCount}</div>
-          <div style={{ fontSize: 10, color: '#484f58' }}>有评分</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--color-info)' }}>{stats.scoredCount}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>有评分</div>
         </div>
         <div style={{ textAlign: 'center', flex: 1 }}>
-          <div style={{ fontSize: 20, fontWeight: 700, color: '#ffb347' }}>{stats.topTags.length}</div>
-          <div style={{ fontSize: 10, color: '#484f58' }}>活跃标签</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--color-warning)' }}>{stats.topTags.length}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>活跃标签</div>
         </div>
         <div style={{ textAlign: 'center', flex: 1 }}>
-          <div style={{ fontSize: 20, fontWeight: 700, color: '#52c41a' }}>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--color-success)' }}>
             {stats.dimStdDev[0]?.label || '-'}
           </div>
-          <div style={{ fontSize: 10, color: '#484f58' }}>最分歧维度</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>最分歧维度</div>
         </div>
       </div>
 
@@ -271,14 +271,14 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
             style={{
               display: 'flex', alignItems: 'center', gap: 4,
               padding: '3px 10px', borderRadius: 12, fontSize: 11,
-              background: '#21262d', border: '1px solid #30363d',
-              color: '#8b949e',
+              background: 'var(--bg-quaternary)', border: '1px solid #30363d',
+              color: 'var(--text-secondary)',
             }}
           >
-            <span style={{ fontWeight: 600, color: '#e6edf3' }}>{t.name}</span>
-            <span style={{ fontSize: 10, color: '#484f58' }}>×{t.count}</span>
+            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{t.name}</span>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>×{t.count}</span>
             {t.avgScore !== null && (
-              <span style={{ fontSize: 10, color: '#fb7299' }}>{t.avgScore}</span>
+              <span style={{ fontSize: 10, color: 'var(--brand-primary)' }}>{t.avgScore}</span>
             )}
           </div>
         ))}
@@ -291,12 +291,12 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
           <SectionTitle icon="📅" title="追番峰值月" />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {stats.topMonths.length === 0 ? (
-              <span style={{ fontSize: 11, color: '#484f58' }}>暂无日期数据</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>暂无日期数据</span>
             ) : (
               stats.topMonths.map(([m, c]) => (
                 <div key={m} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 12, color: '#8b949e', fontFamily: 'monospace' }}>{m}</span>
-                  <div style={{ flex: 1, height: 12, background: '#21262d', borderRadius: 6, overflow: 'hidden' }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{m}</span>
+                  <div style={{ flex: 1, height: 12, background: 'var(--bg-quaternary)', borderRadius: 6, overflow: 'hidden' }}>
                     <div
                       style={{
                         height: '100%',
@@ -306,7 +306,7 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
                       }}
                     />
                   </div>
-                  <span style={{ fontSize: 11, color: '#e6edf3', width: 30, textAlign: 'right' }}>{c}部</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-primary)', width: 30, textAlign: 'right' }}>{c}部</span>
                 </div>
               ))
             )}
@@ -319,8 +319,8 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {stats.dimStdDev.slice(0, 5).map((d) => (
               <div key={d.key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ width: 32, fontSize: 11, color: '#8b949e', textAlign: 'right' }}>{d.label}</span>
-                <div style={{ flex: 1, height: 10, background: '#21262d', borderRadius: 5, overflow: 'hidden' }}>
+                <span style={{ width: 32, fontSize: 11, color: 'var(--text-secondary)', textAlign: 'right' }}>{d.label}</span>
+                <div style={{ flex: 1, height: 10, background: 'var(--bg-quaternary)', borderRadius: 5, overflow: 'hidden' }}>
                   <div
                     style={{
                       height: '100%',
@@ -330,7 +330,7 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
                     }}
                   />
                 </div>
-                <span style={{ fontSize: 10, color: '#e6edf3', width: 36, textAlign: 'right' }}>
+                <span style={{ fontSize: 10, color: 'var(--text-primary)', width: 36, textAlign: 'right' }}>
                   σ={d.std.toFixed(2)}
                 </span>
               </div>
@@ -357,7 +357,7 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
           >
             开始 AI 分析
           </Button>
-          <div style={{ fontSize: 10, color: '#484f58', marginTop: 6 }}>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6 }}>
             将以上统计数据发送给 AI，生成品味报告（约 2000 token / ¥0.004）
           </div>
         </div>
@@ -367,11 +367,11 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
       {phase === 'llm' && (
         <div style={{ textAlign: 'center', padding: '24px 0' }}>
           <Spin size="default" />
-          <div style={{ color: '#8b949e', fontSize: 12, marginTop: 10 }}>
+          <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 10 }}>
             AI 正在分析你的品味数据…
           </div>
           <Button size="small" onClick={handleCancel}
-            style={{ marginTop: 12, background: '#21262d', borderColor: '#30363d', color: '#f85149', fontSize: 11 }}>
+            style={{ marginTop: 12, background: 'var(--bg-quaternary)', borderColor: 'var(--border-primary)', color: 'var(--color-error)', fontSize: 11 }}>
             取消
           </Button>
         </div>
@@ -387,7 +387,7 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
               size="small"
               type="text"
               onClick={() => setEditing(!editing)}
-              style={{ color: editing ? '#fb7299' : '#484f58', fontSize: 11 }}
+              style={{ color: editing ? 'var(--brand-primary)' : 'var(--text-muted)', fontSize: 11 }}
             >
               {editing ? '👁 预览' : '✏️ 编辑文案'}
             </Button>
@@ -399,9 +399,9 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
               onChange={(e) => setReportText(e.target.value)}
               autoSize={{ minRows: 6, maxRows: 20 }}
               style={{
-                background: '#0d1117',
-                borderColor: '#fb7299',
-                color: '#e6edf3',
+                background: 'var(--bg-primary)',
+                borderColor: 'var(--brand-primary)',
+                color: 'var(--text-primary)',
                 fontSize: 13,
                 lineHeight: 2,
                 fontFamily: '"Microsoft YaHei", "PingFang SC", sans-serif',
@@ -410,14 +410,14 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
           ) : (
             <div
               style={{
-                background: '#0d1117',
+                background: 'var(--bg-primary)',
                 border: '1px solid #30363d',
                 borderRadius: 8,
                 padding: '14px 18px',
                 fontFamily: '"Microsoft YaHei", "PingFang SC", sans-serif',
                 fontSize: 13,
                 lineHeight: 2,
-                color: '#e6edf3',
+                color: 'var(--text-primary)',
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
               }}
@@ -431,7 +431,7 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
               style={{
                 marginTop: 10,
                 padding: '8px 14px',
-                background: '#161b22',
+                background: 'var(--bg-secondary)',
                 border: '1px solid #30363d',
                 borderRadius: 8,
                 display: 'flex',
@@ -440,25 +440,25 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
                 fontSize: 11,
               }}
             >
-              <span style={{ color: '#8b949e' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>
                 📊 本次消耗：
               </span>
-              <span style={{ color: '#e6edf3' }}>
-                <span style={{ color: '#fb7299', fontWeight: 600 }}>{usage.totalTokens.toLocaleString()}</span> tokens
+              <span style={{ color: 'var(--text-primary)' }}>
+                <span style={{ color: 'var(--brand-primary)', fontWeight: 600 }}>{usage.totalTokens.toLocaleString()}</span> tokens
               </span>
-              <span style={{ color: '#484f58' }}>|</span>
-              <span style={{ color: '#8b949e' }}>
-                输入 <span style={{ color: '#00a1d6' }}>{usage.promptTokens.toLocaleString()}</span>
+              <span style={{ color: 'var(--text-muted)' }}>|</span>
+              <span style={{ color: 'var(--text-secondary)' }}>
+                输入 <span style={{ color: 'var(--color-info)' }}>{usage.promptTokens.toLocaleString()}</span>
               </span>
-              <span style={{ color: '#8b949e' }}>
-                输出 <span style={{ color: '#52c41a' }}>{usage.completionTokens.toLocaleString()}</span>
+              <span style={{ color: 'var(--text-secondary)' }}>
+                输出 <span style={{ color: 'var(--color-success)' }}>{usage.completionTokens.toLocaleString()}</span>
               </span>
-              <span style={{ color: '#484f58' }}>|</span>
-              <span style={{ color: '#8b949e' }}>
-                预估费用 <span style={{ color: '#ffb347', fontWeight: 600 }}>
+              <span style={{ color: 'var(--text-muted)' }}>|</span>
+              <span style={{ color: 'var(--text-secondary)' }}>
+                预估费用 <span style={{ color: 'var(--color-warning)', fontWeight: 600 }}>
                   ¥{(usage.totalTokens / 1_000_000 * 2).toFixed(4)}
                 </span>
-                <span style={{ fontSize: 9, color: '#484f58' }}>（DeepSeek ¥2/1M tokens）</span>
+                <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>（DeepSeek ¥2/1M tokens）</span>
               </span>
             </div>
           )}
@@ -468,9 +468,9 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
       {/* 错误状态 */}
       {error && (
         <div style={{ textAlign: 'center', padding: '20px 0' }}>
-          <div style={{ color: '#f85149', fontSize: 12, marginBottom: 8 }}>{error}</div>
+          <div style={{ color: 'var(--color-error)', fontSize: 12, marginBottom: 8 }}>{error}</div>
           <Button size="small" icon={<ReloadOutlined />} onClick={runLLM}
-            style={{ background: '#21262d', borderColor: '#30363d', color: '#e6edf3', fontSize: 11 }}>
+            style={{ background: 'var(--bg-quaternary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)', fontSize: 11 }}>
             重试
           </Button>
         </div>
@@ -480,7 +480,7 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
       {phase === 'done' && (
         <div style={{ marginTop: 14, textAlign: 'center' }}>
           <Button size="small" icon={<ReloadOutlined />} onClick={runLLM}
-            style={{ background: '#21262d', borderColor: '#30363d', color: '#8b949e', fontSize: 11 }}>
+            style={{ background: 'var(--bg-quaternary)', borderColor: 'var(--border-primary)', color: 'var(--text-secondary)', fontSize: 11 }}>
             重新生成
           </Button>
         </div>
@@ -593,12 +593,12 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
       <div style={{ padding: '40px 0', textAlign: 'center' }}>
         <Empty
           description={
-            <span style={{ color: '#8b949e', fontSize: 12 }}>
+            <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
               需要至少 5 部同时有 BGM 评分和电波评分的番剧才能生成偏好画像
             </span>
           }
         />
-        <div style={{ fontSize: 11, color: '#484f58', marginTop: 4 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
           口味偏差 = (总评 × 0.4 + 电波 × 0.6) − BGM 评分
         </div>
       </div>
@@ -621,27 +621,27 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
           border: '1px solid rgba(0,161,214,0.15)', borderRadius: 8, padding: '12px',
           textAlign: 'center',
         }}>
-          <div style={{ fontSize: 22, fontWeight: 700, color: '#fb7299' }}>{devData.posCount}</div>
-          <div style={{ fontSize: 10, color: '#8b949e' }}>正偏差番（个人 &gt; 社区）</div>
-          <div style={{ fontSize: 11, color: '#fb7299', marginTop: 2 }}>平均 +{devData.avgPosDev}</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--brand-primary)' }}>{devData.posCount}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-secondary)' }}>正偏差番（个人 &gt; 社区）</div>
+          <div style={{ fontSize: 11, color: 'var(--brand-primary)', marginTop: 2 }}>平均 +{devData.avgPosDev}</div>
         </div>
         <div style={{
           flex: 1, background: 'linear-gradient(135deg, rgba(248,81,73,0.08), rgba(248,81,73,0.02))',
           border: '1px solid rgba(248,81,73,0.12)', borderRadius: 8, padding: '12px',
           textAlign: 'center',
         }}>
-          <div style={{ fontSize: 22, fontWeight: 700, color: '#f85149' }}>{devData.negCount}</div>
-          <div style={{ fontSize: 10, color: '#8b949e' }}>负偏差番（社区 &gt; 个人）</div>
-          <div style={{ fontSize: 11, color: '#f85149', marginTop: 2 }}>平均 {devData.avgNegDev}</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--color-error)' }}>{devData.negCount}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-secondary)' }}>负偏差番（社区 &gt; 个人）</div>
+          <div style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 2 }}>平均 {devData.avgNegDev}</div>
         </div>
         <div style={{
           flex: 1, background: 'linear-gradient(135deg, rgba(82,196,26,0.08), rgba(82,196,26,0.02))',
           border: '1px solid rgba(82,196,26,0.12)', borderRadius: 8, padding: '12px',
           textAlign: 'center',
         }}>
-          <div style={{ fontSize: 22, fontWeight: 700, color: '#52c41a' }}>{devData.samples.length}</div>
-          <div style={{ fontSize: 10, color: '#8b949e' }}>分析样本</div>
-          <div style={{ fontSize: 10, color: '#484f58', marginTop: 2 }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--color-success)' }}>{devData.samples.length}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-secondary)' }}>分析样本</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
             偏差极值 + 电波极值去重
           </div>
         </div>
@@ -656,7 +656,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
             height: 24,
             borderRadius: 6,
             overflow: 'hidden',
-            background: '#21262d',
+            background: 'var(--bg-quaternary)',
           }}
         >
           {devData.negCount > 0 && (
@@ -689,7 +689,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
         <div
           style={{
             display: 'flex', justifyContent: 'space-between', marginTop: 4,
-            fontSize: 9, color: '#484f58',
+            fontSize: 9, color: 'var(--text-muted)',
           }}
         >
           <span>社区 &gt;&gt; 个人</span>
@@ -712,7 +712,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
                 const diff = hi - lo;
                 return (
                   <div key={dim.key} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <span style={{ width: 28, fontSize: 10, color: '#8b949e', textAlign: 'right', flexShrink: 0 }}>
+                    <span style={{ width: 28, fontSize: 10, color: 'var(--text-secondary)', textAlign: 'right', flexShrink: 0 }}>
                       {dim.label}
                     </span>
                     <div style={{ flex: 1, display: 'flex', gap: 2, alignItems: 'center' }}>
@@ -730,7 +730,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
                       </div>
                       {/* 差值指示 */}
                       <span style={{
-                        fontSize: 8, color: diff > 0.3 ? '#fb7299' : diff < -0.3 ? '#f85149' : '#484f58',
+                        fontSize: 8, color: diff > 0.3 ? 'var(--brand-primary)' : diff < -0.3 ? 'var(--color-error)' : 'var(--text-muted)',
                         width: 28, textAlign: 'center',
                       }}>
                         {diff > 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1)}
@@ -753,8 +753,8 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
               })}
           </div>
           <div style={{ display: 'flex', justifyContent: 'center', gap: 16, marginTop: 6, fontSize: 9 }}>
-            <span style={{ color: '#fb7299' }}>● 高偏差组</span>
-            <span style={{ color: '#484f58' }}>● 低偏差组</span>
+            <span style={{ color: 'var(--brand-primary)' }}>● 高偏差组</span>
+            <span style={{ color: 'var(--text-muted)' }}>● 低偏差组</span>
           </div>
         </div>
 
@@ -762,7 +762,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
         <div style={{ flex: 1 }}>
           <SectionTitle icon="🏷️" title="标签共现对比" />
           <div style={{ marginBottom: 8 }}>
-            <div style={{ fontSize: 10, color: '#fb7299', marginBottom: 4 }}>高偏差番高频标签</div>
+            <div style={{ fontSize: 10, color: 'var(--brand-primary)', marginBottom: 4 }}>高偏差番高频标签</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
               {devData.topHiTags.map(([name, c]) => (
                 <span
@@ -771,7 +771,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
                     padding: '1px 6px', borderRadius: 8, fontSize: 9,
                     background: `rgba(251,114,153,${Math.max(0.05, c / maxHiTag * 0.2)})`,
                     border: '1px solid rgba(251,114,153,0.2)',
-                    color: '#fb7299',
+                    color: 'var(--brand-primary)',
                   }}
                 >
                   {name}×{c}
@@ -780,7 +780,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
             </div>
           </div>
           <div>
-            <div style={{ fontSize: 10, color: '#f85149', marginBottom: 4 }}>负偏差番高频标签</div>
+            <div style={{ fontSize: 10, color: 'var(--color-error)', marginBottom: 4 }}>负偏差番高频标签</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
               {devData.topLoTags.map(([name, c]) => (
                 <span
@@ -789,7 +789,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
                     padding: '1px 6px', borderRadius: 8, fontSize: 9,
                     background: `rgba(248,81,73,${Math.max(0.05, c / Math.max(1, maxLoTags) * 0.2)})`,
                     border: '1px solid rgba(248,81,73,0.15)',
-                    color: '#f85149',
+                    color: 'var(--color-error)',
                   }}
                 >
                   {name}×{c}
@@ -809,9 +809,9 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
               <Tag
                 key={w}
                 style={{
-                  background: '#21262d',
+                  background: 'var(--bg-quaternary)',
                   border: '1px solid #30363d',
-                  color: '#8b949e',
+                  color: 'var(--text-secondary)',
                   fontSize: 10,
                   borderRadius: 10,
                   margin: 0,
@@ -842,7 +842,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
                 padding: '2px 8px', borderRadius: 10, fontSize: 10,
                 background: isPos ? 'rgba(251,114,153,0.08)' : 'rgba(248,81,73,0.06)',
                 border: `1px solid ${isPos ? 'rgba(251,114,153,0.15)' : 'rgba(248,81,73,0.1)'}`,
-                color: isPos ? '#fb7299' : '#f85149',
+                color: isPos ? 'var(--brand-primary)' : 'var(--color-error)',
               }}
             >
               {a.title}
@@ -874,7 +874,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
           >
             开始 AI 分析
           </Button>
-          <div style={{ fontSize: 10, color: '#484f58', marginTop: 6 }}>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6 }}>
             {loadAIConfig().deepMode
               ? '深度模式：采集 Bangumi 社区评论 + 逐番 LLM 分析（约 5 万 token / ¥0.1-0.2）'
               : '将口味偏差数据发送给 AI，生成偏好画像（约 2500 token / ¥0.005）'}
@@ -886,7 +886,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
       {phase === 'llm' && (
         <div style={{ textAlign: 'center', padding: '24px 0' }}>
           <Spin size="default" />
-          <div style={{ color: '#8b949e', fontSize: 12, marginTop: 10 }}>
+          <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 10 }}>
             {deepPhaseLabel || 'AI 正在提取你的偏好特征…'}
           </div>
           {/* 深度模式逐番进度条 */}
@@ -894,7 +894,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
             <div style={{ marginTop: 12 }}>
               <div style={{
                 width: '80%', margin: '0 auto', height: 8,
-                background: '#21262d', borderRadius: 4, overflow: 'hidden',
+                background: 'var(--bg-quaternary)', borderRadius: 4, overflow: 'hidden',
               }}>
                 <div style={{
                   height: '100%',
@@ -904,13 +904,13 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
                   transition: 'width 0.3s ease',
                 }} />
               </div>
-              <div style={{ fontSize: 10, color: '#484f58', marginTop: 4 }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
                 正在分析 {deepProgress.current}/{deepProgress.total} 部番剧
               </div>
             </div>
           )}
           <Button size="small" onClick={handleCancel}
-            style={{ marginTop: 12, background: '#21262d', borderColor: '#30363d', color: '#f85149', fontSize: 11 }}>
+            style={{ marginTop: 12, background: 'var(--bg-quaternary)', borderColor: 'var(--border-primary)', color: 'var(--color-error)', fontSize: 11 }}>
             取消
           </Button>
         </div>
@@ -931,14 +931,14 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
                 padding: '14px 18px',
                 marginBottom: 14,
                 fontSize: 13,
-                color: '#00a1d6',
+                color: 'var(--color-info)',
                 fontWeight: 600,
                 lineHeight: 1.8,
               }}
             >
               <div>{profile.preferenceProfile}</div>
               {profile.tasteDeviation && (
-                <div style={{ fontSize: 11, color: '#8b949e', fontWeight: 400, marginTop: 4 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 400, marginTop: 4 }}>
                   {profile.tasteDeviation}
                 </div>
               )}
@@ -948,24 +948,24 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
           {/* 偏好倾向卡片 */}
           {profile.likes.length > 0 && (
             <div style={{ marginBottom: 14 }}>
-              <SectionTitle icon="❤️" title="偏好倾向" color="#fb7299" />
+              <SectionTitle icon="❤️" title="偏好倾向" color="var(--brand-primary)" />
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {profile.likes.map((item, i) => (
                   <div
                     key={i}
                     style={{
-                      background: '#161b22', border: '1px solid #30363d',
+                      background: 'var(--bg-secondary)', border: '1px solid #30363d',
                       borderRadius: 8, padding: '10px 14px',
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: '#e6edf3' }}>{item.aspect}</span>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{item.aspect}</span>
                       <Tag color="pink" style={{ fontSize: 9, lineHeight: '16px', margin: 0 }}>
                         {Math.round(item.confidence * 100)}%
                       </Tag>
                     </div>
                     {item.evidence && (
-                      <div style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.5 }}>{item.evidence}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{item.evidence}</div>
                     )}
                   </div>
                 ))}
@@ -976,24 +976,24 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
           {/* 潜在雷区卡片 */}
           {profile.dislikes.length > 0 && (
             <div style={{ marginBottom: 14 }}>
-              <SectionTitle icon="⚠️" title="潜在雷区" color="#f85149" />
+              <SectionTitle icon="⚠️" title="潜在雷区" color="var(--color-error)" />
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {profile.dislikes.map((item, i) => (
                   <div
                     key={i}
                     style={{
-                      background: '#161b22', border: '1px solid #30363d',
+                      background: 'var(--bg-secondary)', border: '1px solid #30363d',
                       borderRadius: 8, padding: '10px 14px',
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: '#e6edf3' }}>{item.aspect}</span>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{item.aspect}</span>
                       <Tag color="red" style={{ fontSize: 9, lineHeight: '16px', margin: 0 }}>
                         {Math.round(item.confidence * 100)}%
                       </Tag>
                     </div>
                     {item.evidence && (
-                      <div style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.5 }}>{item.evidence}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{item.evidence}</div>
                     )}
                   </div>
                 ))}
@@ -1004,10 +1004,10 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
           {/* 隐藏宝藏 */}
           {profile.hiddenGems && profile.hiddenGems.length > 0 && (
             <div style={{ marginBottom: 14 }}>
-              <SectionTitle icon="💎" title="可能错过的宝藏" color="#ffb347" />
+              <SectionTitle icon="💎" title="可能错过的宝藏" color="var(--color-warning)" />
               {profile.hiddenGems.map((g, i) => (
-                <div key={i} style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.6, padding: '4px 12px', borderLeft: '2px solid #ffb347', marginBottom: 4 }}>
-                  <span style={{ color: '#e6edf3', fontWeight: 600 }}>{g.anime}</span> — {g.reason}
+                <div key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6, padding: '4px 12px', borderLeft: '2px solid #ffb347', marginBottom: 4 }}>
+                  <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{g.anime}</span> — {g.reason}
                 </div>
               ))}
             </div>
@@ -1016,20 +1016,20 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
           {/* 可编辑文案 */}
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
             <Button size="small" type="text" onClick={() => setEditing(!editing)}
-              style={{ color: editing ? '#fb7299' : '#484f58', fontSize: 11 }}>
+              style={{ color: editing ? 'var(--brand-primary)' : 'var(--text-muted)', fontSize: 11 }}>
               {editing ? '👁 预览' : '✏️ 编辑文案'}
             </Button>
           </div>
           {editing ? (
             <Input.TextArea value={reportText} onChange={(e) => setReportText(e.target.value)}
               autoSize={{ minRows: 4, maxRows: 16 }}
-              style={{ background: '#0d1117', borderColor: '#00a1d6', color: '#e6edf3', fontSize: 12, lineHeight: 1.8,
+              style={{ background: 'var(--bg-primary)', borderColor: 'var(--color-info)', color: 'var(--text-primary)', fontSize: 12, lineHeight: 1.8,
                 fontFamily: '"Microsoft YaHei", "PingFang SC", sans-serif' }}
             />
           ) : (
             reportText && (
-              <div style={{ background: '#0d1117', border: '1px solid #30363d', borderRadius: 8, padding: '12px 16px',
-                fontSize: 12, lineHeight: 1.8, color: '#8b949e', whiteSpace: 'pre-wrap' }}>
+              <div style={{ background: 'var(--bg-primary)', border: '1px solid #30363d', borderRadius: 8, padding: '12px 16px',
+                fontSize: 12, lineHeight: 1.8, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>
                 {reportText}
               </div>
             )
@@ -1040,7 +1040,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
               style={{
                 marginTop: 10,
                 padding: '8px 14px',
-                background: '#161b22',
+                background: 'var(--bg-secondary)',
                 border: '1px solid #30363d',
                 borderRadius: 8,
                 display: 'flex',
@@ -1049,20 +1049,20 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
                 fontSize: 11,
               }}
             >
-              <span style={{ color: '#8b949e' }}>📊 本次消耗：</span>
-              <span style={{ color: '#e6edf3' }}>
-                <span style={{ color: '#fb7299', fontWeight: 600 }}>{usage.totalTokens.toLocaleString()}</span> tokens
+              <span style={{ color: 'var(--text-secondary)' }}>📊 本次消耗：</span>
+              <span style={{ color: 'var(--text-primary)' }}>
+                <span style={{ color: 'var(--brand-primary)', fontWeight: 600 }}>{usage.totalTokens.toLocaleString()}</span> tokens
               </span>
-              <span style={{ color: '#484f58' }}>|</span>
-              <span style={{ color: '#8b949e' }}>
-                输入 <span style={{ color: '#00a1d6' }}>{usage.promptTokens.toLocaleString()}</span>
+              <span style={{ color: 'var(--text-muted)' }}>|</span>
+              <span style={{ color: 'var(--text-secondary)' }}>
+                输入 <span style={{ color: 'var(--color-info)' }}>{usage.promptTokens.toLocaleString()}</span>
               </span>
-              <span style={{ color: '#8b949e' }}>
-                输出 <span style={{ color: '#52c41a' }}>{usage.completionTokens.toLocaleString()}</span>
+              <span style={{ color: 'var(--text-secondary)' }}>
+                输出 <span style={{ color: 'var(--color-success)' }}>{usage.completionTokens.toLocaleString()}</span>
               </span>
-              <span style={{ color: '#484f58' }}>|</span>
-              <span style={{ color: '#8b949e' }}>
-                预估费用 <span style={{ color: '#ffb347', fontWeight: 600 }}>
+              <span style={{ color: 'var(--text-muted)' }}>|</span>
+              <span style={{ color: 'var(--text-secondary)' }}>
+                预估费用 <span style={{ color: 'var(--color-warning)', fontWeight: 600 }}>
                   ¥{(usage.totalTokens / 1_000_000 * 2).toFixed(4)}
                 </span>
               </span>
@@ -1073,9 +1073,9 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
 
       {error && (
         <div style={{ textAlign: 'center', padding: '20px 0' }}>
-          <div style={{ color: '#f85149', fontSize: 12, marginBottom: 8 }}>{error}</div>
+          <div style={{ color: 'var(--color-error)', fontSize: 12, marginBottom: 8 }}>{error}</div>
           <Button size="small" icon={<ReloadOutlined />} onClick={runLLM}
-            style={{ background: '#21262d', borderColor: '#30363d', color: '#e6edf3', fontSize: 11 }}>
+            style={{ background: 'var(--bg-quaternary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)', fontSize: 11 }}>
             重试
           </Button>
         </div>
@@ -1084,7 +1084,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
       {phase === 'done' && (
         <div style={{ marginTop: 14, textAlign: 'center' }}>
           <Button size="small" icon={<ReloadOutlined />} onClick={runLLM}
-            style={{ background: '#21262d', borderColor: '#30363d', color: '#8b949e', fontSize: 11 }}>
+            style={{ background: 'var(--bg-quaternary)', borderColor: 'var(--border-primary)', color: 'var(--text-secondary)', fontSize: 11 }}>
             重新生成
           </Button>
         </div>
@@ -1161,23 +1161,23 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
       {phase === 'idle' && (
         <div style={{ textAlign: 'center', padding: '24px 0' }}>
           <div style={{ fontSize: 36, marginBottom: 12, opacity: 0.6 }}>🔍</div>
-          <div style={{ fontSize: 13, color: '#8b949e', marginBottom: 4 }}>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>
             根据你的品味偏好，从 AniList 发现你可能喜欢的新番
           </div>
-          <div style={{ fontSize: 10, color: '#484f58', marginBottom: 4 }}>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>
             {loadProfileCache() ? '✅ 已检测到缓存的偏好画像' : '💡 先生成偏好画像可获得更精准推荐'}
           </div>
           {previewTags.length > 0 && (
             <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 4, marginBottom: 14 }}>
               {previewTags.map((t) => (
                 <Tag key={t} style={{
-                  background: '#21262d', border: '1px solid #30363d',
-                  color: '#ffb347', fontSize: 10, borderRadius: 10, margin: 0,
+                  background: 'var(--bg-quaternary)', border: '1px solid #30363d',
+                  color: 'var(--color-warning)', fontSize: 10, borderRadius: 10, margin: 0,
                 }}>
                   {t}
                 </Tag>
               ))}
-              <span style={{ fontSize: 10, color: '#484f58', alignSelf: 'center' }}>→ 搜索中</span>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', alignSelf: 'center' }}>→ 搜索中</span>
             </div>
           )}
           <Button type="primary" icon={<ThunderboltOutlined />} onClick={runLLM}
@@ -1185,7 +1185,7 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
               padding: '6px 28px', fontWeight: 600, fontSize: 13 }}>
             发现新番
           </Button>
-          <div style={{ fontSize: 10, color: '#484f58', marginTop: 6 }}>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6 }}>
             AniList 搜索 + AI 精选 · 约 3000 token / ¥0.006
           </div>
         </div>
@@ -1194,11 +1194,11 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
       {phase === 'llm' && (
         <div style={{ textAlign: 'center', padding: '24px 0' }}>
           <Spin size="default" />
-          <div style={{ color: '#8b949e', fontSize: 12, marginTop: 10 }}>
+          <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 10 }}>
             {llmPhase || '正在搜索…'}
           </div>
           <Button size="small" onClick={handleCancel}
-            style={{ marginTop: 12, background: '#21262d', borderColor: '#30363d', color: '#f85149', fontSize: 11 }}>
+            style={{ marginTop: 12, background: 'var(--bg-quaternary)', borderColor: 'var(--border-primary)', color: 'var(--color-error)', fontSize: 11 }}>
             取消
           </Button>
         </div>
@@ -1214,13 +1214,13 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
           {recommendations.recommendations.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '20px 0' }}>
               <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.4 }}>📭</div>
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>
                 外部搜索未找到匹配的新番
               </div>
-              <div style={{ fontSize: 10, color: '#484f58' }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
                 已尝试 AniList / Bangumi v0 / Bangumi 搜索三层降级。请打开浏览器控制台查看具体失败原因。
               </div>
-              <div style={{ fontSize: 9, color: '#484f58', marginTop: 4 }}>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 4 }}>
                 搜索标签: {recommendations.searchedTags.join('、')}
               </div>
             </div>
@@ -1252,21 +1252,21 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
                     {/* 标题行 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                       <span style={{
-                        width: 20, height: 20, borderRadius: 10, background: '#ffb347',
+                        width: 20, height: 20, borderRadius: 10, background: 'var(--color-warning)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         fontSize: 10, fontWeight: 700, color: '#fff', flexShrink: 0,
                       }}>{i + 1}</span>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: '#e6edf3' }}>{r.title}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{r.title}</span>
                       {r.bgmScore !== undefined && r.bgmScore > 0 && (
                         <span style={{
-                          fontSize: 10, color: '#fb7299', fontWeight: 600,
+                          fontSize: 10, color: 'var(--brand-primary)', fontWeight: 600,
                           background: 'rgba(251,114,153,0.1)', padding: '1px 6px', borderRadius: 8,
                         }}>
                           AniList {r.bgmScore.toFixed(1)}
                         </span>
                       )}
                       {r.airDate && (
-                        <span style={{ fontSize: 10, color: '#484f58' }}>{r.airDate}</span>
+                        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{r.airDate}</span>
                       )}
                       <Tag color="gold" style={{ fontSize: 9, lineHeight: '16px', margin: 0 }}>
                         {(r.confidence * 100).toFixed(0)}%
@@ -1276,7 +1276,7 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
                     {/* 简介（不剧透） */}
                     {r.intro && (
                       <div style={{
-                        fontSize: 11, color: '#8b949e', lineHeight: 1.7,
+                        fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.7,
                         marginBottom: 6,
                       }}>
                         {r.intro}
@@ -1285,7 +1285,7 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
 
                     {/* 推荐理由 */}
                     <div style={{
-                      fontSize: 11, color: '#ffb347', lineHeight: 1.6,
+                      fontSize: 11, color: 'var(--color-warning)', lineHeight: 1.6,
                       padding: '6px 10px', background: 'rgba(255,179,71,0.06)',
                       borderRadius: 6, borderLeft: '2px solid #ffb347',
                     }}>
@@ -1314,15 +1314,15 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
           )}
 
           {usage && (
-            <div style={{ marginTop: 12, padding: '8px 14px', background: '#161b22', border: '1px solid #30363d',
+            <div style={{ marginTop: 12, padding: '8px 14px', background: 'var(--bg-secondary)', border: '1px solid #30363d',
               borderRadius: 8, display: 'flex', alignItems: 'center', gap: 16, fontSize: 11 }}>
-              <span style={{ color: '#8b949e' }}>📊 {usage.totalTokens.toLocaleString()} tokens</span>
-              <span style={{ color: '#484f58' }}>|</span>
-              <span style={{ color: '#8b949e' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>📊 {usage.totalTokens.toLocaleString()} tokens</span>
+              <span style={{ color: 'var(--text-muted)' }}>|</span>
+              <span style={{ color: 'var(--text-secondary)' }}>
                 预估 ¥{(usage.totalTokens / 1_000_000 * 2).toFixed(4)}（DeepSeek ¥2/1M tokens）
               </span>
-              <span style={{ color: '#484f58' }}>|</span>
-              <span style={{ color: '#8b949e' }}>
+              <span style={{ color: 'var(--text-muted)' }}>|</span>
+              <span style={{ color: 'var(--text-secondary)' }}>
                 {recommendations.sourceLabel || '外部'} 发现 {recommendations.candidateCount} 部
               </span>
             </div>
@@ -1332,9 +1332,9 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
 
       {error && (
         <div style={{ textAlign: 'center', padding: '20px 0' }}>
-          <div style={{ color: '#f85149', fontSize: 12, marginBottom: 8 }}>{error}</div>
+          <div style={{ color: 'var(--color-error)', fontSize: 12, marginBottom: 8 }}>{error}</div>
           <Button size="small" icon={<ReloadOutlined />} onClick={runLLM}
-            style={{ background: '#21262d', borderColor: '#30363d', color: '#e6edf3', fontSize: 11 }}>
+            style={{ background: 'var(--bg-quaternary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)', fontSize: 11 }}>
             重试
           </Button>
         </div>
@@ -1343,7 +1343,7 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
       {phase === 'done' && (
         <div style={{ marginTop: 14, textAlign: 'center' }}>
           <Button size="small" icon={<ReloadOutlined />} onClick={runLLM}
-            style={{ background: '#21262d', borderColor: '#30363d', color: '#8b949e', fontSize: 11 }}>
+            style={{ background: 'var(--bg-quaternary)', borderColor: 'var(--border-primary)', color: 'var(--text-secondary)', fontSize: 11 }}>
             换一批
           </Button>
         </div>
@@ -1374,10 +1374,10 @@ const TasteReportModal: React.FC<TasteReportModalProps> = ({
       >
         <div style={{ textAlign: 'center', padding: '40px 0' }}>
           <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.4 }}>🔑</div>
-          <div style={{ fontSize: 14, color: '#8b949e', marginBottom: 8 }}>
+          <div style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 8 }}>
             请先在侧栏「🤖 AI 分析」→「⚙️ AI 设置」中配置 API Key
           </div>
-          <div style={{ fontSize: 11, color: '#484f58' }}>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
             支持 DeepSeek / OpenAI / 通义千问 / Ollama
           </div>
         </div>
@@ -1389,7 +1389,7 @@ const TasteReportModal: React.FC<TasteReportModalProps> = ({
     <Modal
       title={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <ThunderboltOutlined style={{ color: '#fb7299' }} />
+          <ThunderboltOutlined style={{ color: 'var(--brand-primary)' }} />
           <span>AI 品味分析</span>
         </div>
       }
@@ -1438,7 +1438,7 @@ const TasteReportModal: React.FC<TasteReportModalProps> = ({
             children: <RecommendPanel animeList={animeList} />,
           },
         ]}
-        tabBarStyle={{ borderBottomColor: '#30363d', marginBottom: 4 }}
+        tabBarStyle={{ borderBottomColor: 'var(--border-primary)', marginBottom: 4 }}
       />
     </Modal>
   );

@@ -4,6 +4,7 @@
  *   生产模式下降级为本地 Mock 数据
  */
 import type { AnimeEntry, AnimeTag, DimensionScore, DimensionReview } from '../../src/types';
+import { DEFAULT_TEMPLATE_ID } from '../../src/types';
 import { EXCEL_COL, MAIN_SHEET, DIMENSION_COL_MAP, EDITABLE_COLS } from './excel-mapping';
 import { loadCategoryMap, loadWatchingDeleted, loadDimReviews, loadPosterBlacklist, loadPosterOverrides, savePosterOverride } from './storage-service';
 
@@ -59,6 +60,28 @@ function mapRowToAnime(row: unknown[], rowIndex: number): AnimeEntry | null {
       scores.push({ dimensionKey: dimKey, score });
     }
   }
+
+  // 读取模板信息
+  const templateId = String(row[EXCEL_COL.TEMPLATE_ID] || '').trim() || undefined;
+  const templateJson = String(row[EXCEL_COL.TEMPLATE_JSON] || '').trim();
+
+  // 非默认模板：从 JSON 解析自定义维度评分和自定义字段
+  let customFields: Record<string, string | number> | undefined;
+  if (templateId && templateId !== DEFAULT_TEMPLATE_ID && templateJson) {
+    try {
+      const parsed = JSON.parse(templateJson);
+      if (Array.isArray(parsed)) {
+        // 旧格式：纯数组
+        if (parsed.length > 0) { scores.length = 0; scores.push(...parsed.filter((s: DimensionScore) => s.score > 0)); }
+      } else {
+        // 新格式：{ scores, customFields }
+        const cs = parsed.scores as DimensionScore[] | undefined;
+        if (cs && cs.length > 0) { scores.length = 0; scores.push(...cs.filter((s) => s.score > 0)); }
+        customFields = parsed.customFields;
+      }
+    } catch { /* JSON 解析失败，保留列映射提取的分数 */ }
+  }
+
   const reviewText = String(row[EXCEL_COL.REVIEW] || '').trim();
   const hasScores = scores.some((s) => s.dimensionKey !== 'overall' && s.score > 0);
 
@@ -71,7 +94,9 @@ function mapRowToAnime(row: unknown[], rowIndex: number): AnimeEntry | null {
     // 数据质量分类：无评分或无评价 → 在看
     category: (!hasScores || !reviewText) ? 'watching' : 'watched',
     tags: parseTags(String(row[EXCEL_COL.TAG] || '')),
+    templateId,
     scores,
+    customFields,
     releaseDate: parseReleaseDate(String(row[EXCEL_COL.RELEASE_DATE] || '')),
     bangumiScore: parseNumber(row[EXCEL_COL.BGM_SCORE]) || undefined,
     characters: extractCharacters(row),
@@ -80,6 +105,7 @@ function mapRowToAnime(row: unknown[], rowIndex: number): AnimeEntry | null {
     frameCount: parseNumber(row[EXCEL_COL.FRAME_COUNT]) || undefined,
     aniListScore: parseNumber(row[EXCEL_COL.ANILIST_SCORE]) || undefined,
     watchDate: excelSerialToDate(parseNumber(row[EXCEL_COL.WATCH_DATE])) || undefined,
+    link: String(row[EXCEL_COL.LINK] || '').trim() || undefined,
     review: reviewText || undefined,
     notes: String(row[EXCEL_COL.NOTES] || '').trim() || undefined,
     createdAt: excelSerialToDate(parseNumber(row[EXCEL_COL.FIRST_WATCH])),
@@ -98,6 +124,25 @@ function mapAnimeToUpdates(entry: AnimeEntry): ExcelUpdate[] {
     if (col !== undefined && EDITABLE_COLS.includes(col)) {
       updates.push({ sheetName: MAIN_SHEET, rowIndex: rowIdx, colIndex: col, value: score.score });
     }
+  }
+
+  // 非默认模板：将评分 + 自定义字段序列化为 JSON 写入备用列
+  if (entry.templateId && entry.templateId !== DEFAULT_TEMPLATE_ID) {
+    updates.push({
+      sheetName: MAIN_SHEET,
+      rowIndex: rowIdx,
+      colIndex: EXCEL_COL.TEMPLATE_JSON,
+      value: JSON.stringify({ scores: entry.scores, customFields: entry.customFields }),
+    });
+  }
+  // 模板 ID 始终写入
+  if (entry.templateId) {
+    updates.push({
+      sheetName: MAIN_SHEET,
+      rowIndex: rowIdx,
+      colIndex: EXCEL_COL.TEMPLATE_ID,
+      value: entry.templateId,
+    });
   }
 
   if (entry.review !== undefined) {
@@ -153,6 +198,11 @@ function mapAnimeToUpdates(entry: AnimeEntry): ExcelUpdate[] {
   // 海报 URL
   if (entry.posterUrl) {
     updates.push({ sheetName: MAIN_SHEET, rowIndex: rowIdx, colIndex: EXCEL_COL.POSTER_URL, value: entry.posterUrl });
+  }
+
+  // 外部链接
+  if (entry.link !== undefined) {
+    updates.push({ sheetName: MAIN_SHEET, rowIndex: rowIdx, colIndex: EXCEL_COL.LINK, value: entry.link || '' });
   }
 
   return updates;
@@ -294,6 +344,52 @@ export async function batchSaveAllPosters(entries: AnimeEntry[]): Promise<number
   const data = await response.json();
   if (data.error) throw new Error(data.error);
   return allUpdates.length;
+}
+
+/** 将 AnimeEntry 转为 Excel 行数据（colIndex → value 映射，用于追加新行） */
+function mapAnimeToRow(entry: AnimeEntry): Record<number, string | number> {
+  const row: Record<number, string | number> = {};
+  row[EXCEL_COL.TITLE] = entry.title;
+  row[EXCEL_COL.SEARCH_ALIAS] = entry.searchAlias || '';
+  row[EXCEL_COL.STUDIO] = entry.studio || '';
+  row[EXCEL_COL.REVIEW] = entry.review || '';
+  row[EXCEL_COL.RELEASE_DATE] = entry.releaseDate || '';
+  row[EXCEL_COL.BGM_SCORE] = entry.bangumiScore || '';
+  row[EXCEL_COL.TAG] = entry.tags.map((t) => t.name).join('/');
+  row[EXCEL_COL.LINK] = entry.link || '';
+
+  // 默认模板的评分写入对应列
+  for (const s of entry.scores) {
+    const col = DIMENSION_COL_MAP[s.dimensionKey];
+    if (col !== undefined) row[col] = s.score;
+  }
+
+  // 非默认模板：序列化评分 + 自定义字段到 JSON 列
+  if (entry.templateId && entry.templateId !== DEFAULT_TEMPLATE_ID) {
+    row[EXCEL_COL.TEMPLATE_JSON] = JSON.stringify({ scores: entry.scores, customFields: entry.customFields });
+  }
+  if (entry.templateId) {
+    row[EXCEL_COL.TEMPLATE_ID] = entry.templateId;
+  }
+
+  return row;
+}
+
+/** 追加新条目到 Excel 末尾，返回分配的行号 */
+export async function appendAnimeEntry(entry: AnimeEntry): Promise<number> {
+  const row = mapAnimeToRow(entry);
+  const response = await fetch(`${API_BASE}/append`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sheetName: MAIN_SHEET, row }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({ error: '请求失败' }));
+    throw new Error(data.error || `HTTP ${response.status}`);
+  }
+  const data = await response.json();
+  if (data.error) throw new Error(data.error);
+  return data.rowIndex as number;
 }
 
 /** 保存单条番剧的修改到 Excel */

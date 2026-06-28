@@ -5,10 +5,11 @@
 }
 
 .app-sidebar {
-  background: #161b22 !important;
-  border-right: 1px solid #30363d;
+  background: var(--bg-secondary) !important;
+  border-right: 1px solid var(--border-primary);
   overflow-y: auto;
   overflow-x: hidden;
+  transition: all 0.25s ease;
 }
 
 .app-sidebar .ant-layout-sider-children {
@@ -19,7 +20,7 @@
 }
 
 .main-layout {
-  background: #0d1117 !important;
+  background: var(--bg-primary) !important;
 }
 
 .main-content {
@@ -50,21 +51,32 @@
   width: 320px;
 }
 
+/* 搜索模式切换选中高亮动画 */
+@keyframes seg-pulse {
+  0% { background-color: rgba(251, 114, 153, 0); }
+  30% { background-color: rgba(251, 114, 153, 0.25); }
+  100% { background-color: rgba(251, 114, 153, 0); }
+}
+
+.search-mode-seg .ant-segmented-item-selected {
+  animation: seg-pulse 1s ease-in-out;
+}
+
 .search-input .ant-input {
-  background: #1c2128;
-  border-color: #30363d;
-  color: #e6edf3;
+  background: var(--bg-tertiary);
+  border-color: var(--border-primary);
+  color: var(--text-primary);
   border-radius: 20px;
   padding: 6px 16px;
 }
 
 .search-input .ant-input::placeholder {
-  color: #484f58;
+  color: var(--text-muted);
 }
 
 .search-input .ant-input:focus,
 .search-input .ant-input:hover {
-  border-color: #fb7299;
+  border-color: var(--brand-primary);
 }
 
 /* ── 分类标签 ── */
@@ -80,19 +92,19 @@
   cursor: pointer;
   transition: all 0.2s;
   background: transparent;
-  border: 1px solid #30363d;
-  color: #8b949e;
+  border: 1px solid var(--border-primary);
+  color: var(--text-secondary);
   user-select: none;
 }
 
 .category-tab:hover {
-  border-color: #fb7299;
-  color: #e6edf3;
+  border-color: var(--brand-primary);
+  color: var(--text-primary);
 }
 
 .category-tab.active {
-  background: #fb7299;
-  border-color: #fb7299;
+  background: var(--brand-primary);
+  border-color: var(--brand-primary);
   color: #fff;
   font-weight: 600;
 }
@@ -110,14 +122,14 @@
   transition: transform 0.2s, box-shadow 0.2s;
   border-radius: 10px;
   overflow: hidden;
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
 }
 
 .anime-card:hover {
   transform: translateY(-4px);
   box-shadow: 0 8px 24px rgba(251, 114, 153, 0.15);
-  border-color: #fb7299;
+  border-color: var(--brand-primary);
 }
 
 /* 海报区 */
@@ -125,7 +137,7 @@
   position: relative;
   aspect-ratio: 3 / 4;
   overflow: hidden;
-  background: #1c2128;
+  background: var(--bg-tertiary);
 }
 
 .anime-card .poster-wrap img {
@@ -143,7 +155,7 @@
   justify-content: center;
   font-size: 2.5rem;
   background: linear-gradient(135deg, #1a1030, #2d1a2c);
-  color: #fb7299;
+  color: var(--brand-primary);
 }
 
 /* 在看删除按钮 */
@@ -155,7 +167,7 @@
   height: 28px;
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.7);
-  color: #f85149;
+  color: var(--color-error);
   display: none;
   align-items: center;
   justify-content: center;
@@ -164,7 +176,7 @@
   transition: all 0.2s;
 }
 .anime-card .card-delete-btn:hover {
-  background: #f85149;
+  background: var(--color-error);
   color: #fff;
 }
 .anime-card:hover .card-delete-btn {
@@ -179,7 +191,7 @@
 .anime-card .card-title {
   font-size: 13px;
   font-weight: 600;
-  color: #e6edf3;
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -189,22 +201,22 @@
 
 .anime-card .card-meta {
   font-size: 11px;
-  color: #8b949e;
+  color: var(--text-secondary);
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
 .anime-card .dim-score {
-  color: #fb7299;
+  color: var(--brand-primary);
   font-weight: 600;
   font-size: 11px;
 }
 
 /* ── Sidebar 通用 ── */
 .sidebar-section {
-  background: #1c2128;
-  border: 1px solid #30363d;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
   border-radius: 10px;
   padding: 14px;
 }
@@ -212,7 +224,7 @@
 .sidebar-section .section-title {
   font-size: 14px;
   font-weight: 600;
-  color: #e6edf3;
+  color: var(--text-primary);
   margin-bottom: 10px;
   display: flex;
   align-items: center;
@@ -226,7 +238,7 @@
   align-items: center;
   justify-content: center;
   padding: 30px 10px;
-  color: #484f58;
+  color: var(--text-muted);
   font-size: 13px;
 }
 
@@ -247,22 +259,22 @@
   padding: 4px 12px;
   border-radius: 12px;
   font-size: 12px;
-  background: #21262d;
-  border: 1px solid #30363d;
-  color: #8b949e;
+  background: var(--bg-quaternary);
+  border: 1px solid var(--border-primary);
+  color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .dimension-chip:hover {
-  border-color: #fb7299;
-  color: #e6edf3;
+  border-color: var(--brand-primary);
+  color: var(--text-primary);
 }
 
 .dimension-chip.active {
   background: rgba(251, 114, 153, 0.15);
-  border-color: #fb7299;
-  color: #fb7299;
+  border-color: var(--brand-primary);
+  color: var(--brand-primary);
 }
 
 /* ── 设置 ── */
@@ -278,15 +290,15 @@
   gap: 8px;
   padding: 8px 10px;
   border-radius: 6px;
-  color: #8b949e;
+  color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.2s;
   font-size: 13px;
 }
 
 .settings-item:hover {
-  background: #21262d;
-  color: #e6edf3;
+  background: var(--bg-quaternary);
+  color: var(--text-primary);
 }
 
 /* ── 空状态 ── */
@@ -296,7 +308,7 @@
   align-items: center;
   justify-content: center;
   padding: 80px 20px;
-  color: #484f58;
+  color: var(--text-muted);
 }
 
 .empty-state .empty-icon {
@@ -319,8 +331,8 @@
 .graph-sidebar {
   width: 260px;
   min-width: 260px;
-  background: #161b22;
-  border-right: 1px solid #30363d;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-primary);
   padding: 16px 14px;
   overflow-y: auto;
   display: flex;
@@ -328,17 +340,17 @@
 }
 
 .graph-search-input.ant-input-affix-wrapper {
-  background: #0d1117 !important;
-  border-color: #30363d !important;
+  background: var(--bg-primary) !important;
+  border-color: var(--border-primary) !important;
 }
 
 .graph-search-input.ant-input-affix-wrapper input {
-  color: #e6edf3 !important;
-  background: #0d1117 !important;
+  color: var(--text-primary) !important;
+  background: var(--bg-primary) !important;
 }
 
 .graph-search-input.ant-input-affix-wrapper input::placeholder {
-  color: #484f58 !important;
+  color: var(--text-muted) !important;
 }
 
 .graph-filter-item {
@@ -350,8 +362,8 @@
 }
 
 .graph-filter-item .ant-checkbox-inner {
-  background: #0d1117;
-  border-color: #30363d;
+  background: var(--bg-primary);
+  border-color: var(--border-primary);
 }
 
 .graph-legend {
@@ -370,8 +382,8 @@
   bottom: 0;
   left: 260px;
   right: 0;
-  background: #1c2128;
-  border-top: 1px solid #30363d;
+  background: var(--bg-tertiary);
+  border-top: 1px solid var(--border-primary);
   padding: 10px 16px;
   display: flex;
   align-items: center;
@@ -381,17 +393,17 @@
 
 /* ── AI 分析 Modal 暗色主题覆盖 ── */
 .taste-report-modal .ant-modal-content {
-  background: #161b22 !important;
-  border: 1px solid #30363d !important;
+  background: var(--bg-secondary) !important;
+  border: 1px solid var(--border-primary) !important;
 }
 
 .taste-report-modal .ant-modal-header {
-  background: #161b22 !important;
-  border-bottom-color: #30363d !important;
+  background: var(--bg-secondary) !important;
+  border-bottom-color: var(--border-primary) !important;
 }
 
 .taste-report-modal .ant-modal-title {
-  color: #e6edf3 !important;
+  color: var(--text-primary) !important;
 }
 
 .taste-report-modal .ant-tabs-nav {
@@ -399,44 +411,44 @@
 }
 
 .taste-report-modal .ant-tabs-tab {
-  color: #8b949e !important;
+  color: var(--text-secondary) !important;
   padding: 8px 0 !important;
 }
 
 .taste-report-modal .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
-  color: #fb7299 !important;
+  color: var(--brand-primary) !important;
 }
 
 .taste-report-modal .ant-tabs-ink-bar {
-  background: #fb7299 !important;
+  background: var(--brand-primary) !important;
 }
 
 /* ── AI 设置 Modal 暗色主题覆盖 ── */
 .ai-settings-modal .ant-modal-content {
-  background: #161b22 !important;
-  border: 1px solid #30363d !important;
+  background: var(--bg-secondary) !important;
+  border: 1px solid var(--border-primary) !important;
 }
 
 .ai-settings-modal .ant-modal-header {
-  background: #161b22 !important;
-  border-bottom-color: #30363d !important;
+  background: var(--bg-secondary) !important;
+  border-bottom-color: var(--border-primary) !important;
 }
 
 .ai-settings-modal .ant-modal-title {
-  color: #e6edf3 !important;
+  color: var(--text-primary) !important;
 }
 
 /* 全局 Ant Design Modal 暗色主题覆盖 */
 .ant-modal-confirm .ant-modal-content {
-  background: #161b22 !important;
+  background: var(--bg-secondary) !important;
 }
 
 .ant-modal-confirm .ant-modal-confirm-title {
-  color: #e6edf3 !important;
+  color: var(--text-primary) !important;
 }
 
 .ant-modal-confirm .ant-modal-confirm-content {
-  color: #8b949e !important;
+  color: var(--text-secondary) !important;
 }
 
 /* ── 滚动条 ── */
@@ -449,11 +461,10 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #30363d;
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #484f58;
+  background: var(--scrollbar-thumb-hover);
 }
-

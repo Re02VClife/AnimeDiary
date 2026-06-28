@@ -3,7 +3,7 @@
  */
 
 import type { AnimeEntry } from '../../src/types';
-import { DEFAULT_DIMENSIONS } from '../../src/types';
+import { getActiveDimensions } from '../../features/anime-data/template-service';
 import { buildPercentileMap, getPercentileScores } from '../ranking/ranking-service';
 import { chat } from './llm-service';
 import { extractJSON } from '../../core/text';
@@ -20,11 +20,12 @@ export async function singleAnimeAnalysis(
   anime: AnimeEntry,
   allAnime: AnimeEntry[],
 ): Promise<SingleAnimeAnalysisResult> {
+  const templateDims = getActiveDimensions(anime);
   const stats = buildPercentileMap(allAnime);
-  const pcts = getPercentileScores(anime, stats);
+  const pcts = getPercentileScores(anime, stats, templateDims);
 
   // 维度分数 + 百分位
-  const dimLines = DEFAULT_DIMENSIONS
+  const dimLines = templateDims
     .filter((d) => d.key !== 'overall')
     .map((d) => {
       const s = getScore(anime, d.key);

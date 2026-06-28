@@ -2,24 +2,33 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { ConfigProvider, theme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
+import { ThemeProvider, useTheme } from './theme/ThemeContext';
 import { AnimeProvider } from '../context/AnimeContext';
 import App from './App';
 import './index.css';
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
+/**
+ * 内部组件：从 ThemeContext 读取当前主题配置，传给 Ant Design ConfigProvider
+ */
+const AppShell: React.FC = () => {
+  const { state, colors } = useTheme();
+
+  return (
     <ConfigProvider
       locale={zhCN}
       theme={{
-        algorithm: theme.darkAlgorithm,
+        algorithm:
+          state.themeMode === 'dark'
+            ? theme.darkAlgorithm
+            : theme.defaultAlgorithm,
         token: {
-          colorPrimary: '#fb7299',
-          colorBgBase: '#0d1117',
-          colorBgContainer: '#161b22',
-          colorBgElevated: '#1c2128',
-          colorBorder: '#30363d',
-          colorText: '#e6edf3',
-          colorTextSecondary: '#8b949e',
+          colorPrimary: colors.brandPrimary,
+          colorBgBase: colors.bgPrimary,
+          colorBgContainer: colors.bgSecondary,
+          colorBgElevated: colors.bgTertiary,
+          colorBorder: colors.borderPrimary,
+          colorText: colors.textPrimary,
+          colorTextSecondary: colors.textSecondary,
           borderRadius: 8,
           fontFamily: `-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif`,
         },
@@ -29,5 +38,13 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <App />
       </AnimeProvider>
     </ConfigProvider>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <ThemeProvider>
+      <AppShell />
+    </ThemeProvider>
   </React.StrictMode>
 );

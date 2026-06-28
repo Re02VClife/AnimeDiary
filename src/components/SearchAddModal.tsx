@@ -148,21 +148,21 @@ const SearchAddModal: React.FC<SearchAddModalProps> = ({ open, onClose, onAdd })
             >
               <List.Item.Meta
                 title={
-                  <span style={{ color: '#e6edf3' }}>
+                  <span style={{ color: 'var(--text-primary)' }}>
                     {item.name_cn || item.name}
-                    {item.name_cn && <Text style={{ color: '#8b949e', fontSize: 12, marginLeft: 8 }}>{item.name}</Text>}
+                    {item.name_cn && <Text style={{ color: 'var(--text-secondary)', fontSize: 12, marginLeft: 8 }}>{item.name}</Text>}
                   </span>
                 }
                 description={
                   <div>
-                    <span style={{ color: '#8b949e', fontSize: 12 }}>
+                    <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
                       {item.air_date || '未知日期'} · {item.eps || '?'}集
                       {item.rating?.score ? ` · 评分 ${item.rating.score}` : ''}
                     </span>
                     {item.summary && (
                       <Paragraph
                         ellipsis={{ rows: 2 }}
-                        style={{ color: '#8b949e', fontSize: 12, marginTop: 4, marginBottom: 0 }}
+                        style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 4, marginBottom: 0 }}
                       >
                         {item.summary}
                       </Paragraph>

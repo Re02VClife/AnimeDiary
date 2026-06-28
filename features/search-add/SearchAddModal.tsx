@@ -102,14 +102,14 @@ const SearchAddModal: React.FC<SearchAddModalProps> = ({ open, onClose, onAdd })
 
   return (
     <Modal
-      title="🔍 搜索并添加番剧"
+      title="🔍 搜索并添加"
       open={open}
       onCancel={onClose}
       width={600}
       footer={null}
     >
       <Input.Search
-        placeholder="输入番剧名称搜索 Bangumi…"
+        placeholder="输入名称搜索 Bangumi…"
         value={keyword}
         onChange={(e) => setKeyword(e.target.value)}
         onSearch={doSearch}
@@ -124,7 +124,7 @@ const SearchAddModal: React.FC<SearchAddModalProps> = ({ open, onClose, onAdd })
       )}
 
       {!searching && searched && results.length === 0 && (
-        <Empty description="未找到结果">
+        <Empty description="找不到喵~">
           {keyword.trim() && (
             <Button type="primary" onClick={handleManualAdd}>
               手动添加「{keyword.trim()}」
@@ -134,7 +134,15 @@ const SearchAddModal: React.FC<SearchAddModalProps> = ({ open, onClose, onAdd })
       )}
 
       {!searching && results.length > 0 && (
-        <List
+        <>
+          {keyword.trim() && (
+            <div style={{ marginBottom: 10 }}>
+              <Button type="dashed" block onClick={handleManualAdd}>
+                ➕ 不选择以上条目，直接新建「{keyword.trim()}」
+              </Button>
+            </div>
+          )}
+          <List
           dataSource={results}
           renderItem={(item) => (
             <List.Item
@@ -148,21 +156,21 @@ const SearchAddModal: React.FC<SearchAddModalProps> = ({ open, onClose, onAdd })
             >
               <List.Item.Meta
                 title={
-                  <span style={{ color: '#e6edf3' }}>
+                  <span style={{ color: 'var(--text-primary)' }}>
                     {item.name_cn || item.name}
-                    {item.name_cn && <Text style={{ color: '#8b949e', fontSize: 12, marginLeft: 8 }}>{item.name}</Text>}
+                    {item.name_cn && <Text style={{ color: 'var(--text-secondary)', fontSize: 12, marginLeft: 8 }}>{item.name}</Text>}
                   </span>
                 }
                 description={
                   <div>
-                    <span style={{ color: '#8b949e', fontSize: 12 }}>
+                    <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
                       {item.air_date || '未知日期'} · {item.eps || '?'}集
                       {item.rating?.score ? ` · 评分 ${item.rating.score}` : ''}
                     </span>
                     {item.summary && (
                       <Paragraph
                         ellipsis={{ rows: 2 }}
-                        style={{ color: '#8b949e', fontSize: 12, marginTop: 4, marginBottom: 0 }}
+                        style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 4, marginBottom: 0 }}
                       >
                         {item.summary}
                       </Paragraph>
@@ -173,6 +181,7 @@ const SearchAddModal: React.FC<SearchAddModalProps> = ({ open, onClose, onAdd })
             </List.Item>
           )}
         />
+        </>
       )}
     </Modal>
   );
