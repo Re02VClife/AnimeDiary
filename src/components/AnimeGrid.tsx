@@ -96,7 +96,7 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
                 <div style={{
                   position: 'absolute', top: 8, left: 8, zIndex: 5,
                   width: 22, height: 22, borderRadius: 4,
-                  background: isSelected ? 'var(--brand-primary)' : 'rgba(0,0,0,0.6)',
+                  background: isSelected ? 'var(--brand-primary)' : 'rgba(0,0,0,0.4)',
                   border: `2px solid ${isSelected ? 'var(--brand-primary)' : 'var(--text-muted)'}`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   color: '#fff', fontSize: 13, fontWeight: 700,
@@ -132,7 +132,10 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
             </div>
 
             {/* 信息区 */}
-            <div className="card-info">
+            <div
+              className={`card-info${anime.posterUrl ? ' has-poster-bg' : ''}`}
+              style={anime.posterUrl ? { '--poster-url': `url(${anime.posterUrl})` } as React.CSSProperties : undefined}
+            >
               <div className="card-title" title={anime.title}>{anime.title}</div>
               <div className="card-meta">
                 <span>{anime.releaseDate || '未知'}</span>

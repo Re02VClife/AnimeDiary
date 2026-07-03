@@ -174,20 +174,15 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
   const dimLabel = (key: string) =>
     activeDims.find((d) => d.key === key)?.label || key;
 
-  // 收起状态：仅显示纵向 Logo 提示
+  // 收起状态：与顶部栏等高的方块，预留图标接口
   if (collapsed) {
     return (
       <div style={{
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12,
-        paddingTop: 16, height: '100%',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        height: 60, width: 48,
+        borderBottom: '1px solid var(--border-primary)',
       }}>
-        <AppIcon name="anime" size={20} style={{ opacity: 0.6 }} />
-        <div style={{
-          writingMode: 'vertical-rl', fontSize: 11, color: 'var(--text-muted)',
-          letterSpacing: 4, userSelect: 'none',
-        }}>
-          番剧日记
-        </div>
+        <AppIcon name="anime" size={22} style={{ opacity: 0.7 }} />
       </div>
     );
   }
