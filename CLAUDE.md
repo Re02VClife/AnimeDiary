@@ -20,7 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 AnimeDiary — 番剧评分管理系统。React 18 + TypeScript + Ant Design 5 + ECharts 5 + Vite 6 + Electron 33。
 
-数据存在本地 Excel（`番评分.xlsx`），通过 Vite 中间件读写的单页应用。支持全局主题、评分模板、知识图谱、AI 分析套件等。
+数据存在本地 Excel（`番评分.xlsx`），通过 Vite 中间件读写的单页应用。支持全局主题、评分模板、知识图谱、AI 分析套件等。也适配除了番剧以外的其他作品评分。
 
 ## 常用命令
 
@@ -107,6 +107,7 @@ localStorage ←→ template-service / ThemeContext / storage-service ←→ UI�
 ## 模板 Excel 导入
 
 支持两种格式自动识别：
+
 - **列式布局**（首列为空/综合）：维度在列上，权重从"综合"列公式提取
 - **行式布局**（首列=名称）：每行一个维度定义
 
@@ -125,3 +126,18 @@ localStorage ←→ template-service / ThemeContext / storage-service ←→ UI�
 - 新增非默认模板的条目时，`excelRowIndex` 为 undefined → 调用 `appendAnimeEntry` 而非 `updateAnimeEntry`
 - `AnimeDetailModal` 是最大组件（~1750 行），拖拽排序使用 HTML5 Drag API + CSS `order`
 - Electron 主进程在 `electron/` 目录，仅做窗口管理
+
+## 卡片毛玻璃信息区
+
+卡片底部 `.card-info` 使用海报图对应位置做毛玻璃背景：
+
+- **机制**：AnimeGrid 将海报 URL 以 CSS 变量 `--poster-url` 注入 card-info
+- **CSS**：`.card-info.has-poster-bg::before` — 伪元素取海报底部区域，`filter: blur(8px) brightness(0.7)` 模糊+加暗
+- **兜底**：无海报图时 fallback 到 `var(--bg-secondary)` 纯色背景
+- 文字改白色 `#fff` + `text-shadow` 确保暗底可读
+
+## 侧栏收起
+
+- Sider `collapsedWidth={0}`（收起时不占布局空间）
+- 左上角 60×60 浮动方块（`position: absolute`），悬停展开侧栏
+- TopBar 单独包裹 `<div marginLeft={60}>`，仅顶栏右移，网格不动

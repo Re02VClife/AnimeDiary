@@ -1,3 +1,4 @@
+
 /* ── 全局布局 ── */
 .app-layout {
   height: 100vh;
@@ -9,14 +10,19 @@
   border-right: 1px solid var(--border-primary);
   overflow-y: auto;
   overflow-x: hidden;
-  transition: all 0.25s ease;
+  transition: all 0.4s ease;
 }
 
 .app-sidebar .ant-layout-sider-children {
-  padding: 16px 12px;
+  padding: 12px 8px;
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* 收起状态：去掉内边距，图标方块填满侧栏 */
+.app-sidebar.ant-layout-sider-collapsed .ant-layout-sider-children {
+  padding: 0;
 }
 
 .main-layout {
@@ -27,7 +33,7 @@
   display: flex;
   flex-direction: column;
   overflow-y: auto;
-  padding: 0 24px 24px;
+  padding: 0 18px 24px;
 }
 
 /* ── 顶部栏 ── */
@@ -48,14 +54,14 @@
 
 /* ── 搜索栏 ── */
 .search-input {
-  width: 320px;
+  width: 200px;
 }
 
 /* 搜索模式切换选中高亮动画 */
 @keyframes seg-pulse {
-  0% { background-color: rgba(251, 114, 153, 0); }
-  30% { background-color: rgba(251, 114, 153, 0.25); }
-  100% { background-color: rgba(251, 114, 153, 0); }
+  0% { background-color: rgba(251, 114, 153, 0.3); }
+  30% { background-color: rgba(251, 114, 153, 0.8); }
+  100% { background-color: rgba(251, 114, 153, 0.3); }
 }
 
 .search-mode-seg .ant-segmented-item-selected {
@@ -113,11 +119,12 @@
 .anime-grid {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  gap: 16px;
-  padding-top: 16px;
+  gap: 8px;
+  padding-top: 8px;
 }
 
 .anime-card {
+  position: relative;
   cursor: pointer;
   transition: transform 0.2s, box-shadow 0.2s;
   border-radius: 10px;
@@ -183,25 +190,48 @@
   display: flex;
 }
 
-/* 信息区 */
+/* 信息区 — 毛玻璃背景（海报图模糊 + 加暗） */
 .anime-card .card-info {
+  position: relative;
   padding: 8px 10px;
+  /* 兜底纯色背景 */
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+/* 有海报图时注入 --poster-url，伪元素做毛玻璃底 */
+.anime-card .card-info.has-poster-bg::before {
+  content: '';
+  position: absolute;
+  inset: -40px 0 0 0;  /* 向上扩展，取海报底部对应区域 */
+  background-image: var(--poster-url);
+  background-size: 100% auto;
+  background-position: center bottom;
+  background-repeat: no-repeat;
+  filter: blur(8px) brightness(0.7);/* 毛玻璃模糊度 + 越小越暗 */
+  z-index: 0;
+}
+
+.anime-card .card-info > * {
+  position: relative;
+  z-index: 1;
 }
 
 .anime-card .card-title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: #fff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   margin-bottom: 4px;
   line-height: 1.3;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
 
 .anime-card .card-meta {
   font-size: 11px;
-  color: var(--text-secondary);
+  color: rgba(255, 255, 255, 0.75);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -231,7 +261,7 @@
   gap: 6px;
 }
 
-/* ── 看番日历占位 ── */
+/* ── 时间轴占位 ── */
 .calendar-placeholder {
   display: flex;
   flex-direction: column;
@@ -256,8 +286,8 @@
 
 .dimension-chip {
   display: inline-block;
-  padding: 4px 12px;
-  border-radius: 12px;
+  padding: 3px 8px;
+  border-radius: 6px;
   font-size: 12px;
   background: var(--bg-quaternary);
   border: 1px solid var(--border-primary);
@@ -329,8 +359,8 @@
 }
 
 .graph-sidebar {
-  width: 260px;
-  min-width: 260px;
+  width: 180px;
+  min-width: 100px;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border-primary);
   padding: 16px 14px;
@@ -380,8 +410,8 @@
 .graph-detail-panel {
   position: absolute;
   bottom: 0;
-  left: 260px;
-  right: 0;
+  left: 280px;
+  right: 280px;
   background: var(--bg-tertiary);
   border-top: 1px solid var(--border-primary);
   padding: 10px 16px;

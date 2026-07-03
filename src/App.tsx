@@ -15,6 +15,7 @@ import TemplateManager from './components/TemplateManager';
 import { loadTemplates } from '../features/anime-data/template-service';
 import { getVisibleCategories } from './types';
 import KnowledgeGraphModal from '../features/knowledge-graph/KnowledgeGraphModal';
+import AppIcon from './theme/AppIcon';
 import AISettings from '../features/ai-analysis/AISettings';
 import TasteReportModal from '../features/ai-analysis/TasteReportModal';
 import './App.css';
@@ -123,7 +124,7 @@ const App: React.FC = () => {
     <Layout className="app-layout">
       <Sider
         width={300}
-        collapsedWidth={48}
+        collapsedWidth={0}
         collapsed={sidebarCollapsed}
         onMouseEnter={() => setSidebarCollapsed(false)}
         onMouseLeave={() => setSidebarCollapsed(true)}
@@ -133,7 +134,26 @@ const App: React.FC = () => {
       </Sider>
 
       <Layout className="main-layout">
+        {/* 收起状态方块：绝对定位覆盖在内容区左上角 */}
+        {sidebarCollapsed && (
+          <div
+            style={{
+              position: 'absolute', left: 0, top: 0, zIndex: 20,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              height: 60, width: 60,
+              background: 'var(--bg-secondary)',
+              borderBottom: '1px solid var(--border-primary)',
+              borderRight: '1px solid var(--border-primary)',
+              borderRadius: '0 0 8px 0',
+              cursor: 'pointer',
+            }}
+            onMouseEnter={() => setSidebarCollapsed(false)}
+          >
+            <AppIcon name="anime" size={22} style={{ opacity: 0.7 }} />
+          </div>
+        )}
         <Content className="main-content">
+          <div style={sidebarCollapsed ? { marginLeft: 60 } : undefined}>
           <TopBar
             activeCategory={activeCategory}
             onCategoryChange={(c) => dispatch({ type: 'SET_CATEGORY', payload: c })}
@@ -147,6 +167,7 @@ const App: React.FC = () => {
             onTemplateChange={(id: string) => dispatch({ type: 'SET_ACTIVE_TEMPLATE', payload: id })}
             categoryLabels={activeTemplateCategoryLabels}
           />
+          </div>
 
           {(sortByDim || activeTag) && (
             <div style={{ padding: '4px 0', fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
