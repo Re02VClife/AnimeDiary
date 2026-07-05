@@ -5,9 +5,10 @@
  */
 import { useState, useEffect, useRef } from 'react';
 import { Modal, Button, Image, Space, message, Popconfirm } from 'antd';
-import { PlusOutlined, DeleteOutlined, PushpinOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, PushpinOutlined, CameraOutlined } from '@ant-design/icons';
 import type { AnimeEntry, ImageEntry } from '../types';
 import { loadImages, saveImage, deleteImage } from '../services/imageService';
+import ScreenCapture from './ScreenCapture';
 
 interface ImageManagerProps {
   anime: AnimeEntry;
@@ -21,6 +22,7 @@ interface ImageManagerProps {
 const ImageManager: React.FC<ImageManagerProps> = ({ anime, open, onClose, onSetPoster, onDeletePoster, imgHeight = 360 }) => {
   const [images, setImages] = useState<ImageEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [screenCaptureOpen, setScreenCaptureOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /** 刷新图片列表 */
@@ -91,13 +93,16 @@ const ImageManager: React.FC<ImageManagerProps> = ({ anime, open, onClose, onSet
       footer={null}
       styles={{ body: { maxHeight: '80vh', overflowY: 'auto' } }}
     >
-      <div style={{ marginBottom: 12 }}>
+      <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => fileInputRef.current?.click()} loading={loading}>
           添加图片
         </Button>
+        <Button icon={<CameraOutlined />} onClick={() => setScreenCaptureOpen(true)}>
+          在线截图
+        </Button>
         <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileSelect} />
-        <span style={{ color: 'var(--text-secondary)', fontSize: 11, marginLeft: 12 }}>
-          支持高清大图 · 选中图片点 📌 设为海报 · 双击图片查看原图
+        <span style={{ color: 'var(--text-secondary)', fontSize: 11 }}>
+          支持高清大图 · 在线截图 · 录屏转 GIF
         </span>
       </div>
 
@@ -157,6 +162,18 @@ const ImageManager: React.FC<ImageManagerProps> = ({ anime, open, onClose, onSet
             </div>
           ))}
         </div>
+      )}
+
+      {/* 在线截图悬浮窗 */}
+      {screenCaptureOpen && (
+        <ScreenCapture
+          animeTitle={anime.title}
+          onImageSaved={(entry) => {
+            setImages((prev) => [...prev, entry]);
+            message.success(`已保存「${entry.fileName}」`);
+          }}
+          onClose={() => setScreenCaptureOpen(false)}
+        />
       )}
     </Modal>
   );

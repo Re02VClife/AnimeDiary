@@ -141,3 +141,55 @@ localStorage ←→ template-service / ThemeContext / storage-service ←→ UI�
 - Sider `collapsedWidth={0}`（收起时不占布局空间）
 - 左上角 60×60 浮动方块（`position: absolute`），悬停展开侧栏
 - TopBar 单独包裹 `<div marginLeft={60}>`，仅顶栏右移，网格不动
+
+## 海报共享元素过渡（FLIP 动画）
+
+打开/关闭详情面板时，海报从网格位置飞入 Modal 位置：
+
+- **PosterFlipOverlay.tsx** — Portal 渲染 `<img>` 到 `document.body`（z-index: 10000），CSS transition 同步过渡 left/top/width/height/border-radius/object-position
+- **捕获时机**：点击卡片 → `getBoundingClientRect()` + `getComputedStyle().objectPosition` 捕获网格位置；50ms 后捕获 Modal 海报位置；关闭时反向捕获
+- **时序**：Modal 用 `transitionName=""` 瞬时到位 → 克隆飞入(350ms) + 面板淡入(150ms延迟, 200ms过渡) 同时完成
+- **降级**：无海报时直接弹 Modal，无过渡
+
+## 面板淡入时序
+
+点击卡片后：150ms 延迟 → 200ms 淡入（与海报飞入 350ms 同时完成）。`App.tsx` 中 `contentRevealReady` 状态 + `setTimeout(150ms)` 控制。
+
+## 在线截图/录制功能
+
+ImageManager 工具栏"在线截图"按钮 → ScreenCapture 悬浮窗（840px 宽，可拖拽+边框调整大小）：
+
+### 截图 Tab
+- `screenshot-desktop`（OS 原生 API）截取全屏，返回 PNG dataUrl
+- 打开即自动截全屏预览
+- 四边像素值裁剪（上/下/左/右 `InputNumber`）
+- 框选区域：全屏浮层拖拽选区 → 自动换算像素值
+
+### 录制 Tab
+- `getDisplayMedia()` + `MediaRecorder` → webm（GPU 加速，60fps）
+- `electron/main.js` 同时设置 `setPermissionRequestHandler` + `setDisplayMediaRequestHandler`
+- 录制前倒计时（默认 3 秒，0-10 可调），屏幕左上角红色圆形显示
+- 录制中：ESC 或面板 [停止] 按钮结束
+- 录制后：`<video>` 预览（裁剪区间强制、clip-path 可视化裁剪）
+- 片头片尾裁剪（百分比滑块）+ 调速（0.25x-3x）
+- 保存 webm 视频（IPC `capture:saveVideo` → `images/{番剧名}/`）
+- 转 GIF：从 webm 提取帧 → 裁剪 + 调速 → gifenc 编码（可调 fps/尺寸/色彩）
+- `extractFrames()` 用 `recordingDurationRef` 回退 MediaRecorder 缺失的 duration 元数据
+
+### 技术栈
+| 组件 | 技术 |
+|------|------|
+| 截图 | `screenshot-desktop`（Windows: GDI+, macOS: screencapture, Linux: scrot） |
+| 录制 | `getDisplayMedia` + `MediaRecorder`（GPU 加速） |
+| GIF 编码 | `gifenc`（纯 JS，无原生依赖） |
+| 视频保存 | Electron IPC `capture:saveVideo` → `fs.writeFileSync` |
+
+### Electron IPC 新增
+- `capture:getSources` — `desktopCapturer.getSources()` 获取屏幕/窗口列表
+- `capture:takeScreenshot` — `screenshotDesktop()` OS 原生全屏截图
+- `capture:saveVideo` — 保存 webm 到 `images/{番剧名}/`
+
+### 新增依赖
+- `gifenc` — 纯 JS GIF 编码
+- `screenshot-desktop` — 跨平台原生截图
+- 类型声明：`src/types/gifenc.d.ts`

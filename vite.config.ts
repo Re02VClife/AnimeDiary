@@ -819,7 +819,7 @@ function excelApiPlugin(): Plugin {
         try {
           if (!fs.existsSync(dir)) { res.end(JSON.stringify([])); return; }
           const files = fs.readdirSync(dir)
-            .filter((f) => /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(f))
+            .filter((f) => /\.(jpg|jpeg|png|gif|webp|bmp|webm)$/i.test(f))
             .map((f) => {
               const stat = fs.statSync(path.join(dir, f));
               return {
@@ -922,6 +922,67 @@ function excelApiPlugin(): Plugin {
         });
       });
 
+      // ── 保存录制视频（Web 模式 multipart 上传）──
+      server.middlewares.use('/api/video/save', (req, res) => {
+        if (req.method !== 'POST') { res.statusCode = 405; res.end('Method Not Allowed'); return; }
+        const chunks: Buffer[] = [];
+        req.on('data', (c: Buffer) => chunks.push(c));
+        req.on('end', () => {
+          try {
+            const raw = Buffer.concat(chunks).toString('binary');
+            const boundaryMatch = raw.match(/boundary=([^\r\n]+)/);
+            if (!boundaryMatch) { res.statusCode = 400; res.end(JSON.stringify({ error: '无效表单' })); return; }
+            const boundary = boundaryMatch[1];
+            const parts = raw.split(`--${boundary}`);
+            let animeTitle = '';
+            let fileData: Buffer | null = null;
+            let fileName = 'recording.webm';
+
+            for (const part of parts) {
+              const headerEnd = part.indexOf('\r\n\r\n');
+              if (headerEnd === -1) continue;
+              const header = part.slice(0, headerEnd);
+              if (header.includes('name="animeTitle"')) {
+                animeTitle = part.slice(headerEnd + 4).trim();
+              } else if (header.includes('name="file"')) {
+                const fnMatch = header.match(/filename="([^"]+)"/);
+                if (fnMatch) fileName = fnMatch[1];
+                const bodyStart = headerEnd + 4;
+                const bodyEnd = part.lastIndexOf('\r\n--');
+                fileData = Buffer.from(part.slice(bodyStart, bodyEnd > 0 ? bodyEnd : part.length), 'binary');
+              }
+            }
+
+            if (!animeTitle || !fileData) { res.statusCode = 400; res.end(JSON.stringify({ error: '缺少参数' })); return; }
+
+            const safeName = animeTitle.replace(/[\\/:*?"<>|]/g, '_').trim();
+            const dir = path.join(IMAGES_DIR, safeName);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+            // 自动编号
+            let maxNum = 0;
+            if (fs.existsSync(dir)) {
+              const re = new RegExp(`^${escapeRegExp(safeName)}_(\\d+)\\.`);
+              for (const f of fs.readdirSync(dir)) {
+                const m = f.match(re);
+                if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+              }
+            }
+            const ext = path.extname(fileName) || '.webm';
+            const outName = `${safeName}_${maxNum + 1}${ext}`;
+            const filePath = path.join(dir, outName);
+            fs.writeFileSync(filePath, fileData);
+
+            const url = `/api/images/file?anime=${encodeURIComponent(safeName)}&file=${encodeURIComponent(outName)}`;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ success: true, fileName: outName, url }));
+          } catch (e) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: e instanceof Error ? e.message : '保存失败' }));
+          }
+        });
+      });
+
       // 提供图片静态文件
       server.middlewares.use('/api/images/file', (req, res) => {
         const url = new URL(req.url!, 'http://localhost');
@@ -934,7 +995,7 @@ function excelApiPlugin(): Plugin {
         const filePath = path.join(IMAGES_DIR, anime, file);
         if (!fs.existsSync(filePath)) { res.statusCode = 404; res.end('文件不存在'); return; }
         const ext = path.extname(file).toLowerCase();
-        const mime: Record<string, string> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp' };
+        const mime: Record<string, string> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp', '.webm': 'video/webm' };
         res.setHeader('Content-Type', mime[ext] || 'application/octet-stream');
         res.setHeader('Cache-Control', 'max-age=86400');
         res.end(fs.readFileSync(filePath));

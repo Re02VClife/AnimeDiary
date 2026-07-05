@@ -1,0 +1,205 @@
+/* ── 截图悬浮窗 ── */
+.screen-capture-float {
+  position: fixed;
+  z-index: 10001;
+  width: 840px;
+  min-width: 420px;
+  max-width: 95vw;
+  max-height: 85vh;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* ── 标题栏（可拖拽移动）── */
+.sc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-primary);
+  background: var(--bg-tertiary);
+  cursor: move;
+  flex-shrink: 0;
+  min-height: 36px;
+}
+
+.sc-tabs { display: flex; gap: 2px; }
+
+.sc-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-secondary);
+  transition: all 0.15s;
+}
+.sc-tab:hover { background: var(--bg-quaternary); color: var(--text-primary); }
+.sc-tab.active { background: var(--brand-primary); color: #fff; }
+
+.sc-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; border-radius: 8px;
+  background: rgba(255, 255, 255, 0.3); font-size: 10px; padding: 0 4px;
+}
+
+/* ── 内容区 ── */
+.sc-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.sc-panel { display: flex; flex-direction: column; gap: 8px; }
+
+/* ── 源选择网格 ── */
+.sc-source-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.sc-source-card {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 6px; border-radius: 8px;
+  border: 1.5px solid var(--border-primary);
+  cursor: pointer; transition: all 0.15s;
+  background: var(--bg-primary);
+}
+.sc-source-card:hover { border-color: var(--brand-primary); }
+.sc-source-card.selected {
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 8px rgba(251, 114, 153, 0.25);
+}
+.sc-source-card img {
+  width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px;
+}
+.sc-source-card span {
+  font-size: 11px; color: var(--text-secondary); text-align: center;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
+
+/* ── 预览区 ── */
+.sc-preview-area { display: flex; flex-direction: column; gap: 8px; }
+
+.sc-preview-video {
+  width: 100%; max-height: 360px; border-radius: 8px;
+  border: 1px solid var(--border-primary); background: #000;
+}
+
+.sc-preview-actions { display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+/* ── 结果区 ── */
+.sc-result { display: flex; flex-direction: column; gap: 8px; }
+
+.sc-result > img,
+.sc-result > video {
+  width: 100%; max-height: 400px; object-fit: contain;
+  border-radius: 8px; border: 1px solid var(--border-primary);
+}
+
+.sc-result-actions { display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+/* ── 截图操作按钮行 ── */
+.sc-capture-row {
+  display: flex; align-items: center; justify-content: center; gap: 12px; padding: 8px 0;
+}
+
+.sc-crop-indicator {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  background: var(--brand-primary); color: #fff; font-size: 11px;
+}
+
+/* ── 录制指示器 ── */
+.sc-recording-indicator {
+  display: flex; align-items: center; justify-content: center; gap: 12px; padding: 16px 0;
+}
+
+.sc-rec-dot {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: #ff4d4f;
+  animation: sc-blink 1s ease-in-out infinite;
+}
+
+@keyframes sc-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+@keyframes sc-countdown-pop {
+  from { transform: scale(0.5); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* ── GIF 转换面板 ── */
+.sc-gif-panel {
+  margin-top: 8px; padding: 10px; border-radius: 8px;
+  border: 1px solid var(--border-primary); background: var(--bg-primary);
+  display: flex; flex-direction: column; gap: 8px;
+}
+
+.sc-gif-title { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+
+.sc-gif-params { display: flex; flex-direction: column; gap: 2px; }
+
+.sc-gif-row {
+  display: flex; align-items: center; font-size: 11px; color: var(--text-secondary);
+}
+.sc-gif-row > span:first-child { width: 60px; flex-shrink: 0; }
+.sc-gif-val {
+  width: 36px; text-align: right; color: var(--brand-primary); font-weight: 600;
+}
+
+/* ── 管理列表 ── */
+.sc-manage-list { display: flex; flex-direction: column; gap: 4px; }
+
+.sc-manage-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border-radius: 6px; background: var(--bg-tertiary); border: 1px solid var(--border-primary);
+}
+
+/* ── 边框拖拽调整大小 ── */
+.sc-resize-handle {
+  position: absolute;
+  z-index: 2;
+}
+.sc-resize-handle-e  { right: -3px; top: 0; bottom: 0; width: 8px; cursor: e-resize; }
+.sc-resize-handle-s  { left: 0; right: 0; bottom: -3px; height: 8px; cursor: s-resize; }
+.sc-resize-handle-se { right: -3px; bottom: -3px; width: 16px; height: 16px; cursor: se-resize; }
+
+/* ── 框选区域全屏浮层 ── */
+.sc-region-overlay {
+  position: fixed; inset: 0; z-index: 20000;
+  background: rgba(0, 0, 0, 0.85);
+  cursor: crosshair;
+  display: flex; align-items: center; justify-content: center;
+}
+.sc-region-overlay img {
+  max-width: 100%; max-height: 100%; object-fit: contain;
+  position: absolute; inset: 0; margin: auto;
+}
+.sc-region-overlay .sc-region-box {
+  position: absolute;
+  border: 2px dashed #fb7299;
+  background: rgba(251, 114, 153, 0.12);
+  pointer-events: none;
+}
+.sc-region-overlay .sc-region-hint {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  color: #fff; font-size: 13px; background: rgba(0,0,0,0.6);
+  padding: 8px 20px; border-radius: 20px;
+  pointer-events: none;
+}

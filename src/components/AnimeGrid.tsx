@@ -107,6 +107,7 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
               )}
               {anime.posterUrl ? (
                 <img src={anime.posterUrl} alt={anime.title} loading="lazy"
+                  data-poster-anime-id={anime.id}
                   style={positions[anime.id] ? { objectPosition: `${positions[anime.id].x}% ${positions[anime.id].y}%` } : undefined}
                   onError={(e) => {
                     e.currentTarget.style.display = 'none';

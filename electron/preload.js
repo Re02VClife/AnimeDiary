@@ -9,4 +9,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readExcel: () => ipcRenderer.invoke('excel:read'),
   writeExcel: (updates) => ipcRenderer.invoke('excel:write', updates),
   getExcelInfo: () => ipcRenderer.invoke('excel:getInfo'),
+
+  // 截图/录制
+  getCaptureSources: (types) => ipcRenderer.invoke('capture:getSources', { types }),
+  takeScreenshot: () => ipcRenderer.invoke('capture:takeScreenshot'),
+  saveVideo: (animeTitle, buffer, fileName) =>
+    ipcRenderer.invoke('capture:saveVideo', { animeTitle, buffer, fileName }),
 });
