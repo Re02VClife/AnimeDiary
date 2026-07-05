@@ -78,7 +78,7 @@ const ImageManager: React.FC<ImageManagerProps> = ({ anime, open, onClose, onSet
 
   /** 设为海报 */
   const handleSetPoster = (img: ImageEntry) => {
-    onSetPoster?.(img.dataUrl);
+    onSetPoster?.(img.dataUrl); 
     message.success('已设为海报');
   };
 

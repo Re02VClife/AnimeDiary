@@ -1,7 +1,13 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const XLSX = require('xlsx');
+const screenshotDesktop = require('screenshot-desktop');
+
+// 用于正则转义（供截图视频保存的文件名自动编号使用）
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 // Excel 文件路径（后续可改为可配置）
 const EXCEL_PATH = 'C:\\Users\\24628\\Desktop\\vscode\\番评分.xlsx';
@@ -70,6 +76,20 @@ function createWindow() {
 
 // ── 注册 IPC 处理器 ──
 app.whenReady().then(() => {
+  // 授权渲染进程访问媒体捕获
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => {
+    cb(['media', 'display-capture', 'desktopCapture'].includes(permission));
+  });
+
+  // 拦截 getDisplayMedia，提供桌面源（高性能 GPU 捕获）
+  session.defaultSession.setDisplayMediaRequestHandler(async (_req, cb) => {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen', 'window'],
+      thumbnailSize: { width: 1, height: 1 },
+    });
+    cb({ video: sources[0] || undefined, audio: 'loopback' });
+  });
+
   // Excel 读取
   ipcMain.handle('excel:read', () => {
     return readExcel();
@@ -92,6 +112,56 @@ app.whenReady().then(() => {
       size: stat.size,
       modifiedAt: stat.mtime.toISOString(),
     };
+  });
+
+  // ── 截图：获取可捕获的屏幕和窗口列表（含低分辨率缩略图供选择）──
+  ipcMain.handle('capture:getSources', async (_event, { types = ['screen', 'window'] } = {}) => {
+    const sources = await desktopCapturer.getSources({
+      types,
+      thumbnailSize: { width: 320, height: 180 },
+    });
+    return sources.map((s) => ({
+      id: s.id,
+      name: s.name,
+      thumbnail: s.thumbnail.toDataURL(),
+    }));
+  });
+
+  // ── 截图：对指定源获取全分辨率截图（用 OS 原生 API，非 Chromium）──
+  ipcMain.handle('capture:takeScreenshot', async () => {
+    try {
+      const buf = await screenshotDesktop({ format: 'png' });
+      const base64 = buf.toString('base64');
+      return { dataUrl: `data:image/png;base64,${base64}`, name: '全屏截图' };
+    } catch (e) {
+      throw new Error(`截图失败: ${e.message}`);
+    }
+  });
+
+  // ── 录制：保存视频/图片文件到 images/{番剧名}/ 目录 ──
+  ipcMain.handle('capture:saveVideo', async (_event, { animeTitle, buffer, fileName }) => {
+    const safeName = animeTitle.replace(/[\\/:*?"<>|]/g, '_').trim();
+    const dir = path.join(__dirname, '..', 'images', safeName);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+    // 自动编号：找到已有文件的最大编号 + 1
+    let maxNum = 0;
+    if (fs.existsSync(dir)) {
+      const re = new RegExp(`^${escapeRegExp(safeName)}_(\\d+)\\.`);
+      for (const f of fs.readdirSync(dir)) {
+        const m = f.match(re);
+        if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+      }
+    }
+    const num = maxNum + 1;
+    const ext = fileName ? path.extname(fileName) : '.webm';
+    const outName = `${safeName}_${num}${ext}`;
+    const filePath = path.join(dir, outName);
+
+    fs.writeFileSync(filePath, Buffer.from(buffer));
+
+    const url = `/api/images/file?anime=${encodeURIComponent(safeName)}&file=${encodeURIComponent(outName)}`;
+    return { success: true, fileName: outName, url };
   });
 
   createWindow();

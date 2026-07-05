@@ -18,12 +18,24 @@ import KnowledgeGraphModal from '../features/knowledge-graph/KnowledgeGraphModal
 import AppIcon from './theme/AppIcon';
 import AISettings from '../features/ai-analysis/AISettings';
 import TasteReportModal from '../features/ai-analysis/TasteReportModal';
+import PosterFlipOverlay from './components/PosterFlipOverlay';
 import './App.css';
 
 const { Sider, Content } = Layout;
 
 const App: React.FC = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+
+  // ── FLIP 海报过渡状态 ──
+  const [flipState, setFlipState] = useState<{
+    posterUrl: string;
+    startRect: DOMRect;
+    endRect: DOMRect | null;
+    /** 起始 object-position（网格海报的裁剪位置） */
+    startObjPos: string;
+    /** 目标 object-position（Modal 海报的裁剪位置，打开时后续捕获） */
+    endObjPos: string | null;
+  } | null>(null);
 
   const {
     state,
@@ -102,6 +114,37 @@ const App: React.FC = () => {
       dispatch({ type: 'SET_CATEGORY', payload: visible[0] });
     }
   }, [activeTemplateId]);
+
+  // FLIP 过渡：Modal 打开后捕获详情海报位置
+  useEffect(() => {
+    if (!flipState || flipState.endRect || !detailOpen) return;
+    // 安全兜底：800ms 后仍未捕获则放弃，避免海报永久隐藏
+    const safety = setTimeout(() => {
+      setFlipState((prev) => prev && !prev.endRect ? null : prev);
+    }, 1200);
+    // 等 Modal 渲染完成
+    const timer = setTimeout(() => {
+      const modalImg = document.querySelector(
+        '[data-modal-poster="true"]'
+      ) as HTMLElement | null;
+      if (modalImg) {
+        const endRect = modalImg.getBoundingClientRect();
+        if (endRect.width > 0 && endRect.height > 0) {
+          const endObjPos = getComputedStyle(modalImg).objectPosition || '50% 50%';
+          setFlipState((prev) => prev ? { ...prev, endRect, endObjPos } : null);
+        } else {
+          requestAnimationFrame(() => {
+            const retry = modalImg.getBoundingClientRect();
+            if (retry.width > 0) {
+              const endObjPos = getComputedStyle(modalImg).objectPosition || '50% 50%';
+              setFlipState((prev) => prev ? { ...prev, endRect: retry, endObjPos } : null);
+            }
+          });
+        }
+      }
+    }, 50);  // transitionName="" 已关闭动画，Modal 在最终位置
+    return () => { clearTimeout(timer); clearTimeout(safety); };
+  }, [flipState, detailOpen]);
 
   if (loading) {
     return (
@@ -191,7 +234,18 @@ const App: React.FC = () => {
 
           <AnimeGrid
             animeList={filteredAnime}
-            onAnimeClick={handleAnimeClick}
+            onAnimeClick={(anime) => {
+              // 捕获网格海报的屏幕位置和裁剪位置用于 FLIP 过渡
+              const gridImg = document.querySelector(
+                `[data-poster-anime-id="${CSS.escape(anime.id)}"]`
+              ) as HTMLElement | null;
+              if (gridImg && anime.posterUrl) {
+                const startRect = gridImg.getBoundingClientRect();
+                const startObjPos = getComputedStyle(gridImg).objectPosition || '50% 50%';
+                setFlipState({ posterUrl: anime.posterUrl, startRect, endRect: null, startObjPos, endObjPos: null });
+              }
+              handleAnimeClick(anime);
+            }}
             activeDim={activeDim}
             onDeleteFromWatching={activeCategory === 'watching' ? handleDeleteFromWatching : undefined}
             batchMode={batchMode}
@@ -222,7 +276,27 @@ const App: React.FC = () => {
       <AnimeDetailModal
         anime={selectedAnime}
         open={detailOpen}
-        onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'detail' })}
+        onClose={() => {
+          // 关闭 FLIP：捕获 Modal 海报 → 网格海报位置
+          if (selectedAnime?.posterUrl) {
+            const modalImg = document.querySelector(
+              '[data-modal-poster="true"]'
+            ) as HTMLElement | null;
+            const gridImg = document.querySelector(
+              `[data-poster-anime-id="${CSS.escape(selectedAnime.id)}"]`
+            ) as HTMLElement | null;
+            if (modalImg && gridImg) {
+              setFlipState({
+                posterUrl: selectedAnime.posterUrl,
+                startRect: modalImg.getBoundingClientRect(),
+                endRect: gridImg.getBoundingClientRect(),
+                startObjPos: getComputedStyle(modalImg).objectPosition || '50% 50%',
+                endObjPos: getComputedStyle(gridImg).objectPosition || '50% 50%',
+              });
+            }
+          }
+          dispatch({ type: 'CLOSE_MODAL', modal: 'detail' });
+        }}
         onSave={handleSaveAnime}
         editMode={detailEditMode}
         onNavigate={(target) => {
@@ -233,6 +307,8 @@ const App: React.FC = () => {
         imgHeight={imgHeight}
         radarMode={radarMode}
         radarMin={radarMin}
+        contentHidden={flipState !== null && !flipState.endRect && detailOpen}
+        posterHidden={flipState !== null && detailOpen}
         onPosterChange={(animeId, posterUrl) => {
           dispatch({ type: 'SET_ANIME_POSTER', animeId, posterUrl });
         }}
@@ -273,6 +349,18 @@ const App: React.FC = () => {
 
       <input ref={fileInputRef} type="file" accept=".xlsx,.xls"
         style={{ display: 'none' }} onChange={handleFileChange} />
+
+      {/* FLIP 海报过渡：克隆海报从网格位置飞入详情面板位置 */}
+      {flipState?.endRect && (
+        <PosterFlipOverlay
+          posterUrl={flipState.posterUrl}
+          startRect={flipState.startRect}
+          endRect={flipState.endRect}
+          startObjPos={flipState.startObjPos}
+          endObjPos={flipState.endObjPos ?? undefined}
+          onDone={() => setFlipState(null)}
+        />
+      )}
     </Layout>
   );
 };
