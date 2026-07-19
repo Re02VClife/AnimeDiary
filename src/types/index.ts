@@ -211,7 +211,7 @@ export function getVisibleCategories(labels?: CategoryOverrides): AnimeCategory[
 }
 
 /** 海报宽高比预设 */
-export type PosterAspectRatio = '3/4' | '16/9' | '2/3' | '1/1';
+export type PosterAspectRatio = '3/4' | '16/9' | '2/3' | '1/1' | '1/2';
 
 /** 详情面板布局配置（模板级别，编辑模式下可拖动调整） */
 export interface DetailLayoutConfig {
@@ -266,6 +266,49 @@ export function createDefaultTemplate(): ScoreTemplate {
     layoutConfig: { ...DEFAULT_DETAIL_LAYOUT },
     createdAt: new Date().toISOString().split('T')[0],
     updatedAt: new Date().toISOString().split('T')[0],
+  };
+}
+
+/** 内置角色评分模板 ID */
+export const CHARACTER_TEMPLATE_ID = 'character';
+
+/** 创建内置角色评分模板（角色卡） */
+export function createCharacterTemplate(): ScoreTemplate {
+  const today = new Date().toISOString().split('T')[0];
+  return {
+    id: CHARACTER_TEMPLATE_ID,
+    name: '角色评分',
+    applicableGenre: 'custom',
+    // 6 维等权重；key 加 char_ 前缀避开 DIMENSION_COL_MAP，防止误写 Excel 默认评分列
+    // 注意不含 overall 维度：append 路径（mapAnimeToRow）会把含 overall 的 0 分写入综合观感列
+    dimensions: [
+      { key: 'char_appearance', label: '外观', description: '角色设计、造型、立绘', weight: 1 / 6 },
+      { key: 'char_personality', label: '性格', description: '性格塑造与魅力', weight: 1 / 6 },
+      { key: 'char_ability', label: '能力设定', description: '能力与设定的巧妙程度', weight: 1 / 6 },
+      { key: 'char_voice', label: '声优', description: '配音表现', weight: 1 / 6 },
+      { key: 'char_growth', label: '成长弧光', description: '角色成长与转变', weight: 1 / 6 },
+      { key: 'char_moe', label: '萌点电波', description: '个人主观喜爱度', weight: 1 / 6 },
+    ],
+    isDefault: false,
+    fieldConfig: {
+      // 番剧专属字段全部隐藏；角色卡也没有子角色
+      showAnilistScore: false,
+      showBangumiId: false,
+      showReleaseDate: false,
+      showFrameCount: false,
+      showStudio: false,
+      showCharacters: false,
+      showEpisodes: false,
+      customFields: [
+        { key: 'char_source', label: '所属作品', type: 'text' },
+        { key: 'char_cv', label: '声优(CV)', type: 'text' },
+        { key: 'char_birthday', label: '生日/属性', type: 'text' },
+      ],
+    },
+    categoryLabels: {}, // 全部留空 = 不显示分类 tab、不按分类筛选
+    layoutConfig: { ...DEFAULT_DETAIL_LAYOUT, posterAspectRatio: '1/2' }, // 角色立绘偏窄高竖图
+    createdAt: today,
+    updatedAt: today,
   };
 }
 

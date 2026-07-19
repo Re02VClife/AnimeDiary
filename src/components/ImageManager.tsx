@@ -5,10 +5,12 @@
  */
 import { useState, useEffect, useRef } from 'react';
 import { Modal, Button, Image, Space, message, Popconfirm } from 'antd';
-import { PlusOutlined, DeleteOutlined, PushpinOutlined, CameraOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, PushpinOutlined, CameraOutlined, PictureOutlined } from '@ant-design/icons';
 import type { AnimeEntry, ImageEntry } from '../types';
+import { CHARACTER_TEMPLATE_ID } from '../types';
 import { loadImages, saveImage, deleteImage } from '../services/imageService';
 import ScreenCapture from './ScreenCapture';
+import WorkImagePicker from './WorkImagePicker';
 
 interface ImageManagerProps {
   anime: AnimeEntry;
@@ -23,7 +25,13 @@ const ImageManager: React.FC<ImageManagerProps> = ({ anime, open, onClose, onSet
   const [images, setImages] = useState<ImageEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [screenCaptureOpen, setScreenCaptureOpen] = useState(false);
+  const [workPickerOpen, setWorkPickerOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 角色卡：已绑定的作品列表（char_source '/' 分隔），供"从作品选取"入口
+  const boundWorks = anime.templateId === CHARACTER_TEMPLATE_ID
+    ? String(anime.customFields?.char_source || '').split('/').filter(Boolean)
+    : [];
 
   /** 刷新图片列表 */
   const refreshImages = async () => {
@@ -100,6 +108,11 @@ const ImageManager: React.FC<ImageManagerProps> = ({ anime, open, onClose, onSet
         <Button icon={<CameraOutlined />} onClick={() => setScreenCaptureOpen(true)}>
           在线截图
         </Button>
+        {boundWorks.length > 0 && (
+          <Button icon={<PictureOutlined />} onClick={() => setWorkPickerOpen(true)}>
+            从作品选取
+          </Button>
+        )}
         <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileSelect} />
         <span style={{ color: 'var(--text-secondary)', fontSize: 11 }}>
           支持高清大图 · 在线截图 · 录屏转 GIF
@@ -173,6 +186,20 @@ const ImageManager: React.FC<ImageManagerProps> = ({ anime, open, onClose, onSet
             message.success(`已保存「${entry.fileName}」`);
           }}
           onClose={() => setScreenCaptureOpen(false)}
+        />
+      )}
+
+      {/* 从绑定作品选取图片（角色卡） */}
+      {workPickerOpen && (
+        <WorkImagePicker
+          works={boundWorks}
+          characterTitle={anime.title}
+          open={workPickerOpen}
+          onClose={() => setWorkPickerOpen(false)}
+          onSaved={(entry) => {
+            setImages((prev) => [...prev, entry]);
+            message.success(`已保存「${entry.fileName}」`);
+          }}
         />
       )}
     </Modal>

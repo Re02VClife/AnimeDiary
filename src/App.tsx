@@ -303,6 +303,7 @@ const App: React.FC = () => {
           // 前后番剧切换：直接替换当前选中番剧，保持详情面板打开
           dispatch({ type: 'OPEN_MODAL', modal: 'detail', anime: target });
         }}
+        onAddAnime={handleAddAnime}
         allAnime={state.animeList}
         imgHeight={imgHeight}
         radarMode={radarMode}
@@ -318,6 +319,7 @@ const App: React.FC = () => {
         open={searchOpen}
         onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'search' })}
         onAdd={handleAddAnime}
+        activeTemplateId={activeTemplateId}
       />
 
       <TemplateManager

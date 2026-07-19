@@ -4,7 +4,7 @@
  *   使用 localStorage 持久化
  */
 import type { ScoreTemplate, Dimension, AnimeEntry } from '../../src/types';
-import { DEFAULT_TEMPLATE_ID, createDefaultTemplate, DEFAULT_DIMENSIONS, DEFAULT_FIELD_CONFIG } from '../../src/types';
+import { DEFAULT_TEMPLATE_ID, createDefaultTemplate, DEFAULT_DIMENSIONS, DEFAULT_FIELD_CONFIG, DEFAULT_DETAIL_LAYOUT, CHARACTER_TEMPLATE_ID, createCharacterTemplate } from '../../src/types';
 
 const TEMPLATES_KEY = 'anime_diary_templates';
 const LEGACY_DIMENSIONS_KEY = 'anime_diary_dimensions';
@@ -136,4 +136,41 @@ export function migrateLegacyDimensions(): void {
   try {
     localStorage.removeItem(LEGACY_DIMENSIONS_KEY);
   } catch { /* ignore */ }
+}
+
+const CHARACTER_SEED_FLAG = 'anime_diary_character_seeded';
+
+/** 角色模板最新种子版本 */
+const CHARACTER_SEED_VERSION = '3';
+
+/**
+ * 种子：补插内置角色评分模板（版本化，当前 v3）
+ * - flag 记录已种子版本 → 用户删除后不会复活（尊重删除）
+ * - 每次版本升级就地更新已有模板（v1→v2 宽高比，v2→v3 删除剧情作用维度）
+ * - 内部先跑 migrateLegacyDimensions（幂等），兼容全新用户与旧版维度用户
+ * - 必须在 React 首次渲染前调用（App.tsx 的 loadTemplates useMemo 只求值一次）
+ */
+export function seedCharacterTemplate(): void {
+  const seeded = localStorage.getItem(CHARACTER_SEED_FLAG);
+  if (seeded === CHARACTER_SEED_VERSION) return;
+  migrateLegacyDimensions();
+  const templates = loadTemplates();
+  const existing = templates.find((t) => t.id === CHARACTER_TEMPLATE_ID);
+  if (!seeded && !existing) {
+    // 首次种子：补插
+    templates.push(createCharacterTemplate());
+    saveTemplates(templates);
+  } else if (existing) {
+    // 更新已有模板：维度用最新工厂定义覆盖（删除 char_role、权重 1/6）
+    const latest = createCharacterTemplate();
+    const hasCharRole = existing.dimensions.some((d: Dimension) => d.key === 'char_role');
+    if (hasCharRole || seeded !== CHARACTER_SEED_VERSION) {
+      existing.dimensions = latest.dimensions;
+      existing.fieldConfig = latest.fieldConfig;
+      existing.categoryLabels = latest.categoryLabels;
+      saveTemplates(templates);
+    }
+  }
+  // seeded 过但模板不存在 = 用户已删除 → 不复活
+  localStorage.setItem(CHARACTER_SEED_FLAG, CHARACTER_SEED_VERSION);
 }

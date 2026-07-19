@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Modal, InputNumber, Input, Tag, Descriptions, Button, Space, Tooltip, Select, Popover, Image, Typography, Checkbox, Slider, Segmented } from 'antd';
 import { SaveOutlined, PlusOutlined, EditOutlined, LeftOutlined, RightOutlined, PictureOutlined, ImportOutlined, ThunderboltOutlined, TagOutlined, SearchOutlined } from '@ant-design/icons';
 import type { AnimeEntry, AnimeTag, DimensionScore, DimensionReview, AnimeCategory, BangumiSearchItem, Dimension, DetailLayoutConfig } from '../types';
-import { DEFAULT_DIMENSIONS, DIMENSION_LABEL_MAP, CATEGORY_CONFIG, DEFAULT_FIELD_CONFIG, DEFAULT_DETAIL_LAYOUT } from '../types';
+import { DEFAULT_DIMENSIONS, DIMENSION_LABEL_MAP, CATEGORY_CONFIG, DEFAULT_FIELD_CONFIG, DEFAULT_DETAIL_LAYOUT, CHARACTER_TEMPLATE_ID } from '../types';
 import { getTemplate, loadTemplates, updateTemplate } from '../../features/anime-data/template-service';
 import { catgirlMessage } from '../theme';
 import type { TemplateFieldConfig } from '../types';
@@ -25,6 +25,8 @@ interface AnimeDetailModalProps {
   onClose: () => void;
   onSave: (entry: AnimeEntry) => Promise<void>;
   onNavigate?: (anime: AnimeEntry) => void;
+  /** 新建条目（点击未建卡的角色标签时创建角色卡） */
+  onAddAnime?: (entry: AnimeEntry) => void;
   allAnime?: AnimeEntry[];
   onPosterChange?: (animeId: string, posterUrl: string) => void;
   imgHeight?: number;
@@ -38,7 +40,7 @@ interface AnimeDetailModalProps {
 }
 
 const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
-  anime, open, onClose, onSave, onNavigate, allAnime = [], onPosterChange, imgHeight = 360,
+  anime, open, onClose, onSave, onNavigate, onAddAnime, allAnime = [], onPosterChange, imgHeight = 360,
   editMode = false, radarMode = 'percentile', radarMin,
   posterHidden = false,
   contentHidden = false,
@@ -109,6 +111,58 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   const handleNavigate = useCallback((target: AnimeEntry) => {
     onNavigate?.(target);
   }, [onNavigate]);
+
+  // ── 角色卡：角色名 → 已建角色卡（templateId='character' 且标题=角色名） ──
+  const characterCards = useMemo(() => {
+    const map = new Map<string, AnimeEntry>();
+    for (const a of allAnime) {
+      if (a.templateId === CHARACTER_TEMPLATE_ID) map.set(a.title, a);
+    }
+    return map;
+  }, [allAnime]);
+
+  // 可绑定的作品选项（非角色卡条目标题，供"所属作品"模糊搜索多选）
+  const sourceWorkOptions = useMemo(() => {
+    const titles = new Set<string>();
+    for (const a of allAnime) {
+      if (a.templateId !== CHARACTER_TEMPLATE_ID && a.title) titles.add(a.title);
+    }
+    return Array.from(titles).map((t) => ({ value: t, label: t }));
+  }, [allAnime]);
+
+  // 计算任意条目的加权总评（与 AnimeGrid.calcOverall 同逻辑，修改需同步；用于角色卡 Tooltip）
+  const calcCardOverall = (entry: AnimeEntry): number => {
+    const dims = getTemplate(entry.templateId).dimensions.filter((d) => d.key !== 'overall');
+    if (dims.length === 0) return 0;
+    const hasWeights = dims.some((d) => d.weight > 0);
+    const eff = hasWeights ? dims.filter((d) => d.weight > 0) : dims.map((d) => ({ ...d, weight: 1 / dims.length }));
+    let tw = 0, ws = 0;
+    for (const d of eff) {
+      const s = entry.scores.find((sc) => sc.dimensionKey === d.key)?.score ?? 0;
+      if (s > 0) { ws += s * d.weight; tw += d.weight; }
+    }
+    return tw > 0 ? ws / tw : 0;
+  };
+
+  // 点击角色标签：已建卡 → 跳转角色卡；未建卡 → 新建角色卡并进入编辑
+  const handleCharacterClick = (name: string) => {
+    const card = characterCards.get(name);
+    if (card) { onNavigate?.(card); return; }
+    if (!onAddAnime || !anime) return;
+    const today = new Date().toISOString().split('T')[0];
+    onAddAnime({
+      id: 'char-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+      title: name,
+      posterUrl: posterUrl || anime.posterUrl, // 继承番剧海报（posterUrl state 含懒加载结果）
+      category: 'watching',
+      tags: [],
+      templateId: CHARACTER_TEMPLATE_ID,
+      scores: [],
+      customFields: { char_source: anime.title }, // 预填所属作品 = 当前番剧名
+      createdAt: today,
+      updatedAt: today,
+    });
+  };
 
   // ── 维度排名浮层：计算悬停维度的近 20 项 ──
   const nearbyRanking = useMemo(() => {
@@ -772,6 +826,136 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
 
   if (!anime) return null;
 
+  // 角色卡：基本信息区从顶部挪到海报左侧（渲染于左栏最前，两列竖排）
+  const isCharacterCard = templateId === CHARACTER_TEMPLATE_ID;
+  const infoDescriptions = (
+    <Descriptions size="small" column={isCharacterCard ? 2 : 4} style={{ marginBottom: 12 }}>
+      {templateCfg.showReleaseDate && (
+        <Descriptions.Item label="上映">
+          {editing ? (
+            <Input size="small" value={editReleaseDate} onChange={(e) => setEditReleaseDate(e.target.value)}
+              placeholder="如 2021-04" style={{ width: 100, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
+          ) : (anime.releaseDate || '-')}
+        </Descriptions.Item>
+      )}
+      <Descriptions.Item label={isCharacterCard ? '诞生时间' : '观看时间'}>
+        {editing ? (
+          <Input size="small" value={editWatchDate} onChange={(e) => setEditWatchDate(e.target.value)}
+            placeholder="如 2024-03-15" style={{ width: 110, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
+        ) : (anime.watchDate || anime.createdAt || '-')}
+      </Descriptions.Item>
+      {templateCfg.showBangumiId && (
+        <Descriptions.Item label="Bangumi">
+          {editing ? (
+            <InputNumber size="small" min={0} max={15} step={0.1}
+              value={editBgmScore} onChange={(v) => setEditBgmScore(v ?? undefined)}
+              style={{ width: 70 }} />
+          ) : (anime.bangumiScore ? <span style={{ color: 'var(--brand-primary)', fontWeight: 600 }}>{anime.bangumiScore}</span> : '-')}
+        </Descriptions.Item>
+      )}
+      {templateCfg.showAnilistScore && (
+        <Descriptions.Item label="AniList">
+          {editing ? (
+            <InputNumber size="small" min={0} max={15} step={0.1}
+              value={editAnilistScore} onChange={(v) => setEditAnilistScore(v ?? undefined)}
+              style={{ width: 70 }} />
+          ) : (anime.aniListScore ? <span style={{ color: 'var(--color-info)', fontWeight: 600 }}>{anime.aniListScore}</span> : '-')}
+        </Descriptions.Item>
+      )}
+      {templateCfg.showStudio && (
+        <Descriptions.Item label="制作组">
+          {editing ? (
+            <Input size="small" value={editStudio} onChange={(e) => setEditStudio(e.target.value)}
+              placeholder="制作组" style={{ width: 120, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
+          ) : (anime.studio || '-')}
+        </Descriptions.Item>
+      )}
+      {templateCfg.showFrameCount && (
+        <Descriptions.Item label="张数">
+          {editing ? (
+            <InputNumber size="small" min={0} step={1}
+              value={editFrameCount} onChange={(v) => setEditFrameCount(v ?? undefined)}
+              placeholder="数量" style={{ width: 90 }} />
+          ) : (anime.frameCount ? <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{anime.frameCount.toLocaleString()}</span> : '-')}
+        </Descriptions.Item>
+      )}
+      {templateCfg.showEpisodes && (
+        <Descriptions.Item label="集数">
+          {editing ? (
+            <InputNumber size="small" min={0} step={1}
+              value={undefined /* TODO: add episodes state */} style={{ width: 70 }} />
+          ) : (anime.episodes ? <span>{anime.episodes} 集</span> : '-')}
+        </Descriptions.Item>
+      )}
+      {/* 模板自定义字段 */}
+      {(templateCfg.customFields || []).map((cf) => {
+        // 角色卡"所属作品"：模糊搜索并多选绑定已有作品（'/' 分隔存储，可自由输入未收录作品）
+        if (cf.key === 'char_source' && isCharacterCard) {
+          const bound = String(customFields[cf.key] || '').split('/').filter(Boolean);
+          return (
+            <Descriptions.Item key={cf.key} label={cf.label}>
+              {editing ? (
+                <Select
+                  mode="tags"
+                  size="small"
+                  value={bound}
+                  onChange={(vals: string[]) => setCustomFields((prev) => ({ ...prev, [cf.key]: vals.join('/') }))}
+                  options={sourceWorkOptions}
+                  placeholder="搜索或输入作品名"
+                  maxTagCount="responsive"
+                  style={{ minWidth: 160, maxWidth: 260 }}
+                />
+              ) : (bound.length > 0 ? (
+                <Space wrap size={[2, 2]}>
+                  {bound.map((w) => <Tag key={w} style={{ fontSize: 10, margin: 0 }}>{w}</Tag>)}
+                </Space>
+              ) : '-')}
+            </Descriptions.Item>
+          );
+        }
+        return (
+          <Descriptions.Item key={cf.key} label={cf.label}>
+            {editing ? (
+              cf.type === 'number' ? (
+                <InputNumber size="small" step={1}
+                  value={customFields[cf.key] ? Number(customFields[cf.key]) : undefined}
+                  onChange={(v) => setCustomFields((prev) => ({ ...prev, [cf.key]: v ?? '' }))}
+                  style={{ width: 90 }} />
+              ) : (
+                <Input size="small"
+                  value={String(customFields[cf.key] || '')}
+                  onChange={(e) => setCustomFields((prev) => ({ ...prev, [cf.key]: e.target.value }))}
+                  style={{ width: 120, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
+              )
+            ) : (customFields[cf.key] ? <span style={{ color: 'var(--text-primary)' }}>{customFields[cf.key]}</span> : '-')}
+          </Descriptions.Item>
+        );
+      })}
+      {!isCharacterCard && (
+        <Descriptions.Item label="分类">
+          <Select
+            size="small"
+            value={category}
+            onChange={(v) => setCategory(v)}
+            disabled={!editing}
+            style={{ width: 80 }}
+            options={Object.entries(categoryLabels).map(([key, cfg]) => ({ value: key, label: cfg.label }))}
+          />
+        </Descriptions.Item>
+      )}
+      <Descriptions.Item label="评分模板">
+        <Select
+          size="small"
+          value={templateId || 'default'}
+          onChange={(v) => setTemplateId(v === 'default' ? undefined : v)}
+          disabled={!editing}
+          style={{ width: 120 }}
+          options={loadTemplates().map((t) => ({ value: t.id, label: t.name }))}
+        />
+      </Descriptions.Item>
+    </Descriptions>
+  );
+
   return (
     <Modal
       title={
@@ -1188,108 +1372,14 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
         },
       }}
     >
-      {/* ── 上部：基本信息（横向，按模板字段配置显示） ── */}
-      <Descriptions size="small" column={4} style={{ marginBottom: 12 }}>
-        {templateCfg.showReleaseDate && (
-          <Descriptions.Item label="上映">
-            {editing ? (
-              <Input size="small" value={editReleaseDate} onChange={(e) => setEditReleaseDate(e.target.value)}
-                placeholder="如 2021-04" style={{ width: 100, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
-            ) : (anime.releaseDate || '-')}
-          </Descriptions.Item>
-        )}
-        <Descriptions.Item label="观看时间">
-          {editing ? (
-            <Input size="small" value={editWatchDate} onChange={(e) => setEditWatchDate(e.target.value)}
-              placeholder="如 2024-03-15" style={{ width: 110, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
-          ) : (anime.watchDate || anime.createdAt || '-')}
-        </Descriptions.Item>
-        {templateCfg.showBangumiId && (
-          <Descriptions.Item label="Bangumi">
-            {editing ? (
-              <InputNumber size="small" min={0} max={15} step={0.1}
-                value={editBgmScore} onChange={(v) => setEditBgmScore(v ?? undefined)}
-                style={{ width: 70 }} />
-            ) : (anime.bangumiScore ? <span style={{ color: 'var(--brand-primary)', fontWeight: 600 }}>{anime.bangumiScore}</span> : '-')}
-          </Descriptions.Item>
-        )}
-        {templateCfg.showAnilistScore && (
-          <Descriptions.Item label="AniList">
-            {editing ? (
-              <InputNumber size="small" min={0} max={15} step={0.1}
-                value={editAnilistScore} onChange={(v) => setEditAnilistScore(v ?? undefined)}
-                style={{ width: 70 }} />
-            ) : (anime.aniListScore ? <span style={{ color: 'var(--color-info)', fontWeight: 600 }}>{anime.aniListScore}</span> : '-')}
-          </Descriptions.Item>
-        )}
-        {templateCfg.showStudio && (
-          <Descriptions.Item label="制作组">
-            {editing ? (
-              <Input size="small" value={editStudio} onChange={(e) => setEditStudio(e.target.value)}
-                placeholder="制作组" style={{ width: 120, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
-            ) : (anime.studio || '-')}
-          </Descriptions.Item>
-        )}
-        {templateCfg.showFrameCount && (
-          <Descriptions.Item label="张数">
-            {editing ? (
-              <InputNumber size="small" min={0} step={1}
-                value={editFrameCount} onChange={(v) => setEditFrameCount(v ?? undefined)}
-                placeholder="数量" style={{ width: 90 }} />
-            ) : (anime.frameCount ? <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{anime.frameCount.toLocaleString()}</span> : '-')}
-          </Descriptions.Item>
-        )}
-        {templateCfg.showEpisodes && (
-          <Descriptions.Item label="集数">
-            {editing ? (
-              <InputNumber size="small" min={0} step={1}
-                value={undefined /* TODO: add episodes state */} style={{ width: 70 }} />
-            ) : (anime.episodes ? <span>{anime.episodes} 集</span> : '-')}
-          </Descriptions.Item>
-        )}
-        {/* 模板自定义字段 */}
-        {(templateCfg.customFields || []).map((cf) => (
-          <Descriptions.Item key={cf.key} label={cf.label}>
-            {editing ? (
-              cf.type === 'number' ? (
-                <InputNumber size="small" step={1}
-                  value={customFields[cf.key] ? Number(customFields[cf.key]) : undefined}
-                  onChange={(v) => setCustomFields((prev) => ({ ...prev, [cf.key]: v ?? '' }))}
-                  style={{ width: 90 }} />
-              ) : (
-                <Input size="small"
-                  value={String(customFields[cf.key] || '')}
-                  onChange={(e) => setCustomFields((prev) => ({ ...prev, [cf.key]: e.target.value }))}
-                  style={{ width: 120, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
-              )
-            ) : (customFields[cf.key] ? <span style={{ color: 'var(--text-primary)' }}>{customFields[cf.key]}</span> : '-')}
-          </Descriptions.Item>
-        ))}
-        <Descriptions.Item label="分类">
-          <Select
-            size="small"
-            value={category}
-            onChange={(v) => setCategory(v)}
-            disabled={!editing}
-            style={{ width: 80 }}
-            options={Object.entries(categoryLabels).map(([key, cfg]) => ({ value: key, label: cfg.label }))}
-          />
-        </Descriptions.Item>
-        <Descriptions.Item label="评分模板">
-          <Select
-            size="small"
-            value={templateId || 'default'}
-            onChange={(v) => setTemplateId(v === 'default' ? undefined : v)}
-            disabled={!editing}
-            style={{ width: 120 }}
-            options={loadTemplates().map((t) => ({ value: t.id, label: t.name }))}
-          />
-        </Descriptions.Item>
-      </Descriptions>
+      {/* ── 上部：基本信息（横向；角色卡时挪至左栏海报左侧） ── */}
+      {!isCharacterCard && infoDescriptions}
 
       <div style={{ display: 'flex', gap: editing ? 4 : 24, minHeight: 600, position: 'relative' }}>
         {/* ── 左侧栏（宽度可拖动调整） ── */}
         <div style={{ flex: layoutCfg.leftRatio / (100 - layoutCfg.leftRatio), display: 'flex', flexDirection: 'column' }}>
+          {/* 角色卡：基本信息显示在海报左侧（固定最前，不参与拖拽排序） */}
+          {isCharacterCard && <div style={{ order: -1 }}>{infoDescriptions}</div>}
           {/* 雷达图（上方） */}
           <div
             data-section-key="radar"
@@ -1516,8 +1606,8 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
               />
             )}
 
-            {/* 深度分析按钮（编辑模式） */}
-            {editing && (
+            {/* 深度分析按钮（编辑模式；角色卡不需要 AI 深度分析） */}
+            {editing && templateId !== CHARACTER_TEMPLATE_ID && (
               <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #21262d' }}>
                 <Button
                   icon={<ThunderboltOutlined />}
@@ -1807,6 +1897,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                 options={[
                   { value: '3/4', label: '3:4' },
                   { value: '2/3', label: '2:3' },
+                  { value: '1/2', label: '1:2' },
                   { value: '16/9', label: '16:9' },
                   { value: '1/1', label: '1:1' },
                 ]}
@@ -1836,7 +1927,29 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                   ⠿
                 </div>
               )}
-              <Space wrap size={[2,2]}>{anime.characters.map((c,i)=><Tag key={i} color="purple" style={{fontSize:10}}>{c}</Tag>)}</Space>
+              <Space wrap size={[2,2]}>
+                {anime.characters.map((c, i) => {
+                  const card = characterCards.get(c);
+                  const tag = (
+                    <Tag
+                      key={i}
+                      color={card ? 'magenta' : 'purple'}
+                      onClick={editing ? undefined : () => handleCharacterClick(c)}
+                      style={{ fontSize: 10, cursor: editing ? 'default' : 'pointer', borderStyle: card ? 'solid' : 'dashed' }}
+                    >
+                      {c}
+                    </Tag>
+                  );
+                  // 已建卡：悬停显示该角色卡的加权总评
+                  if (!card) return tag;
+                  const ov = calcCardOverall(card);
+                  return (
+                    <Tooltip key={i} title={`角色卡总评 ${ov > 0 ? ov.toFixed(2) : '未评分'}`}>
+                      {tag}
+                    </Tooltip>
+                  );
+                })}
+              </Space>
             </div>
           )}
 
