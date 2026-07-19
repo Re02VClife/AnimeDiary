@@ -6,6 +6,7 @@ import { useState, useCallback } from 'react';
 import { Modal, Input, List, Button, Spin, message, Empty, Typography } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import type { AnimeEntry, BangumiSearchItem } from '../../src/types';
+import { DEFAULT_TEMPLATE_ID } from '../../src/types';
 
 const { Text, Paragraph } = Typography;
 
@@ -13,6 +14,8 @@ interface SearchAddModalProps {
   open: boolean;
   onClose: () => void;
   onAdd: (anime: AnimeEntry) => void;
+  /** 当前激活模板 ID：非默认模板下新增的条目归属该模板 */
+  activeTemplateId?: string;
 }
 
 /** 生成唯一 ID */
@@ -20,7 +23,7 @@ function uid(): string {
   return 'new-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
 }
 
-const SearchAddModal: React.FC<SearchAddModalProps> = ({ open, onClose, onAdd }) => {
+const SearchAddModal: React.FC<SearchAddModalProps> = ({ open, onClose, onAdd, activeTemplateId }) => {
   const [keyword, setKeyword] = useState('');
   const [results, setResults] = useState<BangumiSearchItem[]>([]);
   const [searching, setSearching] = useState(false);
@@ -66,6 +69,8 @@ const SearchAddModal: React.FC<SearchAddModalProps> = ({ open, onClose, onAdd })
       characters: [],
       episodes: item.eps || undefined,
       review: item.summary ? item.summary.slice(0, 200) : undefined,
+      // 非默认模板下新增的条目归属当前模板
+      templateId: activeTemplateId && activeTemplateId !== DEFAULT_TEMPLATE_ID ? activeTemplateId : undefined,
       createdAt: new Date().toISOString().split('T')[0],
       updatedAt: new Date().toISOString().split('T')[0],
     };
@@ -89,6 +94,8 @@ const SearchAddModal: React.FC<SearchAddModalProps> = ({ open, onClose, onAdd })
       scores: [],
       releaseDate: undefined,
       characters: [],
+      // 非默认模板下新增的条目归属当前模板
+      templateId: activeTemplateId && activeTemplateId !== DEFAULT_TEMPLATE_ID ? activeTemplateId : undefined,
       createdAt: new Date().toISOString().split('T')[0],
       updatedAt: new Date().toISOString().split('T')[0],
     };

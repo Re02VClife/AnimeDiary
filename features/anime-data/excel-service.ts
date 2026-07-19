@@ -357,6 +357,7 @@ function mapAnimeToRow(entry: AnimeEntry): Record<number, string | number> {
   row[EXCEL_COL.BGM_SCORE] = entry.bangumiScore || '';
   row[EXCEL_COL.TAG] = entry.tags.map((t) => t.name).join('/');
   row[EXCEL_COL.LINK] = entry.link || '';
+  row[EXCEL_COL.POSTER_URL] = entry.posterUrl || ''; // 海报持久化（角色卡继承番剧海报需在重载后保留）
 
   // 默认模板的评分写入对应列
   for (const s of entry.scores) {

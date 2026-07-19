@@ -4,8 +4,12 @@ import { ConfigProvider, theme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { ThemeProvider, useTheme } from './theme/ThemeContext';
 import { AnimeProvider } from '../context/AnimeContext';
+import { seedCharacterTemplate } from '../features/anime-data/template-service';
 import App from './App';
 import './index.css';
+
+// 内置模板种子：必须早于任何组件渲染（App 的 loadTemplates useMemo 只求值一次）
+seedCharacterTemplate();
 
 /**
  * 内部组件：从 ThemeContext 读取当前主题配置，传给 Ant Design ConfigProvider

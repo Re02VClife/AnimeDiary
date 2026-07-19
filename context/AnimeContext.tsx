@@ -430,10 +430,16 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (old && old.category !== updated.category) {
       saveCategory(savedEntry.id, savedEntry.category);
     }
-    dispatch({
-      type: 'UPDATE_ANIME_IN_LIST',
-      payload: { ...savedEntry, updatedAt: new Date().toISOString().split('T')[0] },
-    });
+    if (savedEntry.id !== updated.id) {
+      // 新条目：保存后 id 由临时 id 变为 excel-N，UPDATE 按 id 匹配不到 → 先移除旧条目再以新 id 加入
+      dispatch({ type: 'REMOVE_ANIME', payload: updated.id });
+      dispatch({ type: 'ADD_ANIME', payload: { ...savedEntry, updatedAt: new Date().toISOString().split('T')[0] } });
+    } else {
+      dispatch({
+        type: 'UPDATE_ANIME_IN_LIST',
+        payload: { ...savedEntry, updatedAt: new Date().toISOString().split('T')[0] },
+      });
+    }
     dispatch({ type: 'SET_DETAIL_EDIT_MODE', payload: false });
     dispatch({ type: 'CLOSE_MODAL', modal: 'detail' });
   }, [state.animeList]);
