@@ -72,6 +72,13 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   const [saving, setSaving] = useState(false);
   const [tagInput, setTagInput] = useState('');
   const [showTagPicker, setShowTagPicker] = useState(false);
+  /**
+   * 角色名列表（Excel 的 AA/AD/AG/AJ 四列）。
+   * 以前这里没有录入入口 —— 段落在 `characters.length > 0` 时才渲染，
+   * 而内容只能在 Excel 里手填或用知识图谱的连线功能加，导致「想建角色卡却没有角色名」。
+   */
+  const [characters, setCharacters] = useState<string[]>([]);
+  const [charInput, setCharInput] = useState('');
   const [editingDimReview, setEditingDimReview] = useState<string | null>(null);
   const [editing, setEditing] = useState(false); // 编辑模式开关
   const [sliderDim, setSliderDim] = useState<string | null>(null);
@@ -508,6 +515,8 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       setScores([...anime.scores]);
       setReview(anime.review || '');
       setTags([...anime.tags]);
+      setCharacters([...(anime.characters || [])]);
+      setCharInput('');
       setDimReviews(anime.dimensionReviews || []);
       setCategory(anime.category);
       setEditingDimReview(null);
@@ -735,6 +744,23 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
     setTags((prev) => prev.filter((_, i) => i !== idx));
   };
 
+  /** 添加角色名（最多 4 个 —— Excel 只有 AA/AD/AG/AJ 四列） */
+  const MAX_CHARACTER_SLOTS = 4;
+  const addCharacter = () => {
+    const name = charInput.trim();
+    if (!name) return;
+    if (characters.includes(name)) { setCharInput(''); return; }
+    if (characters.length >= MAX_CHARACTER_SLOTS) {
+      catgirlMessage.warning(`最多记录 ${MAX_CHARACTER_SLOTS} 个角色（Excel 只有 4 列角色名）`);
+      return;
+    }
+    setCharacters((prev) => [...prev, name]);
+    setCharInput('');
+  };
+  const removeCharacter = (idx: number) => {
+    setCharacters((prev) => prev.filter((_, i) => i !== idx));
+  };
+
   // 维度专项评价
   const getDimReview = (dimKey: string): string =>
     dimReviews.find((r) => r.dimensionKey === dimKey)?.content || '';
@@ -755,6 +781,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
         ...anime!,
         title: editTitle.trim() || anime!.title,
         scores, review, tags, dimensionReviews: dimReviews, category, posterUrl,
+        characters,
         templateId, customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
         link: link.trim() || undefined,
         releaseDate: editReleaseDate ? editReleaseDate.format('YYYY-MM') : undefined,
@@ -2039,8 +2066,11 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
             </div>
           )}
 
-          {/* 角色（按模板配置显示） */}
-          {templateCfg.showCharacters && anime.characters && anime.characters.length > 0 && (
+          {/* 角色（按模板配置显示）
+              查看模式：有角色名才显示（空段落没意义）
+              编辑模式：始终显示，否则「一个角色名都没有」时根本没有录入入口
+                        —— 以前只能去 Excel 手填或用知识图谱连线 */}
+          {templateCfg.showCharacters && (characters.length > 0 || editing) && (
             <div
               data-section-key="characters"
               style={{
@@ -2060,13 +2090,15 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                 </div>
               )}
               <Space wrap size={[2,2]}>
-                {anime.characters.map((c, i) => {
+                {characters.map((c, i) => {
                   const card = characterCards.get(c);
                   const tag = (
                     <Tag
                       key={i}
                       color={card ? 'magenta' : 'purple'}
                       onClick={editing ? undefined : () => handleCharacterClick(c)}
+                      closable={editing}
+                      onClose={editing ? ((e) => { e.preventDefault(); removeCharacter(i); }) : undefined}
                       style={{ fontSize: 10, cursor: editing ? 'default' : 'pointer', borderStyle: card ? 'solid' : 'dashed' }}
                     >
                       {c}
@@ -2082,6 +2114,24 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                   );
                 })}
               </Space>
+              {editing && characters.length < MAX_CHARACTER_SLOTS && (
+                <Space.Compact size="small" style={{ marginTop: 4 }}>
+                  <Input
+                    size="small"
+                    placeholder="+角色名"
+                    value={charInput}
+                    onChange={(e) => setCharInput(e.target.value)}
+                    onPressEnter={addCharacter}
+                    style={{ width: 90 }}
+                  />
+                  <Button size="small" icon={<PlusOutlined />} onClick={addCharacter} />
+                </Space.Compact>
+              )}
+              {editing && characters.length >= MAX_CHARACTER_SLOTS && (
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                  已满 {MAX_CHARACTER_SLOTS} 个（Excel 只有 4 列角色名）
+                </div>
+              )}
             </div>
           )}
 

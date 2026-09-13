@@ -11,7 +11,56 @@ const http = require('http');
 const path = require('path');
 const fs = require('fs');
 const { createFetch } = require('./net-fetch');
-const { createApiHandler } = require('../server/api-routes.cjs');
+
+/** 内置（安装包里）的路由实现 */
+const BUILTIN_ROUTES = path.join(__dirname, '..', 'server', 'api-routes.cjs');
+
+/**
+ * 选择用哪一份服务端路由实现。
+ *
+ * 打包后的 app.asar 里的 server/api-routes.cjs 是**安装时**定格的，
+ * 而热更新只换前端 —— 于是新加的后端路由在装好的应用里 404（实测踩过：
+ * 前端拿到的是 index.html，报「响应不是合法 JSON」）。
+ * 这里优先加载热更新目录里随包携带的那一份。
+ *
+ * 关键坑：热更新的路由文件在 userData 下，而它 `require('xlsx')` / `require('adm-zip')`
+ * 是 external 的 —— 从 userData 往上找不到 node_modules（依赖在 app.asar 里），
+ * 直接 require 会 MODULE_NOT_FOUND 并静默回退到内置版本。
+ * 所以这里不直接 require，而是用 Module.createRequire 造一个「先按热更新目录解析、
+ * 失败再按内置位置解析」的混合 require，把源码喂给 new Function。
+ *
+ * 保护：文件缺失 / 加载抛错 / 没导出 createApiHandler → 一律回退内置版本，
+ * 最坏结果只是新功能用不了，应用仍然打得开。
+ */
+function resolveRoutesFactory(routesPath) {
+  if (routesPath && fs.existsSync(routesPath)) {
+    try {
+      const Module = require('module');
+      const source = fs.readFileSync(routesPath, 'utf-8');
+      // 优先热更新目录自带的依赖（更新包将来可以自己带 node_modules），
+      // 其次回退到 app.asar 里的依赖
+      const fromUpdate = Module.createRequire(routesPath);
+      const fromBuiltin = Module.createRequire(BUILTIN_ROUTES);
+      const hybridRequire = (id) => {
+        try {
+          return fromUpdate(id);
+        } catch (e) {
+          if (e && e.code === 'MODULE_NOT_FOUND') return fromBuiltin(id);
+          throw e;
+        }
+      };
+      const mod = { exports: {} };
+      // eslint-disable-next-line no-new-func
+      const factory = new Function('require', 'module', 'exports', '__filename', '__dirname', source);
+      factory(hybridRequire, mod, mod.exports, routesPath, path.dirname(routesPath));
+      if (typeof mod.exports.createApiHandler === 'function') return mod.exports.createApiHandler;
+      console.warn('[api-server] 热更新的路由实现没有导出 createApiHandler，回退内置版本');
+    } catch (e) {
+      console.error('[api-server] 加载热更新的路由实现失败，回退内置版本：', e && e.message);
+    }
+  }
+  return require(BUILTIN_ROUTES).createApiHandler;
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -75,14 +124,19 @@ const FIXED_PORT = 51730;
 
 /**
  * 启动本地服务
- * @param {{ dataDir: string, distDir: string, port?: number }} options
+ * @param {{ dataDir: string, distDir: string, port?: number, routesPath?: string }} options
+ *   routesPath：热更新目录里的服务端路由实现（缺省/加载失败则用内置版本）
  * @returns {Promise<{ server: import('http').Server, port: number }>}
  */
-function startApiServer({ dataDir, distDir, port }) {
+function startApiServer({ dataDir, distDir, port, routesPath }) {
   if (!fs.existsSync(distDir)) {
     throw new Error(`前端产物目录不存在：${distDir}（请先执行 vite build）`);
   }
   const listenPort = port || FIXED_PORT;
+  const createApiHandler = resolveRoutesFactory(routesPath);
+  if (routesPath) {
+    console.log(`[api-server] 路由实现：${fs.existsSync(routesPath) ? routesPath : '内置（更新目录里没有）'}`);
+  }
   const apiHandler = createApiHandler({
     DATA_DIR: dataDir,
     // 服务端网络出口。详见 electron/net-fetch.js：国内域名直连、

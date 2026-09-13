@@ -12,6 +12,7 @@ import AnimeGrid from './components/AnimeGrid';
 import AnimeDetailModal from './components/AnimeDetailModal';
 import SearchAddModal from '../features/search-add/SearchAddModal';
 import MediaCompleteModal from '../features/media-complete/MediaCompleteModal';
+import CharacterCompleteModal from '../features/character-complete/CharacterCompleteModal';
 import TemplateManager from './components/TemplateManager';
 import { loadTemplates } from '../features/anime-data/template-service';
 import { getVisibleCategories } from './types';
@@ -29,6 +30,8 @@ const App: React.FC = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   /** 「数据补全」面板开关（本地模态，不入全局 reducer） */
   const [mediaCompleteOpen, setMediaCompleteOpen] = useState(false);
+  /** 「角色补全」面板开关（搜索角色资料并生成角色卡） */
+  const [characterCompleteOpen, setCharacterCompleteOpen] = useState(false);
 
   // ── FLIP 海报过渡状态 ──
   const [flipState, setFlipState] = useState<{
@@ -214,6 +217,7 @@ const App: React.FC = () => {
             onSearchModeChange={(m) => dispatch({ type: 'SET_SEARCH_MODE', payload: m })}
             onAddAnime={() => dispatch({ type: 'OPEN_MODAL', modal: 'search' })}
             onCompleteData={() => setMediaCompleteOpen(true)}
+            onCompleteCharacters={() => setCharacterCompleteOpen(true)}
             templates={templates}
             activeTemplateId={activeTemplateId}
             onTemplateChange={(id: string) => dispatch({ type: 'SET_ACTIVE_TEMPLATE', payload: id })}
@@ -340,6 +344,16 @@ const App: React.FC = () => {
         // 用静默刷新而不是 fetchData：后者会把全局 loading 置 true，
         // 导致 App 提前 return 整屏 spinner、把本面板连 state 一起卸载掉，
         // 用户就再也看不到「已写入 N 条」的结果了。
+        onApplied={refreshAnimeList}
+      />
+
+      <CharacterCompleteModal
+        open={characterCompleteOpen}
+        onClose={() => setCharacterCompleteOpen(false)}
+        animeList={state.animeList}
+        activeTemplateId={activeTemplateId}
+        templates={templates}
+        // 同 MediaCompleteModal：必须用静默刷新，否则全局 loading 会把本面板卸载掉
         onApplied={refreshAnimeList}
       />
 
