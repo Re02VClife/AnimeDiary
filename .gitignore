@@ -1,6 +1,11 @@
 # ── 依赖 ──
 node_modules/
 dist/
+release/
+backups/
+.review/
+server/api-routes.cjs
+browser-migration.json
 
 # ── 个人数据（绝不上传）──
 *.xlsx

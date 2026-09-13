@@ -92,16 +92,24 @@ const TemplateManager: React.FC<TemplateManagerProps> = ({ open, onClose }) => {
   // ── 模板 CRUD ──
   const handleCreate = () => {
     const base = edited || createDefaultTemplate();
+    // 取一个不与现有模板重名的序号（原先用 templates.length + 1，删掉一个再新建会重名）
+    const usedNums = templates
+      .map((t) => Number(/^新模板 (\d+)$/.exec(t.name)?.[1] ?? 0))
+      .filter((n) => n > 0);
+    const nextNum = usedNums.length > 0 ? Math.max(...usedNums) + 1 : templates.length + 1;
     const newTemplate: ScoreTemplate = {
       ...JSON.parse(JSON.stringify(base)),
       id: `template-${Date.now()}`,
-      name: `新模板 ${templates.length + 1}`,
+      name: `新模板 ${nextNum}`,
       isDefault: false,
       createdAt: new Date().toISOString().split('T')[0],
       updatedAt: new Date().toISOString().split('T')[0],
     };
-    setTemplates([...templates, newTemplate]);
+    const next = [...templates, newTemplate];
+    setTemplates(next);
+    saveTemplates(next); // 必须落盘：只改 state 的话关闭面板即丢失
     setActiveId(newTemplate.id);
+    catgirlMessage.success(`已创建「${newTemplate.name}」`);
   };
 
   const handleDelete = () => {
@@ -109,6 +117,7 @@ const TemplateManager: React.FC<TemplateManagerProps> = ({ open, onClose }) => {
     if (edited?.isDefault) { catgirlMessage.warning('请先将其他模板设为默认后再删除'); return; }
     const remaining = templates.filter((t) => t.id !== activeId);
     setTemplates(remaining);
+    saveTemplates(remaining); // 必须落盘：原先不落盘却提示"已删除"，关闭面板后模板会复活
     setActiveId(remaining[0].id);
     catgirlMessage.success('模板已删除');
   };
@@ -574,7 +583,9 @@ const TemplateManager: React.FC<TemplateManagerProps> = ({ open, onClose }) => {
         {(fc.customFields || []).map((cf) => (
           <div key={cf.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
             <span style={{ color: 'var(--text-primary)', fontSize: 13, flex: 1 }}>{cf.label}</span>
-            <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{cf.type === 'number' ? '数字' : '文本'}</span>
+            <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+              {cf.type === 'number' ? '数字' : cf.type === 'textarea' ? '长文本' : '文本'}
+            </span>
             <Popconfirm title="删除此字段？" onConfirm={() => deleteCustomField(cf.key)} okText="删除" cancelText="取消">
               <Button size="small" danger icon={<DeleteOutlined />} />
             </Popconfirm>

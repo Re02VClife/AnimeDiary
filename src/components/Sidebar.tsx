@@ -6,9 +6,12 @@ import { getTemplate } from '../../features/anime-data/template-service';
 import { rankByDimension } from '../../features/ranking/ranking-service';
 import WatchTimeline from '../../features/watch-calendar/WatchCalendar';
 import { useAnimeContext } from '../../context/AnimeContext';
+import { formatScore } from '../../core/math';
 import { catgirlMessage } from '../theme';
 import { useTheme } from '../theme/ThemeContext';
 import AppIcon from '../theme/AppIcon';
+import UpdatePanel from './UpdatePanel';
+import PosterFixModal from './PosterFixModal';
 import type { ThemeColors } from '../theme/types';
 
 interface SidebarProps {
@@ -29,9 +32,10 @@ function saveTagPresets(presets: string[]): void {
   localStorage.setItem(TAG_PRESETS_KEY, JSON.stringify(presets));
 }
 
-/** 伪维度：BGM / 番名 */
+/** 伪维度：BGM / 番名 / 观看时间 */
 const BGM_DIM: Dimension = { key: 'bgm', label: 'BGM评分', description: 'Bangumi 评分', weight: 0 };
 const NAME_DIM: Dimension = { key: 'namesort', label: '番名', description: '按番剧名称排序', weight: 0 };
+const WATCH_DIM: Dimension = { key: 'watchDate', label: '观看时间', description: '按观看时间排序：最近看的在前，没有记录的排最后（初始默认）', weight: 0 };
 
 const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
   const { state, dispatch, handleDimensionRank, handleAnimeClick, handleRenameTag,
@@ -39,6 +43,9 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
     handleImportUserData, handleFixSearchAlias, handleOpenExcel, handleBatchSavePosters,
     handleImportExcel, handleExportExcel } = useAnimeContext();
   const { animeList, activeDim, imgHeight, radarMode, radarMin, activeTag, batchMode, selectedBatchTags, activeTemplateId } = state;
+
+  // 批量补全海报面板（搜索后由你人工确认，不自动写入）
+  const [posterFixOpen, setPosterFixOpen] = useState(false);
 
   // 当前模板的维度
   const activeDims = useMemo(() => {
@@ -168,6 +175,17 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
     if (activeDim === 'namesort') {
       return [...templateFiltered].sort((a, b) => a.title.localeCompare(b.title, 'zh'));
     }
+    if (activeDim === 'watchDate') {
+      // 与网格一致：最近看的在前，没有时间记录的排最后
+      const key = (a: AnimeEntry) => a.watchDate || a.createdAt || '';
+      return [...templateFiltered].sort((a, b) => {
+        const ka = key(a); const kb = key(b);
+        if (!ka && !kb) return 0;
+        if (!ka) return 1;
+        if (!kb) return -1;
+        return kb.localeCompare(ka);
+      });
+    }
     return rankByDimension(templateFiltered, activeDim);
   }, [templateFiltered, activeDim, calcOverall]);
 
@@ -215,7 +233,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
         {showRanking && (
           <>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
-              {[...activeDims, ...(activeTemplateId === 'default' ? [BGM_DIM, NAME_DIM] : [])].map((dim: Dimension) => (
+              {[...activeDims, WATCH_DIM, ...(activeTemplateId === 'default' ? [BGM_DIM, NAME_DIM] : [])].map((dim: Dimension) => (
                 <div
                   key={dim.key}
                   className={`dimension-chip${activeDim === dim.key ? ' active' : ''}`}
@@ -240,10 +258,9 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
                   setSortDir(v as 'asc' | 'desc');
                   handleDimensionRank(activeDim, v as 'asc' | 'desc');
                 }}
-                options={[
-                  { value: 'desc', label: '↓高到低' },
-                  { value: 'asc', label: '↑低到高' },
-                ]}
+                options={activeDim === 'watchDate'
+                  ? [{ value: 'desc', label: '↓新到旧' }, { value: 'asc', label: '↑旧到新' }]
+                  : [{ value: 'desc', label: '↓高到低' }, { value: 'asc', label: '↑低到高' }]}
               />
             </div>
 
@@ -282,11 +299,13 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
                     </div>
                     <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--brand-primary)' }}>
                       {activeDim === 'namesort' ? '' :
-                       activeDim === 'overall'
-                        ? calcOverall(anime).toFixed(2)
-                        : activeDim === 'bgm'
-                          ? (anime.bangumiScore?.toFixed(1) || '-')
-                          : (score?.score?.toFixed(activeDim === 'vibe' ? 2 : 1) || '-')}
+                       activeDim === 'watchDate'
+                        ? <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-secondary)' }}>{anime.watchDate || anime.createdAt || '无记录'}</span>
+                        : activeDim === 'overall'
+                         ? formatScore(calcOverall(anime))
+                         : activeDim === 'bgm'
+                           ? formatScore(anime.bangumiScore)
+                           : formatScore(score?.score)}
                     </span>
                   </div>
                 );
@@ -663,6 +682,17 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
         </div>
       </Modal>
 
+      {/* ── 桌面应用（仅 Electron 下渲染） ── */}
+      <UpdatePanel />
+
+      {/* 批量补全海报：搜索后人工确认，采用结果写入本地覆盖 */}
+      <PosterFixModal
+        open={posterFixOpen}
+        onClose={() => setPosterFixOpen(false)}
+        animeList={animeList}
+        onApplied={(animeId, posterUrl) => dispatch({ type: 'SET_ANIME_POSTER', animeId, posterUrl })}
+      />
+
       {/* ── 设置 ── */}
       <div className="sidebar-section">
         <div className="section-title"><AppIcon name="settings" size={14} /> 设置</div>
@@ -678,6 +708,9 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
           </div>
           <div className="settings-item" onClick={handleBatchSavePosters}>
             <span>🖼 持久化所有海报</span>
+          </div>
+          <div className="settings-item" onClick={() => setPosterFixOpen(true)}>
+            <span>🔍 批量补全海报（人工确认）</span>
           </div>
           <div className="settings-item" onClick={handleExportUserData}>
             <span>💾 导出用户数据</span>

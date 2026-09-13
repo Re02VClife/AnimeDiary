@@ -32,6 +32,12 @@ export interface AnimeEntry {
   id: string;
   /** Excel 行号（0-based，用于写回定位） */
   excelRowIndex?: number;
+  /**
+   * 从 Excel 加载时的原始标题快照。
+   * 写回前用它跟 Excel 里的实际标题比对：一旦你在 Excel 中插行/排序/改标题，
+   * 保存会被明确拒绝，而不是静默写到相邻的番剧上。
+   */
+  excelTitleSnapshot?: string;
   title: string;
   titleJa?: string;
   /** 检索别名（Excel 检索名列） */
@@ -48,6 +54,8 @@ export interface AnimeEntry {
   bangumiId?: number;
   characters?: string[];
   episodes?: number;
+  /** 当前看到第几集（在看进度） */
+  currentEpisode?: number;
   /** 制作组/动画公司 */
   studio?: string;
   /** 总张数（中割统计） */
@@ -157,6 +165,19 @@ export const CATEGORY_CONFIG: Record<AnimeCategory, { label: string; color: stri
   dropped: { label: '抛弃', color: '#fb7299' },
 };
 
+/**
+ * 默认分类标签。
+ * 新模板直接用它；早期版本创建的模板 categoryLabels 是空对象，
+ * 而"全部留空"在设计中表示"不显示分类 tab"，会导致顶栏没有分类栏 —— 见 migrateCategoryLabels()。
+ */
+export const DEFAULT_CATEGORY_LABELS: CategoryOverrides = {
+  watching: CATEGORY_CONFIG.watching.label,
+  wantToWatch: CATEGORY_CONFIG.wantToWatch.label,
+  onHold: CATEGORY_CONFIG.onHold.label,
+  watched: CATEGORY_CONFIG.watched.label,
+  dropped: CATEGORY_CONFIG.dropped.label,
+};
+
 // ── 评分模板系统 ──
 
 /** 默认评分模板 ID */
@@ -169,7 +190,11 @@ export type TemplateGenre = 'anime' | 'game' | 'movie' | 'book' | 'custom';
 export interface TemplateCustomField {
   key: string;
   label: string;
-  type: 'text' | 'number';
+  /**
+   * textarea 用于「详细人设」这类长文本：抓来的角色简介有 500~1500 字，
+   * 用单行 Input 编辑完全没法看，展示时也需要换行而不是挤成一行。
+   */
+  type: 'text' | 'number' | 'textarea';
 }
 
 /** 模板字段配置 — 控制详情面板显示哪些字段 */
@@ -219,6 +244,16 @@ export interface DetailLayoutConfig {
   posterWidth: number;
   /** 海报宽高比，默认 '3/4' */
   posterAspectRatio: PosterAspectRatio;
+  /**
+   * 海报默认焦点（object-position 的两个百分数，如 '50% 0%'），默认 '50% 50%'。
+   *
+   * 为什么需要它：角色立绘是**全身竖图**（实测 504×1440，宽高比 0.35），
+   * 而番剧海报是 0.7 左右。用同一个容器 + object-fit:cover + 居中，
+   * 立绘顶部会被裁掉一大截 —— 脸正好在最上方，于是卡片上只剩身子。
+   * 角色模板因此锚定顶部（'50% 0%'），保证「上半身和脸」露出来。
+   * 用户为单个条目拖拽过的位置仍然优先（存在 poster positions 里）。
+   */
+  posterObjectPosition?: string;
   /** 左栏宽度百分比（30-80），默认 67 */
   leftRatio: number;
   /** 左栏区块排序（key 数组，越前越靠上） */
@@ -231,6 +266,7 @@ export interface DetailLayoutConfig {
 export const DEFAULT_DETAIL_LAYOUT: DetailLayoutConfig = {
   posterWidth: 100,
   posterAspectRatio: '3/4',
+  posterObjectPosition: '50% 50%',
   leftRatio: 67,
   leftOrder: ['radar', 'scores', 'ai', 'review'],
   rightOrder: ['poster', 'characters', 'tags'],
@@ -262,7 +298,7 @@ export function createDefaultTemplate(): ScoreTemplate {
     dimensions: DEFAULT_DIMENSIONS.map((d) => ({ ...d })),
     isDefault: true,
     fieldConfig: { ...DEFAULT_FIELD_CONFIG, customFields: [] },
-    categoryLabels: {},
+    categoryLabels: { ...DEFAULT_CATEGORY_LABELS }, // 默认显示 在看/想看/搁置/看过/抛弃
     layoutConfig: { ...DEFAULT_DETAIL_LAYOUT },
     createdAt: new Date().toISOString().split('T')[0],
     updatedAt: new Date().toISOString().split('T')[0],
@@ -303,10 +339,15 @@ export function createCharacterTemplate(): ScoreTemplate {
         { key: 'char_source', label: '所属作品', type: 'text' },
         { key: 'char_cv', label: '声优(CV)', type: 'text' },
         { key: 'char_birthday', label: '生日/属性', type: 'text' },
+        // 抓取来的角色简介（AniList 英文长文优先，回退 Bangumi 日文/中文），
+        // 长度常在 500~1500 字，所以用 textarea
+        { key: 'char_profile', label: '详细人设', type: 'textarea' },
       ],
     },
     categoryLabels: {}, // 全部留空 = 不显示分类 tab、不按分类筛选
-    layoutConfig: { ...DEFAULT_DETAIL_LAYOUT, posterAspectRatio: '1/2' }, // 角色立绘偏窄高竖图
+    // 角色立绘大多是全身竖图（实测宽高比 0.35~0.53，番剧海报是 0.7），
+    // 所以用更窄高的 1/2 容器，并把默认焦点锚在顶部，避免裁掉脸
+    layoutConfig: { ...DEFAULT_DETAIL_LAYOUT, posterAspectRatio: '1/2', posterObjectPosition: '50% 0%' },
     createdAt: today,
     updatedAt: today,
   };

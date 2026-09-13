@@ -184,24 +184,53 @@ export async function loadPosterOverrides(): Promise<Record<string, string>> {
   } catch { return {}; }
 }
 
-export async function savePosterOverride(animeId: string, posterUrl: string): Promise<void> {
-  try {
+/**
+ * 海报覆盖的写队列。
+ * 覆盖表是「整体存成一个键」，写入必须"读整个 map → 改 → 整体写回"，
+ * 并发调用会互相覆盖（实测批量把 13 张 base64 海报转本地文件时只存下 2 张）。
+ * 这里把写操作串行化，保证每次都基于上一次的结果。
+ */
+let posterWriteQueue: Promise<void> = Promise.resolve();
+
+function enqueuePosterWrite(task: () => Promise<void>): Promise<void> {
+  const run = posterWriteQueue.then(task, task);
+  posterWriteQueue = run.catch(() => { /* 队列不因单次失败中断 */ });
+  return run;
+}
+
+/** 整体写入覆盖表（调用方自行合并好），用于批量归一化等一次写多条的场合 */
+export async function savePosterOverrides(overrides: Record<string, string>): Promise<void> {
+  return enqueuePosterWrite(async () => {
     const db = await openPosterDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(POSTER_STORE, 'readwrite');
+      tx.objectStore(POSTER_STORE).put(overrides, 'overrides');
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }).catch((e) => {
+    console.error('[storage] 保存海报覆盖失败:', e);
+  });
+}
+
+export async function savePosterOverride(animeId: string, posterUrl: string): Promise<void> {
+  return enqueuePosterWrite(async () => {
     const overrides = await loadPosterOverrides();
     if (posterUrl) {
       overrides[animeId] = posterUrl;
     } else {
       delete overrides[animeId];
     }
-    return new Promise((resolve, reject) => {
+    const db = await openPosterDB();
+    await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(POSTER_STORE, 'readwrite');
       tx.objectStore(POSTER_STORE).put(overrides, 'overrides');
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
-  } catch (e) {
+  }).catch((e) => {
     console.error('[storage] 保存海报覆盖失败:', e);
-  }
+  });
 }
 
 // ── 海报焦点位置 ──
@@ -245,12 +274,23 @@ const ALL_LOCAL_KEYS = [
   KEYS.DIMENSIONS,
   KEYS.EPISODE_REVIEWS,
   KEYS.DIM_REVIEWS,
+  KEYS.OVERRIDES,
   'anime_diary_tag_presets',
   'anime_diary_templates',  // 评分模板
   POSTER_POS_KEY,
   POSTER_BLACKLIST_KEY,
   IMG_HEIGHT_KEY,
+  // 以下原先漏了，导致"备份"不完整：换机后主题、当前模板、雷达图设置、AI 配置会丢
+  'anime_diary_theme',
+  'anime_diary_active_template',
+  'anime_diary_radar_mode',
+  'anime_diary_radar_min',
+  'anime_diary_ai_config',
+  'anime_diary_character_seeded',
 ];
+
+/** 导入前的本地数据快照（仅保留最近一次，供用户手工回滚） */
+const PRE_IMPORT_SNAPSHOT_KEY = 'anime_diary_pre_import_snapshot';
 
 interface UserBackup {
   version: '1.0';
@@ -334,12 +374,25 @@ export async function importUserData(zipFile: File): Promise<void> {
   const backup = result.data as UserBackup;
   if (!backup.version || !backup.localStorage) throw new Error('格式不符');
 
-  // 恢复 localStorage
+  // 覆盖前先留一份当前本地数据的快照，导错了还能手工回滚
+  try {
+    const snapshot: Record<string, string | null> = {};
+    for (const k of ALL_LOCAL_KEYS) snapshot[k] = localStorage.getItem(k);
+    localStorage.setItem(PRE_IMPORT_SNAPSHOT_KEY, JSON.stringify(snapshot));
+  } catch { /* skip */ }
+
+  // 只恢复已知的键：原先会把备份文件里的任意 key 都直接写进 localStorage
+  const allowed = new Set<string>(ALL_LOCAL_KEYS);
+  let skipped = 0;
   for (const [key, value] of Object.entries(backup.localStorage)) {
     if (value === null) continue;
+    if (!allowed.has(key)) { skipped++; continue; }
     try {
       localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
     } catch { /* skip */ }
+  }
+  if (skipped > 0) {
+    console.warn(`导入时跳过了 ${skipped} 个不在白名单内的本地数据键`);
   }
 
   // 恢复 IndexedDB 海报覆盖

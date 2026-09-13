@@ -1,14 +1,18 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Modal, InputNumber, Input, Tag, Descriptions, Button, Space, Tooltip, Select, Popover, Image, Typography, Checkbox, Slider, Segmented } from 'antd';
+import { Modal, InputNumber, Input, Tag, Descriptions, Button, Space, Tooltip, Select, Popover, Image, Typography, Checkbox, Slider, Segmented, DatePicker } from 'antd';
 import { SaveOutlined, PlusOutlined, EditOutlined, LeftOutlined, RightOutlined, PictureOutlined, ImportOutlined, ThunderboltOutlined, TagOutlined, SearchOutlined } from '@ant-design/icons';
+import dayjs from 'dayjs';
+import type { Dayjs } from 'dayjs';
 import type { AnimeEntry, AnimeTag, DimensionScore, DimensionReview, AnimeCategory, BangumiSearchItem, Dimension, DetailLayoutConfig } from '../types';
 import { DEFAULT_DIMENSIONS, DIMENSION_LABEL_MAP, CATEGORY_CONFIG, DEFAULT_FIELD_CONFIG, DEFAULT_DETAIL_LAYOUT, CHARACTER_TEMPLATE_ID } from '../types';
-import { getTemplate, loadTemplates, updateTemplate } from '../../features/anime-data/template-service';
+import { getTemplate, loadTemplates, updateTemplate, parsePosterFocus } from '../../features/anime-data/template-service';
 import { catgirlMessage } from '../theme';
 import type { TemplateFieldConfig } from '../types';
 import { fetchPoster, savePosterUrlToExcel } from '../../features/anime-data/excel-service';
 import { loadImages, saveImage as saveImageToLocal } from '../services/imageService';
 import { addToPosterBlacklist, loadPosterBlacklist, savePosterOverride, loadPosterPositions, savePosterPosition } from '../../features/anime-data/storage-service';
+import { formatReleaseDateCn, parseReleaseDate } from '../../core/date';
+import { round2, formatScore } from '../../core/math';
 import { singleAnimeAnalysis, autoTag } from '../../features/ai-analysis';
 import type { SingleAnimeAnalysisResult, AutoTagResult } from '../../features/ai-analysis';
 import { hasAIConfig } from '../../features/ai-analysis';
@@ -18,6 +22,21 @@ import ScoreSlider from '../../features/anime-detail/ScoreSlider';
 
 const { TextArea } = Input;
 const { Paragraph } = Typography;
+
+/**
+ * 上映年月的下拉选项。
+ * 用两个下拉取代 antd 的月份 DatePicker：DatePicker 的表头可以一路下钻到
+ * 「年代面板」（1990-1999 … 2100-2109），既没用又容易被当成"不合理的年份"。
+ * 范围 1949 ~ 明年，倒序排列（新番在最上面），支持输入年份搜索。
+ */
+const RELEASE_YEAR_OPTIONS = (() => {
+  const newest = dayjs().year() + 1;
+  const opts: { value: number; label: string }[] = [];
+  for (let y = newest; y >= 1949; y--) opts.push({ value: y, label: `${y}年` });
+  return opts;
+})();
+/** 月份下拉（中文 1月~12月） */
+const MONTH_OPTIONS = Array.from({ length: 12 }, (_, i) => ({ value: i, label: `${i + 1}月` }));
 
 interface AnimeDetailModalProps {
   anime: AnimeEntry | null;
@@ -71,14 +90,16 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
 
   // 编辑中的基本信息
   const [editTitle, setEditTitle] = useState('');
-  const [editReleaseDate, setEditReleaseDate] = useState('');
-  const [editWatchDate, setEditWatchDate] = useState('');
+  const [editReleaseDate, setEditReleaseDate] = useState<Dayjs | null>(null);
+  const [editWatchDate, setEditWatchDate] = useState<Dayjs | null>(null);
   const [editBgmScore, setEditBgmScore] = useState<number | undefined>();
   const [editAnilistScore, setEditAnilistScore] = useState<number | undefined>();
   const [editStudio, setEditStudio] = useState('');
   const [editFrameCount, setEditFrameCount] = useState<number | undefined>();
   const [editSearchAlias, setEditSearchAlias] = useState('');
   const [editBangumiId, setEditBangumiId] = useState<number | undefined>();
+  const [editEpisodes, setEditEpisodes] = useState<number | undefined>();
+  const [editCurrentEpisode, setEditCurrentEpisode] = useState<number | undefined>();
   const [templateId, setTemplateId] = useState<string | undefined>();
   const [customFields, setCustomFields] = useState<Record<string, string | number>>({});
   const [link, setLink] = useState('');
@@ -395,7 +416,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       }
     }
     if (importChecks.date && item.air_date && !editReleaseDate) {
-      setEditReleaseDate(item.air_date);
+      setEditReleaseDate(parseMonthStr(item.air_date));
     }
     if (importChecks.summary && item.summary && !review.trim()) {
       setReview(item.summary.slice(0, 300));
@@ -457,6 +478,31 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
     }
   };
 
+  /** 将已有日期字符串解析为 dayjs，兼容多种旧格式 */
+  const parseDateStr = (s: string | undefined): Dayjs | null => {
+    if (!s) return null;
+    // 尝试 YYYY-MM-DD, YYYY-MM, YYYY/MM/DD, YYYY/MM 等格式
+    const d = dayjs(s, ['YYYY-MM-DD', 'YYYY-MM', 'YYYY/MM/DD', 'YYYY/MM', 'YYYY.M.D', 'YYYY.M', 'YYYY年M月D日', 'YYYY年M月'], true);
+    return d.isValid() ? d : null;
+  };
+  const parseMonthStr = (s: string | undefined): Dayjs | null => {
+    if (!s) return null;
+    // 先过一遍 parseReleaseDate：兼容 "23/10" / "26.7" / "46138"（Excel 序列号）/ "2021年4月"
+    // 这些 Excel 里的历史写法，否则严格模式下解析失败会让选择器变空
+    const normalized = parseReleaseDate(s);
+    const d = dayjs(normalized, ['YYYY-MM', 'YYYY/MM', 'YYYY.M', 'YYYY年M月', 'YYYY-MM-DD', 'YYYY/MM/DD', 'YYYY'], true);
+    return d.isValid() ? d : null;
+  };
+
+  /**
+   * 观看时间不能选到未来（首刷时间同理）。
+   * 上映年月改用「年 + 月」两个下拉（见 RELEASE_YEAR_OPTIONS），
+   * 因为 antd 的月份面板可以继续下钻到「年代面板」（1990-1999 … 2100-2109），
+   * 那个面板既没意义又吓人。
+   */
+  const disabledFutureDay = (d: Dayjs) =>
+    d.isBefore(dayjs('1949-01-01'), 'day') || d.isAfter(dayjs(), 'day');
+
   useEffect(() => {
     if (anime) {
       setScores([...anime.scores]);
@@ -471,14 +517,16 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       setAiAnalysisError(null);
       setAutoTagResult(null);
       setEditTitle(anime.title);
-      setEditReleaseDate(anime.releaseDate || '');
-      setEditWatchDate(anime.watchDate || anime.createdAt || '');
+      setEditReleaseDate(parseMonthStr(anime.releaseDate));
+      setEditWatchDate(parseDateStr(anime.watchDate || anime.createdAt));
       setEditBgmScore(anime.bangumiScore);
       setEditAnilistScore(anime.aniListScore);
       setEditStudio(anime.studio || '');
       setEditFrameCount(anime.frameCount);
       setEditSearchAlias(anime.searchAlias || '');
       setEditBangumiId(anime.bangumiId);
+      setEditEpisodes(anime.episodes);
+      setEditCurrentEpisode(anime.currentEpisode);
       setTemplateId(anime.templateId);
       setCustomFields(anime.customFields || {});
       setLink(anime.link || '');
@@ -505,14 +553,20 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
         setPosY(positions[anime.id].y);
         curPos.current = { x: positions[anime.id].x, y: positions[anime.id].y };
       } else {
-        setPosX(50);
-        setPosY(50);
-        curPos.current = { x: 50, y: 50 };
+        // 没有为该条目单独拖过位置 → 用所属模板的默认焦点。
+        // 角色立绘是全身竖图（实测 504×1440，宽高比 0.35），而容器是 0.5，
+        // object-fit:cover + 居中会把顶部约 15% 裁掉 —— 脸正好在最上方，
+        // 于是卡片和面板上只剩身子。角色模板因此把焦点设成 '50% 0%'。
+        const focus = parsePosterFocus(getTemplate(anime.templateId).layoutConfig?.posterObjectPosition);
+        setPosX(focus.x);
+        setPosY(focus.y);
+        curPos.current = { x: focus.x, y: focus.y };
       }
       // 无海报时懒加载（检查黑名单）
       const bl = loadPosterBlacklist();
       if (!anime.posterUrl && anime.title && !bl.has(anime.id)) {
-        fetchPoster(anime.title).then((url) => {
+        // 优先用检索名/日文名搜索：中文译名在 AniList 的命中率很低
+        fetchPoster(anime.title, [anime.searchAlias, anime.titleJa].filter(Boolean) as string[]).then((url) => {
           if (url) {
             setPosterUrl(url);
             setAllImages((prev) => [url, ...prev]);
@@ -587,12 +641,13 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
     return tw > 0 ? (ws / tw).toFixed(2) : '-';
   }, [scores, templateId]);
 
-  // 更新维度分数
+  // 更新维度分数（统一收敛到两位小数，杜绝 7.500000000000001 这类浮点噪声）
   const handleScoreChange = (dimKey: string, value: number | null) => {
+    const next = value === null || value === undefined ? 0 : round2(value);
     setScores((prev) => {
       const existing = prev.find((s) => s.dimensionKey === dimKey);
-      if (existing) return prev.map((s) => s.dimensionKey === dimKey ? { ...s, score: value ?? 0 } : s);
-      return [...prev, { dimensionKey: dimKey, score: value ?? 0 }];
+      if (existing) return prev.map((s) => s.dimensionKey === dimKey ? { ...s, score: next } : s);
+      return [...prev, { dimensionKey: dimKey, score: next }];
     });
   };
 
@@ -618,14 +673,14 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
 
     // 总评（首行）
     const overallScoreVal = scores.find((sc) => sc.dimensionKey === 'overall')?.score;
-    const overallScoreStr = overallScoreVal && overallScoreVal > 0 ? overallScoreVal.toFixed(2) : '-';
+    const overallScoreStr = formatScore(overallScoreVal);
     lines.push(`${padRight('总评', 4)} ${overallScoreStr.padStart(5)}`);
 
     for (const dim of templateDims) {
       if (dim.key === 'overall') continue;
       const s = scores.find((sc) => sc.dimensionKey === dim.key);
       const rawScore = s?.score ?? 0;
-      const scoreStr = rawScore > 0 ? rawScore.toFixed(dim.key === 'vibe' ? 2 : 1) : '-';
+      const scoreStr = formatScore(rawScore);
       const dimReview = dimReviews.find((r) => r.dimensionKey === dim.key)?.content || '';
       lines.push(`${padRight(dim.label, 4)} ${scoreStr.padStart(5)}  ${dimReview}`);
     }
@@ -702,12 +757,16 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
         scores, review, tags, dimensionReviews: dimReviews, category, posterUrl,
         templateId, customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
         link: link.trim() || undefined,
-        releaseDate: editReleaseDate || undefined,
-        watchDate: editWatchDate || undefined,
+        releaseDate: editReleaseDate ? editReleaseDate.format('YYYY-MM') : undefined,
+        watchDate: editWatchDate ? editWatchDate.format('YYYY-MM-DD') : undefined,
+        // 同步 createdAt 到观看时间，确保时间轴能正确显示
+        createdAt: editWatchDate ? editWatchDate.format('YYYY-MM-DD') : anime!.createdAt,
         bangumiScore: editBgmScore,
         aniListScore: editAnilistScore,
         studio: editStudio || undefined,
         frameCount: editFrameCount,
+        episodes: editEpisodes,
+        currentEpisode: editCurrentEpisode,
         searchAlias: editSearchAlias || undefined,
         bangumiId: editBangumiId,
       });
@@ -833,33 +892,62 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       {templateCfg.showReleaseDate && (
         <Descriptions.Item label="上映">
           {editing ? (
-            <Input size="small" value={editReleaseDate} onChange={(e) => setEditReleaseDate(e.target.value)}
-              placeholder="如 2021-04" style={{ width: 100, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
-          ) : (anime.releaseDate || '-')}
+            <Space size={4}>
+              <Select
+                size="small"
+                showSearch
+                placeholder="年"
+                style={{ width: 88 }}
+                value={editReleaseDate ? editReleaseDate.year() : undefined}
+                onChange={(y: number) => setEditReleaseDate(dayjs().year(y).month(editReleaseDate?.month() ?? 0).date(1))}
+                options={RELEASE_YEAR_OPTIONS}
+                optionFilterProp="label"
+              />
+              <Select
+                size="small"
+                placeholder="月"
+                style={{ width: 76 }}
+                disabled={!editReleaseDate}
+                value={editReleaseDate ? editReleaseDate.month() : undefined}
+                onChange={(m: number) => setEditReleaseDate((editReleaseDate ?? dayjs()).month(m).date(1))}
+                options={MONTH_OPTIONS}
+              />
+            </Space>
+          ) : (anime.releaseDate ? formatReleaseDateCn(anime.releaseDate) : '-')}
         </Descriptions.Item>
       )}
       <Descriptions.Item label={isCharacterCard ? '诞生时间' : '观看时间'}>
         {editing ? (
-          <Input size="small" value={editWatchDate} onChange={(e) => setEditWatchDate(e.target.value)}
-            placeholder="如 2024-03-15" style={{ width: 110, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
+          <DatePicker
+            size="small"
+            value={editWatchDate}
+            onChange={setEditWatchDate}
+            format="YYYY-MM-DD"
+            placeholder="选择观看日期"
+            disabledDate={disabledFutureDay}
+            style={{ width: 140 }}
+            className="theme-datepicker"
+          />
         ) : (anime.watchDate || anime.createdAt || '-')}
       </Descriptions.Item>
       {templateCfg.showBangumiId && (
         <Descriptions.Item label="Bangumi">
           {editing ? (
             <InputNumber size="small" min={0} max={15} step={0.1}
-              value={editBgmScore} onChange={(v) => setEditBgmScore(v ?? undefined)}
+              value={editBgmScore != null ? round2(editBgmScore) : undefined}
+              onChange={(v) => setEditBgmScore(v != null ? round2(v) : undefined)}
               style={{ width: 70 }} />
-          ) : (anime.bangumiScore ? <span style={{ color: 'var(--brand-primary)', fontWeight: 600 }}>{anime.bangumiScore}</span> : '-')}
+          ) : (anime.bangumiScore ? <span style={{ color: 'var(--brand-primary)', fontWeight: 600 }}>{formatScore(anime.bangumiScore)}</span> : '-')}
         </Descriptions.Item>
       )}
       {templateCfg.showAnilistScore && (
         <Descriptions.Item label="AniList">
           {editing ? (
             <InputNumber size="small" min={0} max={15} step={0.1}
-              value={editAnilistScore} onChange={(v) => setEditAnilistScore(v ?? undefined)}
+              value={editAnilistScore != null ? round2(editAnilistScore) : undefined}
+              onChange={(v) => setEditAnilistScore(v != null ? round2(v) : undefined)}
               style={{ width: 70 }} />
-          ) : (anime.aniListScore ? <span style={{ color: 'var(--color-info)', fontWeight: 600 }}>{anime.aniListScore}</span> : '-')}
+          ) : (anime.aniListScore ? <span style={{ color: 'var(--color-info)', fontWeight: 600 }}>{formatScore(anime.aniListScore)}</span> : '-')}
         </Descriptions.Item>
       )}
       {templateCfg.showStudio && (
@@ -873,17 +961,19 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       {templateCfg.showFrameCount && (
         <Descriptions.Item label="张数">
           {editing ? (
-            <InputNumber size="small" min={0} step={1}
-              value={editFrameCount} onChange={(v) => setEditFrameCount(v ?? undefined)}
-              placeholder="数量" style={{ width: 90 }} />
-          ) : (anime.frameCount ? <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{anime.frameCount.toLocaleString()}</span> : '-')}
+            <InputNumber size="small" min={0} step={0.1}
+              value={editFrameCount != null ? round2(editFrameCount) : undefined}
+              onChange={(v) => setEditFrameCount(v != null ? round2(v) : undefined)}
+              placeholder="分数" style={{ width: 90 }} />
+          ) : (anime.frameCount ? <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{formatScore(anime.frameCount)}</span> : '-')}
         </Descriptions.Item>
       )}
       {templateCfg.showEpisodes && (
         <Descriptions.Item label="集数">
           {editing ? (
             <InputNumber size="small" min={0} step={1}
-              value={undefined /* TODO: add episodes state */} style={{ width: 70 }} />
+              value={editEpisodes} onChange={(v) => setEditEpisodes(v ?? undefined)}
+              placeholder="总集数" style={{ width: 80 }} />
           ) : (anime.episodes ? <span>{anime.episodes} 集</span> : '-')}
         </Descriptions.Item>
       )}
@@ -921,26 +1011,67 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                   value={customFields[cf.key] ? Number(customFields[cf.key]) : undefined}
                   onChange={(v) => setCustomFields((prev) => ({ ...prev, [cf.key]: v ?? '' }))}
                   style={{ width: 90 }} />
+              ) : cf.type === 'textarea' ? (
+                // 详细人设这类长文本（实测 500~1500 字），单行 Input 没法编辑
+                <Input.TextArea
+                  size="small"
+                  autoSize={{ minRows: 3, maxRows: 12 }}
+                  value={String(customFields[cf.key] || '')}
+                  onChange={(e) => setCustomFields((prev) => ({ ...prev, [cf.key]: e.target.value }))}
+                  style={{ width: '100%', minWidth: 220, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
               ) : (
                 <Input size="small"
                   value={String(customFields[cf.key] || '')}
                   onChange={(e) => setCustomFields((prev) => ({ ...prev, [cf.key]: e.target.value }))}
                   style={{ width: 120, background: 'var(--bg-primary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
               )
-            ) : (customFields[cf.key] ? <span style={{ color: 'var(--text-primary)' }}>{customFields[cf.key]}</span> : '-')}
+            ) : (customFields[cf.key] ? (
+              cf.type === 'textarea' ? (
+                <div style={{
+                  color: 'var(--text-primary)',
+                  whiteSpace: 'pre-wrap',
+                  maxHeight: 220,
+                  overflowY: 'auto',
+                  fontSize: 12,
+                  lineHeight: 1.6,
+                }}>{String(customFields[cf.key])}</div>
+              ) : <span style={{ color: 'var(--text-primary)' }}>{customFields[cf.key]}</span>
+            ) : '-')}
           </Descriptions.Item>
         );
       })}
       {!isCharacterCard && (
         <Descriptions.Item label="分类">
-          <Select
-            size="small"
-            value={category}
-            onChange={(v) => setCategory(v)}
-            disabled={!editing}
-            style={{ width: 80 }}
-            options={Object.entries(categoryLabels).map(([key, cfg]) => ({ value: key, label: cfg.label }))}
-          />
+          {editing ? (
+            <Space size={8} align="center">
+              <Select
+                size="small"
+                value={category}
+                onChange={(v) => { setCategory(v); if (v !== 'watching') setEditCurrentEpisode(undefined); }}
+                style={{ width: 80 }}
+                options={Object.entries(categoryLabels).map(([key, cfg]) => ({ value: key, label: cfg.label }))}
+              />
+              {category === 'watching' && (
+                <InputNumber
+                  size="small" min={0} step={1}
+                  value={editCurrentEpisode}
+                  onChange={(v) => setEditCurrentEpisode(v ?? undefined)}
+                  placeholder="集数"
+                  style={{ width: 72 }}
+                  addonAfter="集"
+                />
+              )}
+            </Space>
+          ) : (
+            <span>
+              {categoryLabels[category]?.label || category}
+              {category === 'watching' && (anime.currentEpisode != null) && (
+                <span style={{ color: 'var(--text-muted)', marginLeft: 6, fontSize: 12 }}>
+                  第 {anime.currentEpisode} 集
+                </span>
+              )}
+            </span>
+          )}
         </Descriptions.Item>
       )}
       <Descriptions.Item label="评分模板">
@@ -1334,12 +1465,14 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                   // 取消编辑：恢复原始值
                   if (anime) {
                     setEditTitle(anime.title);
-                    setEditReleaseDate(anime.releaseDate || '');
-                    setEditWatchDate(anime.watchDate || anime.createdAt || '');
+                    setEditReleaseDate(parseMonthStr(anime.releaseDate));
+                    setEditWatchDate(parseDateStr(anime.watchDate || anime.createdAt));
                     setEditBgmScore(anime.bangumiScore);
                     setEditAnilistScore(anime.aniListScore);
                     setEditStudio(anime.studio || '');
                     setEditFrameCount(anime.frameCount);
+                    setEditEpisodes(anime.episodes);
+                    setEditCurrentEpisode(anime.currentEpisode);
                     setEditSearchAlias(anime.searchAlias || '');
                     setEditBangumiId(anime.bangumiId);
                     setScores([...anime.scores]);
@@ -1432,7 +1565,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                       {nearbyRanking.higher.map(({ entry, score }) => (
                         <div key={entry.id}
                           onClick={(e) => { e.stopPropagation(); handleRankingClick(entry); }}
-                          title={`${entry.title} — ${score.toFixed(1)}`}
+                          title={`${entry.title} — ${formatScore(score)}`}
                           style={{
                             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                             padding: '2px 6px', borderRadius: 4, cursor: 'pointer',
@@ -1453,7 +1586,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                           }}
                         >
                           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, marginRight: 4 }}>{entry.title}</span>
-                          <span style={{ fontWeight: 600, color: 'var(--brand-primary)', flexShrink: 0 }}>{score.toFixed(1)}</span>
+                          <span style={{ fontWeight: 600, color: 'var(--brand-primary)', flexShrink: 0 }}>{formatScore(score)}</span>
                         </div>
                       ))}
                     </div>
@@ -1485,7 +1618,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                       {nearbyRanking.lower.map(({ entry, score }) => (
                         <div key={entry.id}
                           onClick={(e) => { e.stopPropagation(); handleRankingClick(entry); }}
-                          title={`${entry.title} — ${score.toFixed(1)}`}
+                          title={`${entry.title} — ${formatScore(score)}`}
                           style={{
                             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                             padding: '2px 6px', borderRadius: 4, cursor: 'pointer',
@@ -1506,7 +1639,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                           }}
                         >
                           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, marginRight: 4 }}>{entry.title}</span>
-                          <span style={{ fontWeight: 600, color: 'var(--brand-primary)', flexShrink: 0 }}>{score.toFixed(1)}</span>
+                          <span style={{ fontWeight: 600, color: 'var(--brand-primary)', flexShrink: 0 }}>{formatScore(score)}</span>
                         </div>
                       ))}
                     </div>
@@ -1574,8 +1707,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                     </Tooltip>
                     <InputNumber size="small" min={0} max={15}
                       step={dim.key === 'vibe' ? 0.01 : 0.1}
-                      precision={dim.key === 'vibe' ? 2 : undefined}
-                      value={score || null} onChange={(v) => handleScoreChange(dim.key, v)}
+                      value={score ? round2(score) : null} onChange={(v) => handleScoreChange(dim.key, v)}
                       disabled={!editing}
                       onFocus={() => { if (editing) setSliderDim(dim.key); }}
                       style={{

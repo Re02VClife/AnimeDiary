@@ -733,7 +733,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
                         fontSize: 8, color: diff > 0.3 ? 'var(--brand-primary)' : diff < -0.3 ? 'var(--color-error)' : 'var(--text-muted)',
                         width: 28, textAlign: 'center',
                       }}>
-                        {diff > 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1)}
+                        {diff > 0 ? `+${diff.toFixed(2)}` : diff.toFixed(2)}
                       </span>
                       {/* 低偏差组 */}
                       <div style={{ flex: 1 }}>
@@ -848,7 +848,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
               {a.title}
               {dev && (
                 <span style={{ fontSize: 9, opacity: 0.6, marginLeft: 3 }}>
-                  {dev.deviation > 0 ? '+' : ''}{dev.deviation.toFixed(1)}
+                  {dev.deviation > 0 ? '+' : ''}{dev.deviation.toFixed(2)}
                 </span>
               )}
             </span>
@@ -1262,7 +1262,7 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
                           fontSize: 10, color: 'var(--brand-primary)', fontWeight: 600,
                           background: 'rgba(251,114,153,0.1)', padding: '1px 6px', borderRadius: 8,
                         }}>
-                          AniList {r.bgmScore.toFixed(1)}
+                          AniList {r.bgmScore.toFixed(2)}
                         </span>
                       )}
                       {r.airDate && (

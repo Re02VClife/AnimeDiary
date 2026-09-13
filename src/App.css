@@ -1,8 +1,50 @@
 
 /* ── 全局布局 ── */
+/* 桌面版顶部有一条自定义标题栏，用 flex 让它占满剩余高度（浏览器下效果等同 100vh） */
+#root {
+  display: flex;
+  flex-direction: column;
+}
+
 .app-layout {
-  height: 100vh;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: hidden;
+}
+
+/* ── 自定义标题栏（仅桌面版渲染） ── */
+.app-titlebar {
+  flex: 0 0 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
+  -webkit-app-region: drag; /* 整条用于拖动窗口 */
+  user-select: none;
+}
+
+.app-titlebar-logo {
+  font-size: 14px;
+}
+
+.app-titlebar-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.2px;
+}
+
+.app-titlebar-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* 右侧给系统窗口按钮留出位置，避免内容被盖住 */
+.app-titlebar::after {
+  content: '';
+  flex: 0 0 138px;
 }
 
 .app-sidebar {
@@ -85,6 +127,50 @@
   border-color: var(--brand-primary);
 }
 
+/* ── DatePicker 主题适配 ── */
+.theme-datepicker.ant-picker {
+  background: var(--bg-primary);
+  border-color: var(--border-primary);
+}
+.theme-datepicker.ant-picker input {
+  color: var(--text-primary);
+}
+.theme-datepicker.ant-picker input::placeholder {
+  color: var(--text-muted);
+}
+.theme-datepicker.ant-picker:hover {
+  border-color: var(--brand-primary);
+}
+.theme-datepicker.ant-picker-focused {
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand-primary) 20%, transparent);
+}
+/* 下拉面板走 antd 弹出层，用 CSS 变量控制 */
+.ant-picker-dropdown .ant-picker-panel-container {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-primary);
+}
+.ant-picker-dropdown .ant-picker-header,
+.ant-picker-dropdown .ant-picker-content th,
+.ant-picker-dropdown .ant-picker-cell {
+  color: var(--text-primary);
+}
+.ant-picker-dropdown .ant-picker-cell-in-view {
+  color: var(--text-primary);
+}
+.ant-picker-dropdown .ant-picker-cell:hover .ant-picker-cell-inner {
+  background: var(--bg-tertiary);
+}
+.ant-picker-dropdown .ant-picker-cell-selected .ant-picker-cell-inner {
+  background: var(--brand-primary);
+}
+.ant-picker-dropdown .ant-picker-header button {
+  color: var(--text-muted);
+}
+.ant-picker-dropdown .ant-picker-header button:hover {
+  color: var(--text-primary);
+}
+
 /* ── 分类标签 ── */
 .category-tabs {
   display: flex;
@@ -163,6 +249,23 @@
   font-size: 2.5rem;
   background: linear-gradient(135deg, #1a1030, #2d1a2c);
   color: var(--brand-primary);
+}
+
+/* 自动搜到的海报角标（提示这不是你手动保存的图） */
+.anime-card .poster-auto-badge {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  z-index: 2;
+  pointer-events: none;
 }
 
 /* 在看删除按钮 */
@@ -496,4 +599,21 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover);
+}
+
+/* ── 数据补全面板 ──
+   面板默认把所有待补全的行都勾选上，而 antd 的选中行底色由主色（本主题是玫红）
+   派生而来，整张表会被染成暗红，连封面缩略图都看不清。
+   这里换成极淡的白色叠加：既看得出「已选中」，又不至于糊成一片。 */
+.media-complete-modal .ant-table-tbody > tr.ant-table-row-selected > td {
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+.media-complete-modal .ant-table-tbody > tr.ant-table-row-selected:hover > td {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+/* 表格里塞了封面缩略图，行高别再被压扁 */
+.media-complete-modal .ant-table-tbody > tr > td {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  vertical-align: middle;
 }

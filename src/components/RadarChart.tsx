@@ -54,7 +54,7 @@ const RadarChart: React.FC<RadarChartProps> = ({
         // 不截断原始分数，只应用最小值底线；超 max 的值会在雷达图边界外显示
         dataValues: dims.map((d) => Math.max(radarMin, d.rawScore)),
         tooltipFormat: (label: string, v: number) =>
-          `${label}: <b style="color:#fb7299">${v.toFixed(1)} / 10</b>`,
+          `${label}: <b style="color:#fb7299">${v.toFixed(2)} / 10</b>`,
       };
     }
     // 百分位模式：0-100 刻度，显示百分位排名

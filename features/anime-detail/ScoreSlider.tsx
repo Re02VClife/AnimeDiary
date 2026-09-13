@@ -55,7 +55,8 @@ const ScoreSlider: React.FC<ScoreSliderProps> = ({
   }, [onClose]);
 
   const step = isVibe ? 0.01 : 0.1;
-  const precision = isVibe ? 2 : 1;
+  // 统一两位小数：滑条读数、以及写入 scores 的值都不带浮点噪声
+  const precision = 2;
 
   /** 根据鼠标位置计算分数 */
   const calcScore = useCallback(
@@ -123,7 +124,7 @@ const ScoreSlider: React.FC<ScoreSliderProps> = ({
         fontSize: 14, fontWeight: 700, color: 'var(--brand-primary)',
         minWidth: isVibe ? 48 : 36, textAlign: 'center', fontVariantNumeric: 'tabular-nums',
       }}>
-        {localScore.toFixed(precision)}
+        {localScore}
       </span>
 
       <div

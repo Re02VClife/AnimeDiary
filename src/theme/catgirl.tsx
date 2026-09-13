@@ -3,6 +3,7 @@
  * 将用户可见的描述文本、交互文本用猫娘口吻表述（可加颜文字）
  */
 
+import React from 'react';
 import { message } from 'antd';
 import { useTheme } from './ThemeContext';
 import { THEME_STORAGE_KEY } from './types';
@@ -118,6 +119,24 @@ export const catgirlMessage = {
     message.info(isCatgirlMode() ? catgirlfy(text) : text),
   loading: (text: string, duration?: number) =>
     message.loading(isCatgirlMode() ? catgirlfy(text) : text, duration),
+  /** 带「撤销」按钮的提示：用于可恢复的破坏性操作（如移除番剧） */
+  undo: (text: string, onUndo: () => void) => {
+    const label = isCatgirlMode() ? catgirlfy(text) : text;
+    const node = React.createElement(
+      'span',
+      null,
+      label,
+      React.createElement(
+        'a',
+        {
+          style: { marginLeft: 12, color: 'var(--brand-primary)', fontWeight: 600 },
+          onClick: () => { message.destroy(); onUndo(); },
+        },
+        '撤销',
+      ),
+    );
+    message.open({ type: 'success', content: node, duration: 6 });
+  },
 };
 
 // ── React Hook ──

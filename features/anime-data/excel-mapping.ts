@@ -22,7 +22,7 @@ export const EXCEL_COL = {
   RELEASE_DATE: 16,   // Q - 上映年月
   FIRST_WATCH: 17,    // R - 首刷时间（Excel 序列号）
   NOTES: 18,          // S - 备注
-  COL1: 19,           // T - 列1
+  COL1: 19,           // T - 列1（用户自己的列，程序只读、绝不写入）
   DEVIATION: 20,      // U - 偏差值
   CRAWLED_BGM: 21,    // V - 爬虫BGM
   BGM_SCORE: 22,      // W - BGM（Bangumi 评分）
@@ -43,10 +43,21 @@ export const EXCEL_COL = {
   ANILIST_SCORE: 36,  // AK - AniList 评分
   WATCH_DATE: 17,     // R - 首刷时间（别名，同 FIRST_WATCH）
   POSTER_URL: 37,     // AL - 海报 URL（持久化存储）
-  TEMPLATE_JSON: 19,  // T - 扩展评分 JSON（非默认模板的评分序列化）
+  // ⚠️ 历史踩坑：TEMPLATE_JSON 曾误设为 19，与上面的 COL1「列1」是同一列，
+  //    已在真实数据中覆盖掉 13 行的「列1」原始值（不可逆）。
+  //    现迁至 42（AQ，实测该列及之后完全空闲）；旧值仅由 LEGACY_TEMPLATE_JSON_COL 读取兼容。
+  TEMPLATE_JSON: 42,  // AQ - 扩展评分 JSON（非默认模板的评分序列化）
   TEMPLATE_ID: 38,    // AM - 模板 ID
   LINK: 39,           // AN - 外部链接
+  EPISODES: 40,       // AO - 总集数
+  CURRENT_EP: 41,     // AP - 当前集数（在看进度）
 } as const;
+
+/**
+ * 历史错误的 TEMPLATE_JSON 列（与用户「列1」同为 T 列 = 19）。
+ * 仅用于读取旧数据的兼容回退，**禁止写入**。
+ */
+export const LEGACY_TEMPLATE_JSON_COL = 19;
 
 /** Excel 工作表名称 */
 export const EXCEL_SHEETS = {
@@ -99,4 +110,11 @@ export const EDITABLE_COLS: number[] = [
   EXCEL_COL.TEMPLATE_JSON,
   EXCEL_COL.TEMPLATE_ID,
   EXCEL_COL.LINK,
+  EXCEL_COL.EPISODES,
+  EXCEL_COL.CURRENT_EP,
+  // 角色名（原先只读不写，"添加角色"刷新即丢），角色卡模板依赖这几列
+  EXCEL_COL.CHAR1_NAME,
+  EXCEL_COL.CHAR2_NAME,
+  EXCEL_COL.CHAR3_NAME,
+  EXCEL_COL.CHAR4_NAME,
 ];

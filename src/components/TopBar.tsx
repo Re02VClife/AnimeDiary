@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Input, Button, Segmented, Select } from 'antd';
-import { SearchOutlined, PlusOutlined } from '@ant-design/icons';
+import { SearchOutlined, PlusOutlined, CloudDownloadOutlined } from '@ant-design/icons';
 import type { AnimeCategory, ScoreTemplate, CategoryOverrides } from '../types';
 import { CATEGORY_CONFIG, getVisibleCategories } from '../types';
 
@@ -12,6 +12,8 @@ interface TopBarProps {
   searchMode: 'title' | 'tag';
   onSearchModeChange: (mode: 'title' | 'tag') => void;
   onAddAnime?: () => void;
+  /** 打开「数据补全」面板（从 Bangumi/Bilibili 批量补齐元数据与封面） */
+  onCompleteData?: () => void;
   /** 模板筛选 */
   templates: ScoreTemplate[];
   activeTemplateId: string;
@@ -28,6 +30,7 @@ const TopBar: React.FC<TopBarProps> = ({
   searchMode,
   onSearchModeChange,
   onAddAnime,
+  onCompleteData,
   templates,
   activeTemplateId,
   onTemplateChange,
@@ -101,6 +104,16 @@ const TopBar: React.FC<TopBarProps> = ({
                 label: `${t.isDefault ? '⭐ ' : ''}${t.name}`,
               }))}
             />
+          )}
+          {onCompleteData && (
+            <Button
+              icon={<CloudDownloadOutlined />}
+              onClick={onCompleteData}
+              style={{ borderRadius: 20 }}
+              title="从 Bangumi / Bilibili 自动补齐元数据与封面"
+            >
+              数据补全
+            </Button>
           )}
           {onAddAnime && (
             <Button
