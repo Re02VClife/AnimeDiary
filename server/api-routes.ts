@@ -1391,6 +1391,27 @@ export function createApiHandler({ DATA_DIR, fetchImpl }: ApiContext) {
           });
         });
 
+        // ── 服务端自身信息（诊断用） ──
+        //
+        // 为什么需要它：服务端代码打进 app.asar 后是安装时定格的，热更新只换前端，
+        // 于是「新加的后端路由在装好的应用里 404」这种问题很难一眼看出。
+        // 这个路由把**实际加载的路由文件路径**报出来：落在 app.asar 里就是内置版本，
+        // 落在 userData/web-update/<版本>/server/ 下就是热更新的那一份。
+        router.use('/api/server-info', (req, res) => {
+          res.setHeader('Content-Type', 'application/json');
+          let routesFile: string | null = null;
+          try {
+            routesFile = typeof __filename === 'string' ? __filename : null;
+          } catch { /* 某些打包形态下没有 __filename */ }
+          res.end(JSON.stringify({
+            routesFile,
+            fromHotUpdate: !!routesFile && routesFile.includes(`${path.sep}web-update${path.sep}`),
+            nodeVersion: process.version,
+            pid: process.pid,
+            dataDir: DATA_DIR,
+          }));
+        });
+
         // ── 角色元数据（角色评分卡） ──
         //
         // 与 /api/media/*（番剧元数据）并列的另一条链路，取数逻辑见 server/character-sources.ts，

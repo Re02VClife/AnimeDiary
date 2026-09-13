@@ -628,6 +628,53 @@ export async function updateAnimeEntry(entry: AnimeEntry): Promise<void> {
   }
 }
 
+/**
+ * 只写角色名列（AA/AD/AG/AJ），其余列一律不碰。
+ *
+ * 为什么不用 updateAnimeEntry 代替：那条路径会把整行按内存值写回，
+ * 包括 posterUrl —— 而内存里的 posterUrl 可能来自 IndexedDB 覆盖或本次会话的
+ * 自动搜图。为了补一个角色名却顺手改了海报、评价、评分，风险不成比例。
+ * 角色名在 Excel 里就是固定的 4 列，这里只写这 4 列，并带上写前身份校验。
+ */
+export async function saveCharacterNames(entry: AnimeEntry, names: string[]): Promise<void> {
+  const rowIndex = entry.excelRowIndex;
+  if (rowIndex === undefined) throw new Error('该条目还没有 Excel 行号，无法写入');
+  const expectedTitle = entry.excelTitleSnapshot ?? entry.title;
+  const charCols = [EXCEL_COL.CHAR1_NAME, EXCEL_COL.CHAR2_NAME, EXCEL_COL.CHAR3_NAME, EXCEL_COL.CHAR4_NAME];
+  const updates = charCols.map((colIndex, i) => ({
+    sheetName: MAIN_SHEET,
+    rowIndex,
+    colIndex,
+    value: names[i] ?? '',
+    expectedTitle,
+  }));
+
+  const response = await fetch(`${API_BASE}/write`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as
+      | { error?: string; conflicts?: { rowIndex: number; expected: string; actual: string; ambiguous?: boolean }[] }
+      | null;
+    if (response.status === 409 && body?.conflicts?.length) {
+      const c = body.conflicts[0];
+      throw new Error(
+        c.ambiguous
+          ? `表中有多行标题都是「${c.expected}」，无法确定该写哪一行 —— 请刷新页面后重试（本次未写入任何数据）。`
+          : `Excel 中第 ${c.rowIndex + 1} 行现在是「${c.actual || '(空)'}」，不是「${c.expected}」。` +
+            `这一行可能被改过标题或删除了 —— 请刷新页面后重试（本次未写入任何数据）。`,
+      );
+    }
+    throw new Error(body?.error || `HTTP ${response.status}`);
+  }
+
+  const data = await response.json();
+  if (data.error) throw new Error(data.error);
+}
+
 /** 获取 Excel 文件信息 */
 export async function getExcelInfo(): Promise<{ exists: boolean; path?: string; size?: number }> {
   try {

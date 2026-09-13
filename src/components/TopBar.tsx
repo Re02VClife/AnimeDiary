@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Input, Button, Segmented, Select } from 'antd';
-import { SearchOutlined, PlusOutlined, CloudDownloadOutlined } from '@ant-design/icons';
+import { SearchOutlined, PlusOutlined, CloudDownloadOutlined, UserAddOutlined } from '@ant-design/icons';
 import type { AnimeCategory, ScoreTemplate, CategoryOverrides } from '../types';
 import { CATEGORY_CONFIG, getVisibleCategories } from '../types';
 
@@ -14,6 +14,8 @@ interface TopBarProps {
   onAddAnime?: () => void;
   /** 打开「数据补全」面板（从 Bangumi/Bilibili 批量补齐元数据与封面） */
   onCompleteData?: () => void;
+  /** 打开「角色补全」面板（搜索角色资料并生成角色卡） */
+  onCompleteCharacters?: () => void;
   /** 模板筛选 */
   templates: ScoreTemplate[];
   activeTemplateId: string;
@@ -31,6 +33,7 @@ const TopBar: React.FC<TopBarProps> = ({
   onSearchModeChange,
   onAddAnime,
   onCompleteData,
+  onCompleteCharacters,
   templates,
   activeTemplateId,
   onTemplateChange,
@@ -113,6 +116,16 @@ const TopBar: React.FC<TopBarProps> = ({
               title="从 Bangumi / Bilibili 自动补齐元数据与封面"
             >
               数据补全
+            </Button>
+          )}
+          {onCompleteCharacters && (
+            <Button
+              icon={<UserAddOutlined />}
+              onClick={onCompleteCharacters}
+              style={{ borderRadius: 20 }}
+              title="搜索角色立绘 / 声优 / 生日 / 人设，一键生成角色卡"
+            >
+              角色补全
             </Button>
           )}
           {onAddAnime && (

@@ -248,7 +248,13 @@ app.whenReady().then(async () => {
   // 3. 生产模式：起本地服务（/api + 静态资源）
   if (!isDev) {
     try {
-      const started = await startApiServer({ dataDir, distDir: webDir });
+      const started = await startApiServer({
+        dataDir,
+        distDir: webDir,
+        // 服务端路由实现也走热更新：更新包里的 server/api-routes.cjs 优先，
+        // 缺失或加载失败时 api-server 会自动回退到 app.asar 里的内置版本。
+        routesPath: path.join(webDir, 'server', 'api-routes.cjs'),
+      });
       apiServer = started.server;
       appPort = started.port;
       console.log('[AnimeDiary] 本地服务已启动 http://127.0.0.1:' + appPort);

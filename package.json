@@ -1,6 +1,6 @@
 {
   "name": "anime-diary",
-  "version": "1.0.18",
+  "version": "1.0.23",
   "description": "番剧评分管理系统 - 记录你与每部番的相遇",
   "main": "electron/main.js",
   "scripts": {
@@ -11,7 +11,7 @@
     "build:api": "esbuild server/api-routes.ts --bundle --platform=node --format=cjs --target=node20 --outfile=server/api-routes.cjs --external:xlsx --external:adm-zip --external:electron",
     "build": "npm run build:api && vite build && electron-builder",
     "build:dir": "npm run build:api && vite build && electron-builder --dir",
-    "update:pack": "node scripts/build-web-update.js",
+    "update:pack": "npm run build:api && node scripts/build-web-update.js",
     "update:serve": "node scripts/serve-updates.js",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
