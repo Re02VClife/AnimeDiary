@@ -6,11 +6,25 @@ import React, { createContext, useContext, useReducer, useEffect, useCallback, u
 import { catgirlMessage } from '../src/theme';
 import type { AnimeCategory, AnimeEntry, AnimeTag } from '../src/types';
 import { loadAnimeList, updateAnimeEntry, appendAnimeEntry, batchSaveAllPosters } from '../features/anime-data/excel-service';
-import { saveCategory, addToWatchingDeleted, loadImgHeight, saveImgHeight, exportAllUserData, importUserData } from '../features/anime-data/storage-service';
+import { saveCategory, addToWatchingDeleted, removeFromWatchingDeleted, loadImgHeight, saveImgHeight, exportAllUserData, importUserData } from '../features/anime-data/storage-service';
 import { migrateLegacyDimensions, loadTemplates } from '../features/anime-data/template-service';
 import { getVisibleCategories } from '../src/types';
 import { rankByDimension } from '../features/ranking/ranking-service';
 import { DIMENSION_COL_MAP, EXCEL_COL } from '../features/anime-data/excel-mapping';
+
+/**
+ * 汇总批量写回 Excel 的结果。
+ * 各处原先用 `.catch(() => {})` 静默吞掉失败，紧接着又弹"成功"——
+ * 用户以为改好了，其实文件没动，刷新即还原。
+ */
+function reportWriteResults(results: PromiseSettledResult<unknown>[], successText: string): void {
+  const failed = results.filter((r) => r.status === 'rejected').length;
+  if (failed > 0) {
+    catgirlMessage.error(`${failed}/${results.length} 条写回 Excel 失败：界面已更新但文件未同步，刷新后会还原`);
+  } else {
+    catgirlMessage.success(successText);
+  }
+}
 
 // ── 状态类型 ──
 
@@ -101,7 +115,8 @@ const initialState: AnimeState = {
   searchMode: 'title',
   activeTag: null,
   activeDim: 'overall',
-  sortByDim: null,
+  // 初始视图按观看时间排序：最近看的在左上角，没有时间记录的排最底下
+  sortByDim: 'watchDate',
   sortOrder: 'desc',
   activeTemplateId: localStorage.getItem('anime_diary_active_template') || 'default',
   detailOpen: false,
@@ -153,8 +168,13 @@ function animeReducer(state: AnimeState, action: AnimeAction): AnimeState {
     case 'ADD_ANIME':
       return { ...state, animeList: [...state.animeList, action.payload] };
 
-    case 'SET_CATEGORY':
-      return { ...state, activeCategory: action.payload, sortByDim: null };
+    case 'SET_CATEGORY': {
+      // 切分类时清掉"按维度分"的排序：在看/想看这类条目没评分，
+      // 继续按总评排会被 .filter(ov > 0) 全部滤掉，列表直接空掉。
+      // 番名 / 观看时间不是维度分，与分类无关，保留。
+      const keepSort = state.sortByDim === 'watchDate' || state.sortByDim === 'namesort';
+      return { ...state, activeCategory: action.payload, sortByDim: keepSort ? state.sortByDim : null };
+    }
 
     case 'SET_SEARCH':
       return { ...state, searchText: action.text, searchMode: action.mode };
@@ -285,6 +305,15 @@ interface AnimeContextValue {
   dispatch: React.Dispatch<AnimeAction>;
   // 便捷方法（封装业务逻辑）
   fetchData: () => Promise<void>;
+  /**
+   * 静默重载番剧列表：只更新数据，**不碰全局 loading**。
+   *
+   * 为什么需要它：App 在 `state.loading` 为 true 时会提前 return 一个整屏 spinner，
+   * 于是整棵组件树（包括所有弹窗）被卸载、弹窗内 state 全部丢失。
+   * 批量补全写入完成后若调用 fetchData()，用户会看到面板凭空消失又变空，
+   * 连"已写入 N 条"的日志都看不到。所以这类"写完后同步一下数据"的场景必须用它。
+   */
+  refreshAnimeList: () => Promise<void>;
   filteredAnime: AnimeEntry[];
   handleAnimeClick: (anime: AnimeEntry) => void;
   handleSaveAnime: (updated: AnimeEntry) => Promise<void>;
@@ -340,6 +369,20 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  /**
+   * 静默重载：只替换列表数据，不切换 loading / error。
+   * 用于「已经写完 Excel，只需要让界面看到新数据」的场合（见 AnimeContextValue 的注释）。
+   */
+  const refreshAnimeList = useCallback(async () => {
+    try {
+      const data = await loadAnimeList();
+      dispatch({ type: 'SET_ANIME_LIST', payload: data });
+    } catch (e) {
+      // 静默刷新失败不该把整页打成错误页；已有数据仍然可用
+      console.warn('[AnimeDiary] 静默重载失败:', e);
+    }
+  }, []);
 
   // 筛选排序
   const filteredAnime = useMemo(() => {
@@ -398,6 +441,18 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             ? (a.title || '').localeCompare(b.title || '', 'zh')
             : (b.title || '').localeCompare(a.title || '', 'zh'),
         );
+      } else if (state.sortByDim === 'watchDate') {
+        // 观看时间（ISO 日期字符串，可直接字典序比较）：
+        // 没有时间记录的排最后 —— 不能当成空字符串排到最前面
+        const watchKey = (a: AnimeEntry) => a.watchDate || a.createdAt || '';
+        list = [...list].sort((a, b) => {
+          const ka = watchKey(a);
+          const kb = watchKey(b);
+          if (!ka && !kb) return 0;
+          if (!ka) return 1;
+          if (!kb) return -1;
+          return state.sortOrder === 'asc' ? ka.localeCompare(kb) : kb.localeCompare(ka);
+        });
       } else {
         list = rankByDimension(list, state.sortByDim);
         if (state.sortOrder === 'asc') list = list.reverse();
@@ -416,15 +471,13 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     let savedEntry = updated;
     // 新条目（无 excelRowIndex）→ 追加到 Excel 末尾，并获取分配的行号
     if (updated.excelRowIndex === undefined) {
-      try {
-        const newRowIdx = await appendAnimeEntry(updated);
-        savedEntry = { ...updated, excelRowIndex: newRowIdx, id: `excel-${newRowIdx}` };
-      } catch (e) {
-        catgirlMessage.error('追加到 Excel 失败：' + (e instanceof Error ? e.message : '未知错误'));
-        return;
-      }
+      // 失败必须上抛：原先在这里 catch 后 return，调用方会当成保存成功、弹"已保存"并退出编辑
+      const newRowIdx = await appendAnimeEntry(updated);
+      savedEntry = { ...updated, excelRowIndex: newRowIdx, id: `excel-${newRowIdx}`, excelTitleSnapshot: updated.title };
     } else {
       await updateAnimeEntry(updated);
+      // 保存成功后刷新标题快照：下次写回校验的应是新标题
+      savedEntry = { ...savedEntry, excelTitleSnapshot: updated.title };
     }
     const old = state.animeList.find((a) => a.id === updated.id);
     if (old && old.category !== updated.category) {
@@ -445,20 +498,32 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [state.animeList]);
 
   const handleDeleteFromWatching = useCallback((animeId: string) => {
+    const target = state.animeList.find((a) => a.id === animeId);
     addToWatchingDeleted(animeId);
     dispatch({ type: 'REMOVE_ANIME', payload: animeId });
-  }, []);
+    // 原先拉黑之后没有任何界面入口能恢复（removeFromWatchingDeleted 零调用）
+    catgirlMessage.undo('已从列表移除', () => {
+      removeFromWatchingDeleted(animeId);
+      if (target) dispatch({ type: 'ADD_ANIME', payload: target });
+    });
+  }, [state.animeList]);
 
   const handleExportUserData = useCallback(async () => {
     try {
       await exportAllUserData();
-      catgirlMessage.success('备份已导出（含图片）');
+      catgirlMessage.success('备份已导出（含 Excel、图片与本地设置）');
     } catch (e) {
       catgirlMessage.error('导出失败：' + (e instanceof Error ? e.message : '未知错误'));
     }
   }, []);
 
   const handleImportUserData = useCallback(async (file: File) => {
+    const ok = window.confirm(
+      `即将用「${file.name}」覆盖本机全部本地数据（分类、标签、海报覆盖、主题、模板、AI 配置）；` +
+      `若备份里含 Excel，也会一并替换数据源文件。\n\n` +
+      `导入前的本地数据会自动留一份快照，但仍请确认。\n\n确定继续？`,
+    );
+    if (!ok) return;
     try {
       await importUserData(file);
       catgirlMessage.success('已导入，正在刷新…');
@@ -504,7 +569,9 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const handleDimensionRank = useCallback((dimKey: string, order: 'asc' | 'desc') => {
     dispatch({ type: 'SET_ACTIVE_DIM', payload: dimKey });
-    if (dimKey !== 'namesort') {
+    // 按维度排序时才收窄到「看过」（维度分只在看过的番上有意义）；
+    // 番名 / 观看时间不是维度分，保持当前分类
+    if (dimKey !== 'namesort' && dimKey !== 'watchDate') {
       dispatch({ type: 'SET_CATEGORY', payload: 'watched' });
     }
     // SET_SORT 必须在 SET_CATEGORY 之后，避免被 sortByDim: null 覆盖
@@ -520,8 +587,8 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ...a,
         tags: a.tags.map((t) => t.name === oldName ? { ...t, name: newName } : t),
       }));
-    Promise.all(affected.map((a) => updateAnimeEntry(a).catch(() => {})));
-    catgirlMessage.success(`已将「${oldName}」重命名为「${newName}」`);
+    void Promise.allSettled(affected.map((a) => updateAnimeEntry(a)))
+      .then((rs) => reportWriteResults(rs, `已将「${oldName}」重命名为「${newName}」`));
   }, [state.animeList]);
 
   const handleDeleteTag = useCallback((tagName: string) => {
@@ -532,8 +599,8 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ...a,
         tags: a.tags.filter((t) => t.name !== tagName),
       }));
-    Promise.all(affected.map((a) => updateAnimeEntry(a).catch(() => {})));
-    catgirlMessage.success(`已全局删除标签「${tagName}」`);
+    void Promise.allSettled(affected.map((a) => updateAnimeEntry(a)))
+      .then((rs) => reportWriteResults(rs, `已全局删除标签「${tagName}」`));
   }, [state.animeList]);
 
   const handleBatchAddTags = useCallback(() => {
@@ -555,8 +622,8 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return { ...a, tags: [...a.tags, ...newTags.map((name) => ({ name, highlighted: true } as AnimeTag))] };
       })
       .filter(Boolean) as AnimeEntry[];
-    Promise.all(affected.map((a) => updateAnimeEntry(a).catch(() => {})));
-    catgirlMessage.success(`已将 ${state.selectedBatchTags.length} 个标签添加到 ${state.selectedBatchAnime.length} 部番剧`);
+    void Promise.allSettled(affected.map((a) => updateAnimeEntry(a)))
+      .then((rs) => reportWriteResults(rs, `已将 ${state.selectedBatchTags.length} 个标签添加到 ${state.selectedBatchAnime.length} 部番剧`));
   }, [state.selectedBatchTags, state.selectedBatchAnime, state.animeList]);
 
   const handleCancelBatch = useCallback(() => {
@@ -570,6 +637,7 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (candidates.length === 0) { catgirlMessage.warning('没有可修正的番剧'); return; }
     const hide = catgirlMessage.loading('正在修正检索名 (0/' + candidates.length + ')…', 0);
     let done = 0;
+    let writeFailed = 0;
     for (const anime of candidates) {
       try {
         const resp = await fetch(`/api/anilist/search?keyword=${encodeURIComponent(anime.title)}`);
@@ -579,13 +647,21 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (!alias || alias === anime.searchAlias) { done++; continue; }
         const updated = { ...anime, searchAlias: alias, updatedAt: new Date().toISOString().split('T')[0] };
         dispatch({ type: 'UPDATE_ANIME_IN_LIST', payload: updated });
-        updateAnimeEntry(updated).catch(() => {});
+        try {
+          await updateAnimeEntry(updated);
+        } catch {
+          writeFailed++; // 原先静默吞掉，结尾还无条件报"完成"
+        }
         done++;
       } catch { done++; }
       if (done < candidates.length) await new Promise((r) => setTimeout(r, 800));
     }
     hide();
-    catgirlMessage.success(`检索名修正完成 (${done}/${candidates.length})`);
+    if (writeFailed > 0) {
+      catgirlMessage.error(`检索名修正完成 (${done}/${candidates.length})，但有 ${writeFailed} 条写回 Excel 失败`);
+    } else {
+      catgirlMessage.success(`检索名修正完成 (${done}/${candidates.length})`);
+    }
   }, [state.animeList]);
 
   const handleCreateRelation = useCallback(
@@ -606,9 +682,15 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updated = { ...anime, characters: [...chars, targetName], updatedAt: now };
       }
       dispatch({ type: 'UPDATE_ANIME_IN_LIST', payload: updated });
-      if (anime.excelRowIndex !== undefined) updateAnimeEntry(updated).catch(() => {});
       const label = targetType === 'tag' ? '标签' : targetType === 'studio' ? '制作公司' : '角色';
-      catgirlMessage.success(`已将「${targetName}」${targetType === 'studio' ? '设为' : '添加到'}「${anime.title}」的${label}`);
+      const successText = `已将「${targetName}」${targetType === 'studio' ? '设为' : '添加到'}「${anime.title}」的${label}`;
+      if (anime.excelRowIndex !== undefined) {
+        void updateAnimeEntry(updated)
+          .then(() => catgirlMessage.success(successText))
+          .catch(() => catgirlMessage.error(`「${anime.title}」写回 Excel 失败，仅界面已更新`));
+      } else {
+        catgirlMessage.success(successText);
+      }
     },
     [state.animeList],
   );
@@ -624,6 +706,15 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // 破坏性操作：明确告知会替换数据源，并要求确认
+    const ok = window.confirm(
+      `即将用「${file.name}」替换当前数据源（番评分.xlsx）。\n\n` +
+      `当前文件会先自动留一份可回滚的快照，但界面上的数据将被文件内容覆盖。\n\n确定继续？`,
+    );
+    if (!ok) {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
     try {
       const XLSX = await import('xlsx');
       const data = await file.arrayBuffer();
@@ -674,21 +765,59 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           updatedAt: new Date().toISOString().split('T')[0],
         });
       }
-      dispatch({ type: 'SET_ANIME_LIST', payload: entries });
-      catgirlMessage.success(`已导入 ${entries.length} 条记录`);
+      // 导入必须落盘：原先只改内存，刷新即丢；而且这些条目之后保存会以 append 追加出重复行
+      const resp = await fetch('/api/excel/replace', { method: 'POST', body: file });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+        throw new Error((err as { error?: string }).error || `HTTP ${resp.status}`);
+      }
+      catgirlMessage.success(`已导入 ${entries.length} 条记录，并已替换数据源文件`);
+      await fetchData();
     } catch (err) {
       catgirlMessage.error('导入失败：' + (err instanceof Error ? err.message : '文件格式错误'));
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
-  }, []);
+  }, [fetchData]);
 
   const handleExportExcel = useCallback(async () => {
     try {
       const XLSX = await import('xlsx');
-      const headers = ['检索名', '名字', '赋分', '综合(观感)', '音', '制作', '张数', '作画', '制作组', '内容', '沉浸感', '剧情', '人设', '深度', '电波', '评价', '上映年月', '首刷时间', '备注', '', '', '', 'BGM', '', '', 'tag'];
-      const rows = [headers];
+      // 表头必须与 EXCEL_COL 的列号一一对应：
+      // 原来只有 26 项，数据却写到索引 39/42，导出的文件列会整体错位
+      const headers: string[] = Array(43).fill('');
+      headers[EXCEL_COL.SEARCH_ALIAS] = '检索名';
+      headers[EXCEL_COL.TITLE] = '名字';
+      headers[EXCEL_COL.OVERALL] = '综合(观感)';
+      headers[EXCEL_COL.AUDIO] = '音';
+      headers[EXCEL_COL.PRODUCTION] = '制作';
+      headers[EXCEL_COL.FRAME_COUNT] = '张数';
+      headers[EXCEL_COL.ANIMATION] = '作画';
+      headers[EXCEL_COL.STUDIO] = '制作组';
+      headers[EXCEL_COL.IMMERSION] = '沉浸感';
+      headers[EXCEL_COL.PLOT] = '剧情';
+      headers[EXCEL_COL.CHARACTER] = '人设';
+      headers[EXCEL_COL.DEPTH] = '深度';
+      headers[EXCEL_COL.VIBE] = '电波';
+      headers[EXCEL_COL.REVIEW] = '评价';
+      headers[EXCEL_COL.RELEASE_DATE] = '上映年月';
+      headers[EXCEL_COL.FIRST_WATCH] = '首刷时间';
+      headers[EXCEL_COL.NOTES] = '备注';
+      headers[EXCEL_COL.COL1] = '列1';
+      headers[EXCEL_COL.BGM_SCORE] = 'BGM';
+      headers[EXCEL_COL.ANILIST_SCORE] = 'AniList';
+      headers[EXCEL_COL.TAG] = 'tag';
+      headers[EXCEL_COL.CHAR1_NAME] = '角色1';
+      headers[EXCEL_COL.CHAR2_NAME] = '角色2';
+      headers[EXCEL_COL.CHAR3_NAME] = '角色3';
+      headers[EXCEL_COL.CHAR4_NAME] = '角色4';
+      headers[EXCEL_COL.TEMPLATE_JSON] = '模板JSON';
+      headers[EXCEL_COL.TEMPLATE_ID] = '模板ID';
+      headers[EXCEL_COL.LINK] = '链接';
+      headers[EXCEL_COL.EPISODES] = '总集数';
+      headers[EXCEL_COL.CURRENT_EP] = '当前集';
+      const rows: (string | number)[][] = [headers];
       for (const a of state.animeList) {
-        const row = Array(40).fill('');
+        const row: (string | number)[] = Array(43).fill('');
         row[EXCEL_COL.TITLE] = a.title;
         row[EXCEL_COL.SEARCH_ALIAS] = a.searchAlias || '';
         row[EXCEL_COL.STUDIO] = a.studio || '';
@@ -697,6 +826,15 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         row[EXCEL_COL.BGM_SCORE] = a.bangumiScore || '';
         row[EXCEL_COL.TAG] = a.tags.map((t) => t.name).join('/');
         row[EXCEL_COL.LINK] = a.link || '';
+        row[EXCEL_COL.NOTES] = a.notes || '';
+        row[EXCEL_COL.FIRST_WATCH] = a.watchDate || a.createdAt || '';
+        row[EXCEL_COL.POSTER_URL] = a.posterUrl || '';
+        row[EXCEL_COL.ANILIST_SCORE] = a.aniListScore ?? '';
+        row[EXCEL_COL.EPISODES] = a.episodes ?? '';
+        row[EXCEL_COL.CURRENT_EP] = a.currentEpisode ?? '';
+        // 角色名写入 AA/AD/AG/AJ
+        [EXCEL_COL.CHAR1_NAME, EXCEL_COL.CHAR2_NAME, EXCEL_COL.CHAR3_NAME, EXCEL_COL.CHAR4_NAME]
+          .forEach((col, i) => { if (a.characters?.[i]) row[col] = a.characters[i]; });
         for (const s of a.scores) {
           const col = DIMENSION_COL_MAP[s.dimensionKey];
           if (col !== undefined) row[col] = s.score;
@@ -722,6 +860,7 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     state,
     dispatch,
     fetchData,
+    refreshAnimeList,
     filteredAnime,
     handleAnimeClick,
     handleSaveAnime,

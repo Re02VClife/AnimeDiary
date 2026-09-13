@@ -1,9 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Popconfirm } from 'antd';
 import { DeleteOutlined } from '@ant-design/icons';
 import type { AnimeEntry, Dimension } from '../types';
 import { loadPosterPositions } from '../../features/anime-data/storage-service';
-import { getTemplate } from '../../features/anime-data/template-service';
+import { getTemplate, getPosterObjectPosition } from '../../features/anime-data/template-service';
+import { searchPoster } from '../../features/anime-data/excel-service';
+import { formatReleaseDateCn } from '../../core/date';
+import { formatScore } from '../../core/math';
 
 interface AnimeGridProps {
   animeList: AnimeEntry[];
@@ -23,6 +26,19 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
   templateDims,
 }) => {
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
+
+  /**
+   * 卡片海报自动补图（仅本次会话的内存，**不写库、不写 Excel**）
+   *
+   * 为什么卡片也补图：Excel 里没存海报的条目以前只能显示占位块，而详情面板却会实时搜给你看，
+   * 于是出现「点开有图、卡片没图」。这里让卡片滚到视口时也搜一次，但结果只放在内存：
+   * 搜错了不会污染数据（你可以在详情里删掉并拉黑），搜对了点「保存封面」才会真正持久化。
+   */
+  const [autoPosters, setAutoPosters] = useState<Record<string, string>>({});
+  const gridRef = useRef<HTMLDivElement>(null);
+  const queueRef = useRef<{ id: string; alias: string; title: string }[]>([]);
+  const runningRef = useRef(false);
+  const queuedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     setPositions(loadPosterPositions());
@@ -47,6 +63,53 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
     return tw > 0 ? ws / tw : 0;
   }, []);
 
+  /** 串行消费搜索队列：避免一次滚动就并发几十个请求把 AniList 打挂 */
+  const drainQueue = useCallback(async () => {
+    if (runningRef.current) return;
+    runningRef.current = true;
+    while (queueRef.current.length > 0) {
+      const job = queueRef.current.shift()!;
+      try {
+        const r = await searchPoster(job.alias, job.title);
+        if (r.posterUrl) {
+          setAutoPosters((prev) => (prev[job.id] ? prev : { ...prev, [job.id]: r.posterUrl }));
+        }
+      } catch {
+        /* 单条失败无所谓，保持占位块 */
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    runningRef.current = false;
+  }, []);
+
+  /** 卡片进入视口时排队搜索一次 */
+  useEffect(() => {
+    const root = gridRef.current;
+    if (!root || typeof IntersectionObserver === 'undefined') return undefined;
+    const targets = Array.from(root.querySelectorAll<HTMLElement>('[data-need-poster="1"]'));
+    if (targets.length === 0) return undefined;
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        let added = false;
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const el = entry.target as HTMLElement;
+          io.unobserve(el);
+          const id = el.dataset.animeId || '';
+          if (!id || queuedRef.current.has(id)) continue;
+          queuedRef.current.add(id);
+          queueRef.current.push({ id, alias: el.dataset.alias || '', title: el.dataset.title || '' });
+          added = true;
+        }
+        if (added) void drainQueue();
+      },
+      { rootMargin: '300px' },
+    );
+    targets.forEach((t) => io.observe(t));
+    return () => io.disconnect();
+  }, [animeList, drainQueue]);
+
   /** 批量模式下切换番剧选中 */
   const toggleAnimeSelect = useCallback((id: string) => {
     if (!onBatchAnimeChange) return;
@@ -65,22 +128,36 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
   }
 
   return (
-    <div className="anime-grid">
+    <div className="anime-grid" ref={gridRef}>
       {animeList.map((anime) => {
         // 当前维度分数
         let dimScore: string | null = null;
         if (activeDim === 'overall') {
           const ov = calcOverall(anime);
-          if (ov > 0) dimScore = `总评 ${ov.toFixed(2)}`;
+          if (ov > 0) dimScore = `总评 ${formatScore(ov)}`;
         } else if (activeDim === 'bgm' && anime.bangumiScore) {
-          dimScore = `BGM ${anime.bangumiScore}`;
+          dimScore = `BGM ${formatScore(anime.bangumiScore)}`;
         } else if (activeDim) {
           const s = anime.scores.find((sc) => sc.dimensionKey === activeDim);
           const label = (templateDims || []).find((d) => d.key === activeDim)?.label || activeDim;
-          if (s && s.score > 0) dimScore = `${label} ${s.score.toFixed(activeDim === 'vibe' ? 2 : 1)}`;
+          if (s && s.score > 0) dimScore = `${label} ${formatScore(s.score)}`;
         }
 
         const isSelected = batchMode && selectedBatchAnime?.includes(anime.id);
+        const autoUrl = autoPosters[anime.id];
+        const posterUrl = anime.posterUrl || autoUrl || '';
+        /** 是否来自"自动搜索"（用于角标提示，且用于触发懒加载） */
+        const isAuto = !anime.posterUrl && !!autoUrl;
+        const needPoster = !anime.posterUrl;
+        /**
+         * 海报裁剪位置：条目级拖拽位置优先，否则用所属模板的默认焦点。
+         * 角色立绘是全身竖图（实测宽高比 0.35，脸在最上方），而卡片容器是 3/4=0.75，
+         * object-fit:cover + 居中会裁掉顶部约 26% —— 脸正好被裁掉。
+         * 角色模板把焦点设成 '50% 0%' 后，卡片上能看到头和上半身。
+         */
+        const posterObjPos = getPosterObjectPosition(anime.templateId, positions[anime.id]);
+        /** 容器比例也跟随模板（番剧模板是 3/4，与 CSS 默认一致；角色模板是 1/2） */
+        const posterAspect = getTemplate(anime.templateId).layoutConfig?.posterAspectRatio;
 
         return (
           <div
@@ -90,7 +167,7 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
             onClick={() => batchMode ? toggleAnimeSelect(anime.id) : onAnimeClick(anime)}
           >
             {/* 海报区 */}
-            <div className="poster-wrap">
+            <div className="poster-wrap" style={posterAspect ? { aspectRatio: posterAspect } : undefined}>
               {/* 批量选择复选框 */}
               {batchMode && (
                 <div style={{
@@ -105,17 +182,28 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
                   {isSelected ? '✓' : ''}
                 </div>
               )}
-              {anime.posterUrl ? (
-                <img src={anime.posterUrl} alt={anime.title} loading="lazy"
+              {posterUrl ? (
+                <img src={posterUrl} alt={anime.title} loading="lazy"
                   data-poster-anime-id={anime.id}
-                  style={positions[anime.id] ? { objectPosition: `${positions[anime.id].x}% ${positions[anime.id].y}%` } : undefined}
+                  style={posterObjPos ? { objectPosition: posterObjPos } : undefined}
                   onError={(e) => {
                     e.currentTarget.style.display = 'none';
                     e.currentTarget.parentElement!.querySelector('.poster-placeholder')?.classList.remove('hidden');
                   }}
                 />
               ) : null}
-              <div className={`poster-placeholder${anime.posterUrl ? ' hidden' : ''}`}>🎬</div>
+              {/* 无海报（或尚未搜到）时占位；同时挂上懒加载标记 */}
+              <div
+                className={`poster-placeholder${posterUrl ? ' hidden' : ''}`}
+                data-need-poster={needPoster ? '1' : undefined}
+                data-anime-id={needPoster ? anime.id : undefined}
+                data-title={needPoster ? anime.title : undefined}
+                data-alias={needPoster ? (anime.searchAlias || '') : undefined}
+              >
+                🎬
+              </div>
+              {/* 自动搜到的图给个小角标，避免误以为是自己保存的 */}
+              {isAuto && <div className="poster-auto-badge">自动</div>}
 
               {/* 在看删除按钮 */}
               {onDeleteFromWatching && (
@@ -134,12 +222,12 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
 
             {/* 信息区 */}
             <div
-              className={`card-info${anime.posterUrl ? ' has-poster-bg' : ''}`}
-              style={anime.posterUrl ? { '--poster-url': `url(${anime.posterUrl})` } as React.CSSProperties : undefined}
+              className={`card-info${posterUrl ? ' has-poster-bg' : ''}`}
+              style={posterUrl ? { '--poster-url': `url(${posterUrl})` } as React.CSSProperties : undefined}
             >
               <div className="card-title" title={anime.title}>{anime.title}</div>
               <div className="card-meta">
-                <span>{anime.releaseDate || '未知'}</span>
+                <span>{anime.releaseDate ? formatReleaseDateCn(anime.releaseDate) : '未知'}</span>
                 {dimScore ? (
                   <span className="dim-score">{dimScore}</span>
                 ) : anime.bangumiScore ? (

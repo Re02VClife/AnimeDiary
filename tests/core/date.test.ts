@@ -2,7 +2,7 @@
  * core/date 单元测试
  */
 import { describe, it, expect } from 'vitest';
-import { excelSerialToDate, dateToExcelSerial, parseReleaseDate, parseNumber } from '../../core/date';
+import { excelSerialToDate, dateToExcelSerial, parseReleaseDate, formatReleaseDateCn, parseNumber } from '../../core/date';
 
 describe('excelSerialToDate', () => {
   it('序列号 0 或负数返回空', () => {
@@ -58,6 +58,63 @@ describe('parseReleaseDate', () => {
 
   it('空字符串返回空', () => {
     expect(parseReleaseDate('')).toBe('');
+  });
+
+  // 回归：用户表里出现过 Excel 日期序列号被当成字符串存下来，
+  // 原来会原样返回 "46138"，前端 dayjs 再把前 4 位当成年份 → 日期面板翻到 4613 年
+  it('"46138"（Excel 日期序列号）→ "2026-04"', () => {
+    expect(parseReleaseDate('46138')).toBe('2026-04');
+  });
+
+  it('点分隔 "26.7" → "2026-07"', () => {
+    expect(parseReleaseDate('26.7')).toBe('2026-07');
+  });
+
+  it('四位年份 + 未补零月份 "2026-4" → "2026-04"', () => {
+    expect(parseReleaseDate('2026-4')).toBe('2026-04');
+  });
+
+  it('斜杠全称 "2021/04" → "2021-04"', () => {
+    expect(parseReleaseDate('2021/04')).toBe('2021-04');
+  });
+
+  it('中文 "2021年4月" → "2021-04"', () => {
+    expect(parseReleaseDate('2021年4月')).toBe('2021-04');
+  });
+
+  it('完整日期 "2021-04-17" 只取年月', () => {
+    expect(parseReleaseDate('2021-04-17')).toBe('2021-04');
+  });
+
+  it('只填年份 "2021" → "2021-01"', () => {
+    expect(parseReleaseDate('2021')).toBe('2021-01');
+  });
+
+  it('无法识别时原样返回', () => {
+    expect(parseReleaseDate('待定')).toBe('待定');
+  });
+
+  it('月份越界不硬凑（"2021-13" 原样返回）', () => {
+    expect(parseReleaseDate('2021-13')).toBe('2021-13');
+  });
+});
+
+describe('formatReleaseDateCn', () => {
+  it('"2021-04" → "2021年4月"', () => {
+    expect(formatReleaseDateCn('2021-04')).toBe('2021年4月');
+  });
+
+  it('"23/10" → "2023年10月"', () => {
+    expect(formatReleaseDateCn('23/10')).toBe('2023年10月');
+  });
+
+  it('空值返回空', () => {
+    expect(formatReleaseDateCn('')).toBe('');
+    expect(formatReleaseDateCn(undefined)).toBe('');
+  });
+
+  it('无法识别时原样返回', () => {
+    expect(formatReleaseDateCn('待定')).toBe('待定');
   });
 });
 

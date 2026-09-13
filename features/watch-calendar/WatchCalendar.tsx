@@ -5,6 +5,7 @@
 import { useMemo, useState } from 'react';
 import { Select, Segmented } from 'antd';
 import type { AnimeEntry } from '../../src/types';
+import { CHARACTER_TEMPLATE_ID } from '../../src/types';
 
 interface WatchTimelineProps {
   animeList: AnimeEntry[];
@@ -23,8 +24,10 @@ const WatchTimeline: React.FC<WatchTimelineProps> = ({ animeList, onAnimeClick }
 
   // 按观看时间分组
   const timelineData = useMemo(() => {
-    // 筛选有观看时间的条目
-    const dated = animeList.filter((a) => a.createdAt && a.createdAt.length >= 7);
+    // 筛选有观看时间的条目，排除角色卡
+    const dated = animeList.filter(
+      (a) => a.templateId !== CHARACTER_TEMPLATE_ID && a.createdAt && a.createdAt.length >= 7,
+    );
     const sorted = [...dated].sort((a, b) => {
       const cmp = (a.createdAt || '').localeCompare(b.createdAt || '');
       return sortOrder === 'desc' ? -cmp : cmp;

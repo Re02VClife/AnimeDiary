@@ -2,7 +2,7 @@
  * core/math 单元测试
  */
 import { describe, it, expect } from 'vitest';
-import { cosineSimilarity, jaccardSimilarity, jaccardArrays, calcOverall } from '../../core/math';
+import { cosineSimilarity, jaccardSimilarity, jaccardArrays, calcOverall, round2, formatScore } from '../../core/math';
 
 describe('cosineSimilarity', () => {
   it('相同向量返回 1', () => {
@@ -69,18 +69,18 @@ describe('calcOverall', () => {
     { key: 'overall', weight: 0 }, // 应被跳过
   ];
 
-  it('全部有分数时计算加权平均', () => {
+  it('全部有分数时计算加权平均（结果收敛到两位小数）', () => {
     const scores = { audio: 9, plot: 8, vibe: 10 };
-    // (9*0.12 + 8*0.20 + 10*0.05) / (0.12+0.20+0.05) = (1.08+1.6+0.5)/0.37 = 3.18/0.37 ≈ 8.5946
+    // (9*0.12 + 8*0.20 + 10*0.05) / (0.12+0.20+0.05) = 3.18/0.37 ≈ 8.5946 → 8.59
     const result = calcOverall(scores, dims);
-    expect(result).toBeCloseTo(3.18 / 0.37, 5);
+    expect(result).toBeCloseTo(8.59, 5);
   });
 
   it('部分无分数时仅计算有分数的维度', () => {
     const scores = { audio: 10, vibe: 6 };
-    // (10*0.12 + 6*0.05) / 0.17 = 1.5/0.17 ≈ 8.8235
+    // (10*0.12 + 6*0.05) / 0.17 = 1.5/0.17 ≈ 8.8235 → 8.82
     const result = calcOverall(scores, dims);
-    expect(result).toBeCloseTo(1.5 / 0.17, 5);
+    expect(result).toBeCloseTo(8.82, 5);
   });
 
   it('全部无分数返回 0', () => {
@@ -91,5 +91,44 @@ describe('calcOverall', () => {
     const scores = { audio: 8, overall: 999 };
     // (8*0.12) / 0.12 = 8
     expect(calcOverall(scores, dims)).toBeCloseTo(8, 5);
+  });
+});
+
+describe('round2 / formatScore', () => {
+  it('抹掉 Excel 公式带来的浮点噪声', () => {
+    // 这些都是真实数据里出现过的值（赋分/综合/电波/偏差列）
+    expect(round2(7.500000000000001)).toBe(7.5);
+    expect(round2(9.070000000000006)).toBe(9.07);
+    expect(round2(9.72000000000004)).toBe(9.72);
+    expect(round2(-3.590000000000046)).toBe(-3.59);
+    expect(round2(10.265625000000009)).toBe(10.27);
+    expect(round2(8.934999999999999)).toBe(8.94);
+    expect(round2(8.935)).toBe(8.94);
+  });
+
+  it('本身就干净的分数不变', () => {
+    expect(round2(8.5)).toBe(8.5);
+    expect(round2(10)).toBe(10);
+    expect(round2(0)).toBe(0);
+  });
+
+  it('非法数值返回 0', () => {
+    expect(round2(NaN)).toBe(0);
+    expect(round2(Infinity)).toBe(0);
+  });
+
+  it('formatScore 最多两位小数、不补零', () => {
+    expect(formatScore(9.72000000000004)).toBe('9.72');
+    expect(formatScore(8.5)).toBe('8.5');
+    expect(formatScore(4.5)).toBe('4.5');
+    expect(formatScore(10)).toBe('10');
+    expect(formatScore(9.07)).toBe('9.07');
+  });
+
+  it('formatScore 未评分返回占位符', () => {
+    expect(formatScore(0)).toBe('-');
+    expect(formatScore(undefined)).toBe('-');
+    expect(formatScore(null)).toBe('-');
+    expect(formatScore(0, '未评分')).toBe('未评分');
   });
 });

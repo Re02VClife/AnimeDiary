@@ -33,6 +33,28 @@ export function jaccardArrays(a: string[], b: string[]): number {
 }
 
 /**
+ * 统一保留两位小数。
+ * Excel 的公式列（赋分/综合/电波/偏差/较客观评分）算出来常带浮点噪声，
+ * 例如 7.500000000000001、9.72000000000004，读进来会原样显示在维度评分输入框里。
+ * 数据入口和写回出口都收敛到两位小数。
+ */
+export function round2(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  // 先按数量级补一个极小的偏移，抵消 8.935 → 8.934999999999999 这类表示误差
+  const nudged = n * 100 + (n >= 0 ? 1e-6 : -1e-6);
+  return Math.round(nudged) / 100;
+}
+
+/**
+ * 分数字符串：最多两位小数、不补零（9.72 / 9.6 / 10）。
+ * 未评分（0 / 空 / 非法）返回 empty，默认 '-'。
+ */
+export function formatScore(n: number | undefined | null, empty = '-'): string {
+  if (n === undefined || n === null || !Number.isFinite(n) || n <= 0) return empty;
+  return String(round2(n));
+}
+
+/**
  * 按加权维度计算总评
  * @param scores 维度分数字典 { dimensionKey: score }
  * @param dimensions 维度定义列表（含 key 和 weight），排除 overall
@@ -52,5 +74,5 @@ export function calcOverall(
       totalWeight += dim.weight;
     }
   }
-  return totalWeight > 0 ? total / totalWeight : 0;
+  return totalWeight > 0 ? round2(total / totalWeight) : 0;
 }

@@ -11,6 +11,7 @@ import TopBar from './components/TopBar';
 import AnimeGrid from './components/AnimeGrid';
 import AnimeDetailModal from './components/AnimeDetailModal';
 import SearchAddModal from '../features/search-add/SearchAddModal';
+import MediaCompleteModal from '../features/media-complete/MediaCompleteModal';
 import TemplateManager from './components/TemplateManager';
 import { loadTemplates } from '../features/anime-data/template-service';
 import { getVisibleCategories } from './types';
@@ -19,12 +20,15 @@ import AppIcon from './theme/AppIcon';
 import AISettings from '../features/ai-analysis/AISettings';
 import TasteReportModal from '../features/ai-analysis/TasteReportModal';
 import PosterFlipOverlay from './components/PosterFlipOverlay';
+import TitleBar from './components/TitleBar';
 import './App.css';
 
 const { Sider, Content } = Layout;
 
 const App: React.FC = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+  /** 「数据补全」面板开关（本地模态，不入全局 reducer） */
+  const [mediaCompleteOpen, setMediaCompleteOpen] = useState(false);
 
   // ── FLIP 海报过渡状态 ──
   const [flipState, setFlipState] = useState<{
@@ -41,6 +45,7 @@ const App: React.FC = () => {
     state,
     dispatch,
     fetchData,
+    refreshAnimeList,
     filteredAnime,
     handleAnimeClick,
     handleSaveAnime,
@@ -164,7 +169,10 @@ const App: React.FC = () => {
   }
 
   return (
-    <Layout className="app-layout">
+    <>
+      {/* 桌面版自定义标题栏；浏览器里 TitleBar 自身不渲染 */}
+      <TitleBar />
+      <Layout className="app-layout">
       <Sider
         width={300}
         collapsedWidth={0}
@@ -205,6 +213,7 @@ const App: React.FC = () => {
             searchMode={searchMode}
             onSearchModeChange={(m) => dispatch({ type: 'SET_SEARCH_MODE', payload: m })}
             onAddAnime={() => dispatch({ type: 'OPEN_MODAL', modal: 'search' })}
+            onCompleteData={() => setMediaCompleteOpen(true)}
             templates={templates}
             activeTemplateId={activeTemplateId}
             onTemplateChange={(id: string) => dispatch({ type: 'SET_ACTIVE_TEMPLATE', payload: id })}
@@ -216,8 +225,8 @@ const App: React.FC = () => {
             <div style={{ padding: '4px 0', fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               {sortByDim && (
                 <>
-                  <span>按 <span style={{ color: 'var(--brand-primary)' }}>{sortByDim === 'namesort' ? '番名' : sortByDim === 'bgm' ? 'BGM' : sortByDim}</span> 排序</span>
-                  <span style={{ color: 'var(--text-muted)' }}>{sortOrder === 'desc' ? '↓高到低' : '↑低到高'}</span>
+                  <span>按 <span style={{ color: 'var(--brand-primary)' }}>{sortByDim === 'namesort' ? '番名' : sortByDim === 'bgm' ? 'BGM' : sortByDim === 'watchDate' ? '观看时间' : sortByDim}</span> 排序</span>
+                  <span style={{ color: 'var(--text-muted)' }}>{sortByDim === 'watchDate' ? (sortOrder === 'desc' ? '↓新到旧' : '↑旧到新') : (sortOrder === 'desc' ? '↓高到低' : '↑低到高')}</span>
                   <Button size="small" type="text" style={{ color: 'var(--text-secondary)', fontSize: 11 }}
                     onClick={() => dispatch({ type: 'SET_SORT', dimKey: null, order: 'desc' })}>清除排序</Button>
                 </>
@@ -322,6 +331,18 @@ const App: React.FC = () => {
         activeTemplateId={activeTemplateId}
       />
 
+      <MediaCompleteModal
+        open={mediaCompleteOpen}
+        onClose={() => setMediaCompleteOpen(false)}
+        animeList={state.animeList}
+        activeTemplateId={activeTemplateId}
+        templates={templates}
+        // 用静默刷新而不是 fetchData：后者会把全局 loading 置 true，
+        // 导致 App 提前 return 整屏 spinner、把本面板连 state 一起卸载掉，
+        // 用户就再也看不到「已写入 N 条」的结果了。
+        onApplied={refreshAnimeList}
+      />
+
       <TemplateManager
         open={templateManagerOpen}
         onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'templateManager' })}
@@ -363,7 +384,8 @@ const App: React.FC = () => {
           onDone={() => setFlipState(null)}
         />
       )}
-    </Layout>
+      </Layout>
+    </>
   );
 };
 

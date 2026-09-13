@@ -786,7 +786,7 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
                     </AntTag>
                     {selectedAnime.bangumiScore && (
                       <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                        BGM: {selectedAnime.bangumiScore.toFixed(1)}
+                        BGM: {selectedAnime.bangumiScore.toFixed(2)}
                       </span>
                     )}
                     {selectedAnime.studio && (
