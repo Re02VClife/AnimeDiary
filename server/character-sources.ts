@@ -194,8 +194,19 @@ export interface CharacterClientOptions {
 export interface CharacterClient {
   /** 按标题搜作品（Bangumi v0 搜索），返回带 type 的候选 */
   searchWorks(keyword: string, types?: number[], limit?: number): Promise<WorkCandidate[]>;
+  /**
+   * 只解析作品（不发角色请求）。
+   * 拆出来是为了让界面能分步显示进度：先「找到作品」，再「拉角色列表」，
+   * 再按批「抓详情」——一次 resolve 要十几秒，整段没有任何反馈。
+   */
+  resolveWork(workTitle: string, types?: number[]): Promise<{ work: WorkCandidate | null; workScore: number }>;
   /** 作品的角色列表（1 次请求拿全，含立绘与声优） */
   listCharacters(subjectId: string | number): Promise<CharacterEntry[]>;
+  /**
+   * 批量取角色详情（中文名/生日/血型/身高…）。
+   * 由调用方分批（每批小一点），这样进度条能按角色推进，而不是卡在一个 30 连抓上。
+   */
+  getCharacterDetails(ids: string[]): Promise<{ characters: CharacterEntry[]; errors: string[] }>;
   /** 角色详情（infobox → 中文名/生日/血型/身高/体重/BWH/引用来源） */
   getCharacter(sourceId: string | number): Promise<CharacterEntry | null>;
   /** 角色出现在哪些作品里 */
@@ -297,8 +308,7 @@ export function createCharacterClient(options: CharacterClientOptions = {}): Cha
   }
 
   // ── Bangumi：角色列表 ──
-  function mapVoiceActors(raw: unknown): CharacterVoiceActor[] {
-    if (!Array.isArray(raw)) return [];
+  function mapVoiceActors(raw: unknown): CharacterVoiceActor[] {    if (!Array.isArray(raw)) return [];
     return raw
       .filter((a) => a && typeof a === 'object')
       .map((a: any) => ({
@@ -343,6 +353,38 @@ export function createCharacterClient(options: CharacterClientOptions = {}): Cha
     const json = await getJson(bangumiThrottle, `${BANGUMI_API}/v0/subjects/${encodeURIComponent(String(subjectId))}/characters`);
     const list: any[] = Array.isArray(json) ? json : [];
     return sortCharactersByRelation(list.map(mapListedCharacter));
+  }
+
+  /**
+   * 只解析作品，不发角色请求。
+   * 界面靠它把「找到作品」和「抓角色」分成两步，进度才有中间状态可显示。
+   */
+  async function resolveWork(
+    workTitle: string,
+    types?: number[],
+  ): Promise<{ work: WorkCandidate | null; workScore: number }> {
+    const candidates = await searchWorks(workTitle, types, 10);
+    const picked = pickWorkCandidate(candidates, workTitle, types);
+    return { work: picked ? picked.item : null, workScore: picked ? picked.score : 0 };
+  }
+
+  /**
+   * 批量取角色详情。由调用方分批 —— 一次 30 个要走 30 × 400ms 的节流，
+   * 十几秒里界面完全没反馈；分小批就能按角色推进进度条。
+   * 单个失败只记进 errors，不影响整批。
+   */
+  async function getCharacterDetails(ids: string[]): Promise<{ characters: CharacterEntry[]; errors: string[] }> {
+    const characters: CharacterEntry[] = [];
+    const errors: string[] = [];
+    for (const id of ids) {
+      try {
+        const detail = await getCharacter(id);
+        if (detail) characters.push(detail);
+      } catch (e) {
+        errors.push(`${id}: ${describeError(e)}`);
+      }
+    }
+    return { characters, errors };
   }
 
   // ── Bangumi：角色详情（中文名/生日/血型…都在 infobox 里）──
@@ -746,6 +788,12 @@ export function createCharacterClient(options: CharacterClientOptions = {}): Cha
             character.birthday = character.birthday ?? ani.birthday;
             character.bloodType = character.bloodType ?? ani.bloodType;
             character.gender = character.gender ?? ani.gender;
+            // Bangumi 有些角色没有立绘（实测 101 张角色卡里 18 张因此没图），
+            // 用 AniList 的补上；两个图床都在白名单里，下载走同一条代理感知链路
+            if (!character.imageUrl && ani.imageUrl) {
+              character.imageUrl = ani.imageUrl;
+              character.imageThumbUrl = ani.imageUrl;
+            }
             // 详细人设：AniList 的更长，resolveProfile 会取长的那份
             character.profile = resolveProfile(character.summary, ani.description);
             // Bangumi 有 7/91 的角色没有声优记录，用 AniList 的日语 CV 兜底
@@ -779,8 +827,7 @@ export function createCharacterClient(options: CharacterClientOptions = {}): Cha
   }
 
   /** 把列表项与详情合并：详情给中文名/生日，列表给立绘/声优/关系 */
-  function mergeDetail(listed: CharacterEntry, detail: CharacterEntry): CharacterEntry {
-    return {
+  function mergeDetail(listed: CharacterEntry, detail: CharacterEntry): CharacterEntry {    return {
       ...listed,
       nameCn: detail.nameCn ?? listed.nameCn,
       gender: detail.gender ?? listed.gender,
@@ -802,7 +849,9 @@ export function createCharacterClient(options: CharacterClientOptions = {}): Cha
 
   return {
     searchWorks,
+    resolveWork,
     listCharacters,
+    getCharacterDetails,
     getCharacter,
     getCharacterWorks,
     getPerson,
