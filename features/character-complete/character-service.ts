@@ -168,6 +168,136 @@ export async function downloadPortrait(characterName: string, url: string): Prom
   return data.url as string;
 }
 
+/** 只解析作品（不发角色请求），用于把解析拆成有中间反馈的几步 */
+export async function resolveWork(
+  workTitle: string,
+  types?: number[],
+): Promise<{ work: WorkCandidate | null; workScore: number; workLowConfidence: boolean }> {
+  const qs = new URLSearchParams({ workTitle });
+  if (types && types.length > 0) qs.set('types', types.join(','));
+  const resp = await fetch(`/api/character/work?${qs.toString()}`);
+  const data = await resp.json().catch(() => null);
+  if (!resp.ok) throw new Error((data && data.error) || `HTTP ${resp.status}`);
+  return data as { work: WorkCandidate | null; workScore: number; workLowConfidence: boolean };
+}
+
+/** 只取某作品的角色列表（含立绘/声优/关系，但不含中文名生日） */
+export async function fetchCharacterList(subjectId: string): Promise<CharacterEntry[]> {
+  const resp = await fetch(`/api/character/list?subjectId=${encodeURIComponent(subjectId)}`);
+  const data = await resp.json().catch(() => null);
+  if (!resp.ok) throw new Error((data && data.error) || `HTTP ${resp.status}`);
+  return (data && data.characters) || [];
+}
+
+/**
+ * 批量取角色详情。调用方按小批调用（配合进度条），单批上限 40。
+ * 返回的条目只有详情字段，需要与列表项合并（列表才有关系/立绘/声优）。
+ */
+export async function fetchCharacterDetails(ids: string[]): Promise<{ characters: CharacterEntry[]; errors: string[] }> {
+  const resp = await fetch('/api/character/details', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  const data = await resp.json().catch(() => null);
+  if (!resp.ok) throw new Error((data && data.error) || `HTTP ${resp.status}`);
+  return { characters: (data && data.characters) || [], errors: (data && data.errors) || [] };
+}
+
+/** 把详情字段并进列表项（列表给关系/立绘/声优，详情给中文名/生日/血型/身高） */
+export function mergeDetailIntoListed(listed: CharacterEntry, detail: CharacterEntry): CharacterEntry {
+  return {
+    ...listed,
+    nameCn: detail.nameCn ?? listed.nameCn,
+    gender: detail.gender ?? listed.gender,
+    birthday: detail.birthday ?? listed.birthday,
+    bloodType: detail.bloodType ?? listed.bloodType,
+    height: detail.height ?? listed.height,
+    weight: detail.weight ?? listed.weight,
+    bwh: detail.bwh ?? listed.bwh,
+    referenceUrl: detail.referenceUrl ?? listed.referenceUrl,
+    aliases: detail.aliases.length > 0 ? detail.aliases : listed.aliases,
+    imageUrl: listed.imageUrl ?? detail.imageUrl,
+    imageThumbUrl: listed.imageThumbUrl ?? detail.imageThumbUrl,
+    // 列表里的日文简介更短，详情给的人设更全，取更长的那个
+    profile: detail.profile && (!listed.profile || detail.profile.text.length > listed.profile.text.length)
+      ? detail.profile
+      : listed.profile,
+    detailLoaded: true,
+  };
+}
+
+// ── 合并（同角色重复建卡时用） ──
+
+export interface MergeResult {
+  customFields: Record<string, string>;
+  /** 本次补齐了哪些字段（用于给用户看「合并了什么」） */
+  filled: string[];
+  /** 是否真的变了 */
+  changed: boolean;
+}
+
+/**
+ * 把新抓到的角色资料合并进已有角色卡。
+ *
+ * 为什么需要：同一角色会在多部作品里出现（同系列续作、客串），
+ * 从不同作品解析时会各自建一张卡 —— 实测 101 张卡里有 10 组同名重复。
+ * 合并时**只补空、不覆盖**：你自己填过的声优/生日/人设不会被抓取结果冲掉，
+ * 评分和评价更是不碰（那是你要打的分）。
+ * 所属作品是并集 —— 这就是「一对多绑定」：一张卡挂多部作品。
+ */
+export function mergeCharacterCardData(
+  existingCustomFields: Record<string, string | number> | undefined,
+  character: CharacterEntry,
+  workName: string,
+): MergeResult {
+  const existing = { ...(existingCustomFields || {}) };
+  const asText = (v: unknown) => (v === undefined || v === null ? '' : String(v));
+  const incoming = buildCharacterCardFields({
+    works: [{ titleCn: workName }],
+    voiceActors: character.voiceActors,
+    birthday: character.birthday,
+    bloodType: character.bloodType,
+    height: character.height,
+    weight: character.weight,
+    profile: character.profile ? character.profile.text : null,
+  });
+
+  const filled: string[] = [];
+
+  // 所属作品：并集（一对多的关键），去重后受 MAX_SOURCE_WORKS 限制
+  const works = new Set(
+    [...asText(existing.char_source).split('/'), ...incoming.char_source.split('/')]
+      .map((w) => w.trim())
+      .filter(Boolean),
+  );
+  const mergedWorks = [...works].slice(0, 6).join('/');
+  if (mergedWorks !== asText(existing.char_source)) {
+    existing.char_source = mergedWorks;
+    filled.push('所属作品');
+  }
+
+  // 其余字段只补空
+  const fillIfEmpty = (key: 'char_cv' | 'char_birthday' | 'char_profile', label: string) => {
+    if (asText(existing[key]).trim()) return;
+    const next = incoming[key];
+    if (!next) return;
+    existing[key] = next;
+    filled.push(label);
+  };
+  fillIfEmpty('char_cv', '声优');
+  fillIfEmpty('char_birthday', '生日/属性');
+  fillIfEmpty('char_profile', '详细人设');
+
+  return {
+    customFields: Object.fromEntries(
+      Object.entries(existing).map(([k, v]) => [k, asText(v)]),
+    ),
+    filled,
+    changed: filled.length > 0,
+  };
+}
+
 // ── 匹配与建卡 ──
 
 export interface RecordedMatch {

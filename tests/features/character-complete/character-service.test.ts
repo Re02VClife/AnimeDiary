@@ -10,6 +10,8 @@ import {
   resolveSubjectTypes,
   matchRecordedNames,
   buildCharacterCardEntry,
+  mergeCharacterCardData,
+  mergeDetailIntoListed,
 } from '../../../features/character-complete/character-service';
 import type { CharacterEntry, WorkCandidate } from '../../../features/character-complete/character-service';
 import { CHARACTER_TEMPLATE_ID } from '../../../src/types';
@@ -189,5 +191,114 @@ describe('buildCharacterCardEntry', () => {
     const a = buildCharacterCardEntry({ character: full, fallbackWork: work });
     const b = buildCharacterCardEntry({ character: full, fallbackWork: work });
     expect(a.id).not.toBe(b.id);
+  });
+});
+
+describe('mergeCharacterCardData（重复角色卡的合并）', () => {
+  const character = (partial: Partial<CharacterEntry> = {}): CharacterEntry => ({
+    sourceId: '86246', name: 'フリーレン', nameCn: '芙莉莲', relation: '主角',
+    summary: null, aliases: [], gender: null,
+    birthday: '09-27', bloodType: 'A', height: '168', weight: null, bwh: null,
+    referenceUrl: null, imageUrl: null, imageThumbUrl: null,
+    voiceActors: [{ sourceId: '1', name: '種﨑敦美', imageUrl: null, summary: null }],
+    works: [], aniListId: null, age: null, popularity: null,
+    profile: { text: '抓来的人设', source: 'bangumi', lang: 'ja' },
+    detailLoaded: true, ...partial,
+  });
+
+  it('所属作品取并集 —— 这就是「一对多绑定」', () => {
+    const r = mergeCharacterCardData(
+      { char_source: '葬送的芙莉莲', char_cv: '種﨑敦美' },
+      character(), '葬送的芙莉莲 第二季',
+    );
+    expect(r.customFields.char_source).toBe('葬送的芙莉莲/葬送的芙莉莲 第二季');
+    expect(r.filled).toContain('所属作品');
+  });
+
+  it('作品去重：同作品重复合并不新增', () => {
+    const r = mergeCharacterCardData({ char_source: '葬送的芙莉莲' }, character(), '葬送的芙莉莲');
+    expect(r.customFields.char_source).toBe('葬送的芙莉莲');
+    expect(r.filled).not.toContain('所属作品');
+  });
+
+  it('回归：只补空、不覆盖 —— 你自己填过的内容不能被抓取结果冲掉', () => {
+    const r = mergeCharacterCardData({
+      char_source: '葬送的芙莉莲',
+      char_cv: '我手填的声优',
+      char_birthday: '我自己写的属性',
+      char_profile: '我写的长人设',
+    }, character(), '葬送的芙莉莲');
+    expect(r.customFields.char_cv).toBe('我手填的声优');
+    expect(r.customFields.char_birthday).toBe('我自己写的属性');
+    expect(r.customFields.char_profile).toBe('我写的长人设');
+    expect(r.filled).toEqual([]);
+    expect(r.changed).toBe(false);
+  });
+
+  it('空字段会被补上，并报告补了哪些', () => {
+    const r = mergeCharacterCardData({ char_source: '葬送的芙莉莲' }, character(), '葬送的芙莉莲');
+    expect(r.customFields.char_cv).toBe('種﨑敦美');
+    expect(r.customFields.char_birthday).toBe('生日09-27 / 血型A / 身高168');
+    expect(r.customFields.char_profile).toBe('抓来的人设');
+    expect(r.filled).toEqual(expect.arrayContaining(['声优', '生日/属性', '详细人设']));
+    expect(r.changed).toBe(true);
+  });
+
+  it('原卡片没有 customFields 时也能合并（不会崩）', () => {
+    const r = mergeCharacterCardData(undefined, character(), '葬送的芙莉莲');
+    expect(r.customFields.char_source).toBe('葬送的芙莉莲');
+    expect(r.customFields.char_cv).toBe('種﨑敦美');
+  });
+
+  it('所属作品有上限，不会无限增长', () => {
+    const many = Array.from({ length: 8 }, (_, i) => `作品${i}`).join('/');
+    const r = mergeCharacterCardData({ char_source: many }, character(), '新作品');
+    expect(r.customFields.char_source.split('/').length).toBeLessThanOrEqual(6);
+  });
+
+  it('数值型旧值会转成字符串（Excel 里可能是数字）', () => {
+    const r = mergeCharacterCardData({ char_source: 'A', char_birthday: 123 as unknown as string }, character(), 'A');
+    expect(typeof r.customFields.char_birthday).toBe('string');
+  });
+});
+
+describe('mergeDetailIntoListed（列表项 + 详情）', () => {
+  const listed = (): CharacterEntry => ({
+    sourceId: '1', name: 'フリーレン', nameCn: null, relation: '主角',
+    summary: '日文短简介', aliases: [], gender: null, birthday: null, bloodType: null,
+    height: null, weight: null, bwh: null, referenceUrl: null,
+    imageUrl: 'https://lain.bgm.tv/list-medium.jpg', imageThumbUrl: 'https://lain.bgm.tv/grid.jpg',
+    voiceActors: [{ sourceId: '9', name: '種﨑敦美', imageUrl: null, summary: null }],
+    works: [], aniListId: null, age: null, popularity: null,
+    profile: { text: '短', source: 'bangumi', lang: 'ja' }, detailLoaded: false,
+  });
+  const detail = (): CharacterEntry => ({
+    ...listed(), nameCn: '芙莉莲', birthday: '09-27', gender: 'female',
+    imageUrl: 'https://lain.bgm.tv/detail-large.jpg',
+    profile: { text: '长得多的人设文本', source: 'anilist', lang: 'en' }, detailLoaded: true,
+  });
+
+  it('详情补上中文名/生日/性别，列表的立绘与声优保留', () => {
+    const m = mergeDetailIntoListed(listed(), detail());
+    expect(m.nameCn).toBe('芙莉莲');
+    expect(m.birthday).toBe('09-27');
+    expect(m.gender).toBe('female');
+    // 列表的立绘优先（列表给的是中图，详情给的是大图，但列表已有就不覆盖）
+    expect(m.imageUrl).toBe('https://lain.bgm.tv/list-medium.jpg');
+    expect(m.voiceActors[0].name).toBe('種﨑敦美');
+    expect(m.detailLoaded).toBe(true);
+  });
+
+  it('人设取更长的那份', () => {
+    expect(mergeDetailIntoListed(listed(), detail()).profile?.text).toBe('长得多的人设文本');
+    expect(mergeDetailIntoListed(listed(), detail()).profile?.source).toBe('anilist');
+  });
+
+  it('详情缺字段时保留列表的值', () => {
+    const thin = { ...detail(), nameCn: null, birthday: null, gender: null };
+    const m = mergeDetailIntoListed(listed(), thin);
+    expect(m.nameCn).toBeNull();
+    expect(m.relation).toBe('主角');
+    expect(m.imageUrl).toBe('https://lain.bgm.tv/list-medium.jpg');
   });
 });

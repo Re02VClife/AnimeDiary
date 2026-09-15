@@ -675,6 +675,59 @@ export async function saveCharacterNames(entry: AnimeEntry, names: string[]): Pr
   if (data.error) throw new Error(data.error);
 }
 
+/**
+ * 只写角色卡的资料列：TEMPLATE_JSON（自定义字段）、以及**仅当需要时**的海报与链接。
+ *
+ * 用于「合并重复角色卡」和「补齐缺失立绘/资料」：已有卡上你自己打的分、
+ * 写的评价、标签、分类都不该被动，所以不走 mapAnimeToUpdates（那会整行写回）。
+ * TEMPLATE_JSON 里含 scores，这里原样带上（只重写，不改值）。
+ */
+export async function saveCharacterCardData(
+  entry: AnimeEntry,
+  payload: { customFields: Record<string, string>; posterUrl?: string; link?: string },
+): Promise<void> {
+  const rowIndex = entry.excelRowIndex;
+  if (rowIndex === undefined) throw new Error('该角色卡还没有 Excel 行号，无法写入');
+  const expectedTitle = entry.excelTitleSnapshot ?? entry.title;
+  const updates: Array<{ sheetName: string; rowIndex: number; colIndex: number; value: string; expectedTitle: string }> = [{
+    sheetName: MAIN_SHEET,
+    rowIndex,
+    colIndex: EXCEL_COL.TEMPLATE_JSON,
+    // 非默认模板的评分与自定义字段都序列化在这一列
+    value: JSON.stringify({ scores: entry.scores ?? [], customFields: payload.customFields }),
+    expectedTitle,
+  }];
+  // 海报只在「要补一张新的」时写，避免把用户自己换过的图冲掉
+  if (payload.posterUrl && isWritablePosterUrl(payload.posterUrl)) {
+    updates.push({ sheetName: MAIN_SHEET, rowIndex, colIndex: EXCEL_COL.POSTER_URL, value: payload.posterUrl, expectedTitle });
+  }
+  if (payload.link) {
+    updates.push({ sheetName: MAIN_SHEET, rowIndex, colIndex: EXCEL_COL.LINK, value: payload.link, expectedTitle });
+  }
+
+  const response = await fetch(`${API_BASE}/write`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as
+      | { error?: string; conflicts?: { rowIndex: number; expected: string; actual: string; ambiguous?: boolean }[] }
+      | null;
+    if (response.status === 409 && body?.conflicts?.length) {
+      const c = body.conflicts[0];
+      throw new Error(
+        c.ambiguous
+          ? `表中有多行标题都是「${c.expected}」，无法确定该写哪一行 —— 请刷新页面后重试（本次未写入任何数据）。`
+          : `Excel 中第 ${c.rowIndex + 1} 行现在是「${c.actual || '(空)'}」，不是「${c.expected}」。请刷新页面后重试（本次未写入任何数据）。`,
+      );
+    }
+    throw new Error(body?.error || `HTTP ${response.status}`);
+  }
+  const data = await response.json();
+  if (data.error) throw new Error(data.error);
+}
+
 /** 获取 Excel 文件信息 */
 export async function getExcelInfo(): Promise<{ exists: boolean; path?: string; size?: number }> {
   try {

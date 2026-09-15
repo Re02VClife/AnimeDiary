@@ -1429,6 +1429,74 @@ export function createApiHandler({ DATA_DIR, fetchImpl }: ApiContext) {
         // 图床白名单已含 lain.bgm.tv / s4.anilist.co，不必再开一条写文件的路由。
         const character = createCharacterClient({ fetchImpl });
 
+        /**
+         * GET /api/character/work?workTitle=&types=2,4
+         * 只解析作品，不发角色请求。界面靠它把「找作品」与「抓角色」分步，
+         * 否则一次 resolve 要十几秒而中途没有任何反馈。
+         */
+        router.use('/api/character/work', async (req, res) => {
+          res.setHeader('Content-Type', 'application/json');
+          try {
+            const url = new URL(req.url!, 'http://localhost');
+            const workTitle = (url.searchParams.get('workTitle') || '').trim();
+            const typesParam = (url.searchParams.get('types') || '').trim();
+            if (!workTitle) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: '缺少 workTitle' }));
+              return;
+            }
+            const types = typesParam
+              ? typesParam.split(',').map((x) => Number(x)).filter(Number.isFinite)
+              : undefined;
+            const result = await character.resolveWork(workTitle, types);
+            res.end(JSON.stringify({
+              work: result.work,
+              workScore: result.workScore,
+              workLowConfidence: result.workScore < 0.6,
+            }));
+          } catch (e) {
+            res.statusCode = 502;
+            res.end(JSON.stringify({ error: describeError(e) }));
+          }
+        });
+
+        /**
+         * POST /api/character/details  body: { ids: string[] }
+         * 批量取角色详情（中文名/生日/血型/身高/人设）。由调用方分批，
+         * 这样进度条能按角色推进而不是卡在一个几十连抓上。
+         */
+        router.use('/api/character/details', (req, res) => {
+          if (req.method !== 'POST') {
+            res.statusCode = 405;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+            return;
+          }
+          const chunks: Buffer[] = [];
+          req.on('data', (chunk: Buffer) => { chunks.push(chunk); });
+          req.on('end', async () => {
+            res.setHeader('Content-Type', 'application/json');
+            try {
+              const body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+              const ids = (Array.isArray(body.ids) ? body.ids : [])
+                .map((x: unknown) => String(x).trim())
+                .filter(Boolean)
+                // 单批上限：别让一次请求把节流队列排到几分钟
+                .slice(0, 40);
+              if (ids.length === 0) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: '缺少 ids' }));
+                return;
+              }
+              const result = await character.getCharacterDetails(ids);
+              res.end(JSON.stringify(result));
+            } catch (e) {
+              res.statusCode = 502;
+              res.end(JSON.stringify({ error: describeError(e) }));
+            }
+          });
+        });
+
         /** GET /api/character/list?subjectId=123 — 某作品的全部角色（1 次请求，含立绘与声优） */
         router.use('/api/character/list', async (req, res) => {
           res.setHeader('Content-Type', 'application/json');
