@@ -11,7 +11,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Button, Table, Tag, Space, Typography, Select, Checkbox, Progress, Alert, Tooltip, Empty, Input, Radio } from 'antd';
-import { CloudDownloadOutlined, ReloadOutlined, UserAddOutlined, PictureOutlined, SearchOutlined } from '@ant-design/icons';
+import { CloudDownloadOutlined, ReloadOutlined, UserAddOutlined, PictureOutlined, SearchOutlined, MergeCellsOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { AnimeEntry, ScoreTemplate, TemplateGenre } from '../../src/types';
 import { CHARACTER_TEMPLATE_ID, DEFAULT_TEMPLATE_ID } from '../../src/types';
@@ -24,6 +24,8 @@ import {
   resolveSubjectTypes, WORK_TYPE_OPTIONS,
 } from './character-service';
 import type { CharacterEntry, WorkCandidate, RecordedMatch, WorkTypeOverride } from './character-service';
+import CharacterMergeModal from './CharacterMergeModal';
+import { buildDuplicateGroups } from './merge-duplicates';
 
 const { Text } = Typography;
 
@@ -112,6 +114,7 @@ const CharacterCompleteModal: React.FC<CharacterCompleteModalProps> = ({
   const [resolving, setResolving] = useState(false);
   const [writing, setWriting] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
   const [progress, setProgress] = useState<ProgressState | null>(null);
   const cancelledRef = useRef(false);
 
@@ -454,6 +457,12 @@ const CharacterCompleteModal: React.FC<CharacterCompleteModalProps> = ({
     onApplied();
     rebuild();
   };
+
+  /** 重复角色卡的组数（用于「合并重复卡」按钮的提示） */
+  const dupGroupCount = useMemo(
+    () => buildDuplicateGroups(animeList, (a) => a.templateId === CHARACTER_TEMPLATE_ID).length,
+    [animeList],
+  );
 
   /** 缺图/缺资料的角色卡（用于「补齐」按钮的提示数量） */
   const incompleteCards = useMemo(() => animeList.filter((a) => {
@@ -898,6 +907,14 @@ const CharacterCompleteModal: React.FC<CharacterCompleteModalProps> = ({
           补齐缺图/资料（{incompleteCards.length}）
         </Button>
         <Button icon={<ReloadOutlined />} disabled={!reselectable} onClick={rebuild}>重置</Button>
+        <Button
+          icon={<MergeCellsOutlined />}
+          disabled={!reselectable || dupGroupCount === 0}
+          onClick={() => setMergeOpen(true)}
+          title="把同名的角色卡合并成一张（资料取并集、评分取各维度有值的；被合并的卡软删除，可撤销）"
+        >
+          合并重复角色卡（{dupGroupCount} 组）
+        </Button>
         <Text type="secondary" style={{ fontSize: 11 }}>共 {rows.length} 部候选</Text>
       </Space>
 
@@ -939,6 +956,13 @@ const CharacterCompleteModal: React.FC<CharacterCompleteModalProps> = ({
           />
         ) }}
         scroll={{ y: 460 }}
+      />
+
+      <CharacterMergeModal
+        open={mergeOpen}
+        onClose={() => setMergeOpen(false)}
+        animeList={animeList}
+        onApplied={onApplied}
       />
     </Modal>
   );

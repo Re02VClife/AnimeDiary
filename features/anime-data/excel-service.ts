@@ -684,12 +684,21 @@ export async function saveCharacterNames(entry: AnimeEntry, names: string[]): Pr
  */
 export async function saveCharacterCardData(
   entry: AnimeEntry,
-  payload: { customFields: Record<string, string>; posterUrl?: string; link?: string },
+  payload: {
+    customFields: Record<string, string>;
+    posterUrl?: string;
+    link?: string;
+    /** 合并重复卡时才需要把这些用户自己的内容也带过来（有值才写） */
+    review?: string;
+    notes?: string;
+    /** ISO 日期，内部转 Excel 序列号 */
+    watchDate?: string;
+  },
 ): Promise<void> {
   const rowIndex = entry.excelRowIndex;
   if (rowIndex === undefined) throw new Error('该角色卡还没有 Excel 行号，无法写入');
   const expectedTitle = entry.excelTitleSnapshot ?? entry.title;
-  const updates: Array<{ sheetName: string; rowIndex: number; colIndex: number; value: string; expectedTitle: string }> = [{
+  const updates: Array<{ sheetName: string; rowIndex: number; colIndex: number; value: string | number; expectedTitle: string }> = [{
     sheetName: MAIN_SHEET,
     rowIndex,
     colIndex: EXCEL_COL.TEMPLATE_JSON,
@@ -703,6 +712,18 @@ export async function saveCharacterCardData(
   }
   if (payload.link) {
     updates.push({ sheetName: MAIN_SHEET, rowIndex, colIndex: EXCEL_COL.LINK, value: payload.link, expectedTitle });
+  }
+  if (payload.review) {
+    updates.push({ sheetName: MAIN_SHEET, rowIndex, colIndex: EXCEL_COL.REVIEW, value: payload.review, expectedTitle });
+  }
+  if (payload.notes) {
+    updates.push({ sheetName: MAIN_SHEET, rowIndex, colIndex: EXCEL_COL.NOTES, value: payload.notes, expectedTitle });
+  }
+  if (payload.watchDate) {
+    const serial = dateToExcelSerial(payload.watchDate);
+    if (serial > 0) {
+      updates.push({ sheetName: MAIN_SHEET, rowIndex, colIndex: EXCEL_COL.WATCH_DATE, value: serial, expectedTitle });
+    }
   }
 
   const response = await fetch(`${API_BASE}/write`, {

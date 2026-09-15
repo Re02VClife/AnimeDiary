@@ -122,6 +122,15 @@ export function saveDimReview(animeId: string, review: DimensionReview): void {
   localStorage.setItem(KEYS.DIM_REVIEWS, JSON.stringify(all));
 }
 
+/**
+ * 整表写回维度专项评价。
+ * 合并重复角色卡时要把被移除卡片的评价迁到保留的那张，逐条 saveDimReview 会
+ * 「读整表→改→写整表」重复多次，并发下互相覆盖（这个坑海报覆盖那边踩过）。
+ */
+export function saveDimReviews(all: Record<string, DimensionReview[]>): void {
+  localStorage.setItem(KEYS.DIM_REVIEWS, JSON.stringify(all));
+}
+
 // ── 统一加载覆盖 ──
 
 export function loadOverrides(): AnimeOverrides {
