@@ -32,7 +32,7 @@ const BUILTIN_ROUTES = path.join(__dirname, '..', 'server', 'api-routes.cjs');
  * 保护：文件缺失 / 加载抛错 / 没导出 createApiHandler → 一律回退内置版本，
  * 最坏结果只是新功能用不了，应用仍然打得开。
  */
-function resolveRoutesFactory(routesPath) {
+function resolveRoutesFactory(routesPath, dataDir) {
   if (routesPath && fs.existsSync(routesPath)) {
     try {
       const Module = require('module');
@@ -41,7 +41,20 @@ function resolveRoutesFactory(routesPath) {
       // 其次回退到 app.asar 里的依赖
       const fromUpdate = Module.createRequire(routesPath);
       const fromBuiltin = Module.createRequire(BUILTIN_ROUTES);
+      // AI 抠图的运行时（onnxruntime-node，win32/x64 原生模块 64MB）单独放在
+      // 数据目录下，既不进安装包也不进热更新包 —— 详见 server/bg-removal.ts。
+      // createRequire 只借用这个路径当解析基准，文件本身不必存在。
+      const fromRuntime = dataDir
+        ? Module.createRequire(path.join(dataDir, 'runtime', 'noop.js'))
+        : null;
       const hybridRequire = (id) => {
+        if (fromRuntime) {
+          try {
+            return fromRuntime(id);
+          } catch (e) {
+            if (!e || e.code !== 'MODULE_NOT_FOUND') throw e;
+          }
+        }
         try {
           return fromUpdate(id);
         } catch (e) {
@@ -133,7 +146,7 @@ function startApiServer({ dataDir, distDir, port, routesPath }) {
     throw new Error(`前端产物目录不存在：${distDir}（请先执行 vite build）`);
   }
   const listenPort = port || FIXED_PORT;
-  const createApiHandler = resolveRoutesFactory(routesPath);
+  const createApiHandler = resolveRoutesFactory(routesPath, dataDir);
   if (routesPath) {
     console.log(`[api-server] 路由实现：${fs.existsSync(routesPath) ? routesPath : '内置（更新目录里没有）'}`);
   }

@@ -19,6 +19,8 @@ import AdmZip from 'adm-zip';
 import { createMediaClient, isAllowedCoverHost, isPublicHttpUrl, describeError } from './media-sources';
 import type { FetchLike, MediaSource } from './media-sources';
 import { createCharacterClient } from './character-sources';
+import { createBgRemover } from './bg-removal';
+import { decodeImage, encodePng } from './image-codec';
 
 /** 数据根目录 */
 export interface ApiContext {
@@ -30,6 +32,13 @@ export interface ApiContext {
    *   这正是打包后 /api/bangumi/* 一直连不上 api.bgm.tv 的根因。
    */
   fetchImpl?: FetchLike;
+  /**
+   * onnxruntime-node 的加载器（AI 抠图用）。
+   * 由宿主注入，让服务端代码不必关心「运行时到底装在哪」——
+   * 打包版从 {DATA_DIR}/runtime 加载，开发模式回落到项目 node_modules。
+   * 不传则用内置的解析策略。
+   */
+  loadOrt?: () => unknown;
 }
 
 type ApiHandler = (req: any, res: any) => void;
@@ -39,7 +48,7 @@ type ApiHandler = (req: any, res: any) => void;
  * 命中路由时自行响应；未命中调用 next()，由宿主决定后续
  * （dev: 交给 Vite；prod: 交给静态文件服务或 404）。
  */
-export function createApiHandler({ DATA_DIR, fetchImpl }: ApiContext) {
+export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
   const EXCEL_PATH = path.join(DATA_DIR, '番评分.xlsx');
   const IMAGES_DIR = path.join(DATA_DIR, 'images');
   const BACKUP_DIR = path.join(DATA_DIR, 'backups');
@@ -50,6 +59,11 @@ export function createApiHandler({ DATA_DIR, fetchImpl }: ApiContext) {
    * 传入宿主注入的 fetchImpl，使请求走上与页面一致（且遵守系统代理）的网络栈。
    */
   const media = createMediaClient({ fetchImpl });
+  /**
+   * AI 抠图（isnet-anime）。模型与 onnxruntime-node 都在 {DATA_DIR} 下，
+   * 不进安装包也不进热更新包 —— 详见 server/bg-removal.ts 顶部说明。
+   */
+  const bgRemover = createBgRemover(DATA_DIR, loadOrt);
   /**
    * Excel 单元格字符上限（32767）。超限时 SheetJS 会抛出
    * "Text length must not exceed 32767 characters" 并中止整批写入，
@@ -62,6 +76,13 @@ export function createApiHandler({ DATA_DIR, fetchImpl }: ApiContext) {
    * 用户随时能撤销去底回到原样（去底本质上是不可逆的信息丢失）。
    */
   const CUTOUT_FILE_NAME = 'cover-nobg.png';
+  /**
+   * AI 抠图的暂存文件。
+   * AI 走服务端推理，结果先落这里而不是直接写正式文件 —— 面板要保持
+   * 「先看预览再应用」的流程。cutout/index 只扫 CUTOUT_FILE_NAME，
+   * 所以暂存文件不会被卡片当成已应用。
+   */
+  const CUTOUT_PREVIEW_FILE = 'cover-nobg.preview.png';
 
   const routes: { prefix: string; handler: ApiHandler }[] = [];
   const router = {
@@ -1883,6 +1904,158 @@ export function createApiHandler({ DATA_DIR, fetchImpl }: ApiContext) {
             res.statusCode = 500;
             res.end(JSON.stringify({ error: e instanceof Error ? e.message : '读取去底索引失败' }));
           }
+        });
+
+        /**
+         * POST /api/images/cutout/apply  { animeTitle, action: 'apply' | 'discard' }
+         *
+         * 把 AI 的暂存结果转正或丢弃。转正只是同目录改名，不重新推理，
+         * 所以「预览满意 → 应用」是瞬时的。
+         */
+        router.use('/api/images/cutout/apply', (req, res) => {
+          if (req.method !== 'POST') {
+            res.statusCode = 405;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+            return;
+          }
+          const chunks: Buffer[] = [];
+          req.on('data', (chunk: Buffer) => { chunks.push(chunk); });
+          req.on('end', () => {
+            res.setHeader('Content-Type', 'application/json');
+            try {
+              const body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+              const action = String(body.action || 'apply');
+              const safeName = String(body.animeTitle || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+              if (!isSafePathSegment(safeName)) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: '角色名非法' }));
+                return;
+              }
+              const dir = path.join(IMAGES_DIR, safeName);
+              const previewPath = path.join(dir, CUTOUT_PREVIEW_FILE);
+              const finalPath = path.join(dir, CUTOUT_FILE_NAME);
+
+              if (action === 'discard') {
+                if (fs.existsSync(previewPath)) fs.unlinkSync(previewPath);
+                res.end(JSON.stringify({ success: true, action: 'discard' }));
+                return;
+              }
+              if (!fs.existsSync(previewPath)) {
+                res.statusCode = 404;
+                res.end(JSON.stringify({ error: '没有待应用的 AI 结果' }));
+                return;
+              }
+              // Windows 上 rename 覆盖已存在文件会失败，先删旧的正式文件
+              if (fs.existsSync(finalPath)) fs.unlinkSync(finalPath);
+              fs.renameSync(previewPath, finalPath);
+              res.end(JSON.stringify({
+                success: true,
+                action: 'apply',
+                url: `/api/images/file?anime=${encodeURIComponent(safeName)}&file=${encodeURIComponent(CUTOUT_FILE_NAME)}`,
+              }));
+            } catch (e) {
+              res.statusCode = 500;
+              res.end(JSON.stringify({ error: describeError(e) }));
+            }
+          });
+        });
+
+        /**
+         * GET /api/images/cutout/ai-status
+         * 报告 AI 抠图是否可用（模型 + 运行时）。界面据此决定 AI 按钮可否点、
+         * 以及给什么提示，而不是让用户点了才发现缺东西。
+         */
+        router.use('/api/images/cutout/ai-status', (_req, res) => {
+          res.setHeader('Content-Type', 'application/json');
+          try {
+            res.end(JSON.stringify(bgRemover.status()));
+          } catch (e) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: describeError(e) }));
+          }
+        });
+
+        /**
+         * POST /api/images/cutout/ai  { animeTitle, fileName }
+         *
+         * 服务端读原图 → isnet-anime 推理 → 写 cover-nobg.png。
+         * 与洪泛版（前端 Canvas 算完把 dataURL 传上来）不同，这里图片字节不出主进程：
+         * 一张 504x1440 的 RGBA 是 2.9MB、base64 后近 4MB，90 张就是几百 MB 的无谓搬运。
+         *
+         * 仍然只写派生的 cover-nobg.png，原图与 Excel 一概不动，随时可撤销。
+         */
+        router.use('/api/images/cutout/ai', (req, res) => {
+          if (req.method !== 'POST') {
+            res.statusCode = 405;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+            return;
+          }
+          const chunks: Buffer[] = [];
+          req.on('data', (chunk: Buffer) => { chunks.push(chunk); });
+          req.on('end', async () => {
+            try {
+              const body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+              const animeTitle = String(body.animeTitle || '').trim();
+              const sourceFile = String(body.fileName || 'cover.jpg').trim();
+              if (!animeTitle || !sourceFile) {
+                res.statusCode = 400;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ error: '缺少 animeTitle 或 fileName' }));
+                return;
+              }
+              const safeName = animeTitle.replace(/[\\/:*?"<>|]/g, '_').trim();
+              if (!isSafePathSegment(safeName) || !isSafePathSegment(sourceFile)) {
+                res.statusCode = 400;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ error: '文件名非法' }));
+                return;
+              }
+              const srcPath = resolveInside(IMAGES_DIR, safeName, sourceFile);
+              if (!srcPath || !fs.existsSync(srcPath)) {
+                res.statusCode = 404;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ error: `原图不存在：${safeName}/${sourceFile}` }));
+                return;
+              }
+
+              const aiStatus = bgRemover.status();
+              if (!aiStatus.ready) {
+                res.statusCode = 503;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ error: aiStatus.error || 'AI 抠图运行时未就绪', status: aiStatus }));
+                return;
+              }
+
+              const decoded = decodeImage(fs.readFileSync(srcPath), path.extname(sourceFile));
+              const result = await bgRemover.remove(decoded.data, decoded.width, decoded.height);
+              const png = encodePng(result.width, result.height, result.rgba);
+
+              const dir = path.join(IMAGES_DIR, safeName);
+              fs.mkdirSync(dir, { recursive: true });
+              // 先落成 preview：AI 结果在用户确认前不该出现在卡片上
+              fs.writeFileSync(path.join(dir, CUTOUT_PREVIEW_FILE), png);
+
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({
+                success: true,
+                engine: 'ai',
+                fileName: CUTOUT_PREVIEW_FILE,
+                url: `/api/images/file?anime=${encodeURIComponent(safeName)}&file=${encodeURIComponent(CUTOUT_PREVIEW_FILE)}`,
+                width: result.width,
+                height: result.height,
+                bytes: png.length,
+                inferenceMs: result.inferenceMs,
+                transparentRatio: result.transparentRatio,
+                opaqueRatio: result.opaqueRatio,
+              }));
+            } catch (e) {
+              res.statusCode = 500;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: describeError(e) }));
+            }
+          });
         });
 
         // 删除本地图片
