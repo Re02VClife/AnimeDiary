@@ -173,7 +173,160 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
     return t.length > 0 && t !== '.' && t !== '..' && !/[\\/]/.test(t);
   }
 
+  // ── 物理删除行的辅助 ──
+
+  /**
+   * 把公式里 **大于** deletedRow（Excel 的 1-based 行号）的行引用统一减 1。
+   *
+   * 为什么必须做：实测这份表里有 845 个公式，番剧列表里是行内公式
+   * （`D2 = E2*0.13 + F2*0.18 + ...`），删掉第 3 行后这一行整体上移到第 2 行，
+   * 公式却仍然写着第 2 行，会算到别人头上。其他 sheet 还有
+   * `=AVERAGE(番剧列表!C1:C173)`、`=INDEX(番剧列表!B2:B172,B4,)` 这类跨表范围引用。
+   *
+   * 匹配规则的两个细节：
+   *   - 前缀可以是 `表名!` / `'带空格 的表名'!`，也允许没有前缀；
+   *   - 行号后面不能紧跟数字或 `(`，否则 `LOG10(A1)` 这种函数名会被拆成
+   *     列名 LOG + 行号 10 而误改。整列引用 `$B:$B` 没有行号，天然不受影响。
+   */
+  function shiftFormulaRows(formula: string, deletedRow: number): string {
+    return formula.replace(
+      /((?:'[^']*'|[^!'()+\-*/\s,]+)!)?(\$?)([A-Za-z]{1,3})(\$?)(\d+)(?![0-9(])/g,
+      (whole, sheetPrefix, dollar1, col, dollar2, rowText) => {
+        const r = Number(rowText);
+        if (r <= deletedRow) return whole;
+        return `${sheetPrefix || ''}${dollar1}${col}${dollar2}${r - 1}`;
+      },
+    );
+  }
+
+  /** 删掉工作表的一行（0-based），后面的行整体上移，并维护 !ref */
+  function deleteSheetRow(ws: Record<string, any>, rowIndex: number): void {
+    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+    for (let R = rowIndex; R < range.e.r; R++) {
+      for (let C = range.s.c; C <= range.e.c; C++) {
+        const from = XLSX.utils.encode_cell({ r: R + 1, c: C });
+        const to = XLSX.utils.encode_cell({ r: R, c: C });
+        if (ws[from]) ws[to] = ws[from];
+        else delete ws[to];
+      }
+    }
+    for (let C = range.s.c; C <= range.e.c; C++) {
+      delete ws[XLSX.utils.encode_cell({ r: range.e.r, c: C })];
+    }
+    range.e.r -= 1;
+    ws['!ref'] = XLSX.utils.encode_range(range);
+  }
+
+  /** 遍历所有工作表的所有公式做行号平移，返回改动条数 */
+  function shiftAllFormulas(wb: Record<string, any>, deletedRowIndex: number): number {
+    const deletedRow = deletedRowIndex + 1; // 0-based → Excel 的 1-based
+    let changed = 0;
+    for (const name of wb.SheetNames) {
+      const ws = wb.Sheets[name];
+      if (!ws || !ws['!ref']) continue;
+      const range = XLSX.utils.decode_range(ws['!ref']);
+      for (let R = range.s.r; R <= range.e.r; R++) {
+        for (let C = range.s.c; C <= range.e.c; C++) {
+          const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+          if (!cell || typeof cell.f !== 'string') continue;
+          const shifted = shiftFormulaRows(cell.f, deletedRow);
+          if (shifted !== cell.f) {
+            cell.f = shifted;
+            changed++;
+          }
+        }
+      }
+    }
+    return changed;
+  }
+
   // ── 路由注册（原 configureServer 内） ──
+        /**
+         * POST /api/excel/delete-row  { sheetName, rowIndex, expectedTitle }
+         *
+         * **物理删除**一行数据 —— 与卡片上「移除」的软删除不同，这里真的把行从
+         * Excel 里抹掉。所以做三层保护：
+         *   1. 写前身份校验：标题对不上就拒绝（全表唯一匹配时才自动改到新行号）
+         *   2. 删行后把所有工作表公式里 > 该行的行引用统一减 1
+         *   3. writeFileAtomic 先留快照，随时可以回滚
+         */
+        router.use('/api/excel/delete-row', (req, res) => {
+          if (req.method !== 'POST') {
+            res.statusCode = 405;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+            return;
+          }
+          const chunks: Buffer[] = [];
+          req.on('data', (chunk: Buffer) => { chunks.push(chunk); });
+          req.on('end', () => {
+            res.setHeader('Content-Type', 'application/json');
+            try {
+              const body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+              const sheetName = String(body.sheetName || '').trim();
+              const rowIndex = Number(body.rowIndex);
+              const expectedTitle = String(body.expectedTitle || '').trim();
+              // 第 0 行是表头，删了整张表就废了
+              if (!sheetName || !Number.isInteger(rowIndex) || rowIndex < 1) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: '缺少 sheetName / rowIndex（表头行不可删除）' }));
+                return;
+              }
+              if (!fs.existsSync(EXCEL_PATH)) {
+                res.statusCode = 404;
+                res.end(JSON.stringify({ error: 'Excel 文件不存在' }));
+                return;
+              }
+              const wb = XLSX.readFile(EXCEL_PATH);
+              const ws = wb.Sheets[sheetName];
+              if (!ws) {
+                res.statusCode = 404;
+                res.end(JSON.stringify({ error: `工作表不存在：${sheetName}` }));
+                return;
+              }
+
+              const titleOf = (r: number) => String(ws[XLSX.utils.encode_cell({ r, c: 1 })]?.v ?? '').trim();
+              let targetRow = rowIndex;
+              if (expectedTitle && titleOf(targetRow) !== expectedTitle) {
+                const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+                const matches: number[] = [];
+                for (let r = Math.max(1, range.s.r); r <= range.e.r; r++) {
+                  if (titleOf(r) === expectedTitle) matches.push(r);
+                }
+                if (matches.length !== 1) {
+                  res.statusCode = 409;
+                  res.end(JSON.stringify({
+                    error: 'Excel 数据已变化，已取消删除',
+                    expected: expectedTitle,
+                    actual: titleOf(rowIndex),
+                    ambiguous: matches.length > 1,
+                  }));
+                  return;
+                }
+                targetRow = matches[0];
+              }
+
+              const removedTitle = titleOf(targetRow);
+              snapshotExcel();
+              deleteSheetRow(ws, targetRow);
+              const formulasShifted = shiftAllFormulas(wb, targetRow);
+              writeFileAtomic(EXCEL_PATH, XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+
+              const rangeAfter = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+              res.end(JSON.stringify({
+                success: true,
+                removedTitle,
+                rowIndex: targetRow,
+                formulasShifted,
+                rowsLeft: rangeAfter.e.r - rangeAfter.s.r + 1,
+              }));
+            } catch (e) {
+              res.statusCode = 500;
+              res.end(JSON.stringify({ error: e instanceof Error ? e.message : '删除行失败' }));
+            }
+          });
+        });
+
         // 读取 Excel 文件
         router.use('/api/excel/read', (_req, res) => {
           try {

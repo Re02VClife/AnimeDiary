@@ -1,6 +1,6 @@
 {
   "name": "anime-diary",
-  "version": "1.0.32",
+  "version": "1.0.33",
   "description": "番剧评分管理系统 - 记录你与每部番的相遇",
   "main": "electron/main.js",
   "scripts": {
