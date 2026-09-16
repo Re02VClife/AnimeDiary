@@ -274,6 +274,93 @@ export function savePosterPosition(animeId: string, x: number, y: number): void 
   localStorage.setItem(POSTER_POS_KEY, JSON.stringify(map));
 }
 
+// ── 物理删除 Excel 行之后：把本地按行号索引的数据整体前移 ──
+
+/**
+ * `excel-<行号>` 的 id 按删行结果重映射。
+ * 返回 null 表示这条正好属于被删的那一行（应当丢弃）；
+ * 非 `excel-` 前缀的 id（手工建的 `char-...` 等）不受影响，原样返回。
+ */
+function shiftExcelId(id: string, deletedRowIndex: number): string | null {
+  const m = /^excel-(\d+)$/.exec(id);
+  if (!m) return id;
+  const row = Number(m[1]);
+  if (row === deletedRowIndex) return null;
+  return row > deletedRowIndex ? `excel-${row - 1}` : id;
+}
+
+function shiftRecord<T>(rec: Record<string, T>, deletedRowIndex: number): { next: Record<string, T>; moved: number } {
+  const next: Record<string, T> = {};
+  let moved = 0;
+  for (const [k, v] of Object.entries(rec)) {
+    const nk = shiftExcelId(k, deletedRowIndex);
+    if (nk !== k) moved++;
+    if (nk !== null) next[nk] = v;
+  }
+  return { next, moved };
+}
+
+function shiftIdSet(set: Set<string>, deletedRowIndex: number): { next: Set<string>; moved: number } {
+  const next = new Set<string>();
+  let moved = 0;
+  for (const id of set) {
+    const nid = shiftExcelId(id, deletedRowIndex);
+    if (nid !== id) moved++;
+    if (nid !== null) next.add(nid);
+  }
+  return { next, moved };
+}
+
+/**
+ * 物理删除第 deletedRowIndex 行之后，把本地所有以 `excel-<行号>` 为键的数据前移一位。
+ *
+ * 为什么必须做：条目 id 就是行号（`excel-N`），删掉一行会让它后面每一行的 id 都变。
+ * 不迁移的话，海报覆盖、焦点位置、分类、维度点评会集体错位到**别的条目**身上 ——
+ * 而且错得很隐蔽：不是数据丢失，是张冠李戴。
+ *
+ * 返回迁移到的键数量，供界面提示。
+ */
+export async function shiftLocalRefsAfterRowDelete(deletedRowIndex: number): Promise<number> {
+  let moved = 0;
+
+  const cats = shiftRecord(loadCategoryMap(), deletedRowIndex);
+  saveCategoryMap(cats.next);
+  moved += cats.moved;
+
+  const del = shiftIdSet(loadWatchingDeleted(), deletedRowIndex);
+  localStorage.setItem(KEYS.DELETED_WATCHING, JSON.stringify([...del.next]));
+  moved += del.moved;
+
+  const bl = shiftIdSet(loadPosterBlacklist(), deletedRowIndex);
+  localStorage.setItem(POSTER_BLACKLIST_KEY, JSON.stringify([...bl.next]));
+  moved += bl.moved;
+
+  const pos = shiftRecord(loadPosterPositions(), deletedRowIndex);
+  localStorage.setItem(POSTER_POS_KEY, JSON.stringify(pos.next));
+  moved += pos.moved;
+
+  const dim = shiftRecord(loadDimReviews(), deletedRowIndex);
+  saveDimReviews(dim.next);
+  moved += dim.moved;
+
+  // 单集评价是数组，元素自带 animeId
+  const nextEps: EpisodeReview[] = [];
+  for (const r of loadEpisodeReviews()) {
+    const nid = shiftExcelId(r.animeId, deletedRowIndex);
+    if (nid === null) { moved++; continue; }
+    if (nid !== r.animeId) { moved++; nextEps.push({ ...r, animeId: nid }); }
+    else nextEps.push(r);
+  }
+  localStorage.setItem(KEYS.EPISODE_REVIEWS, JSON.stringify(nextEps));
+
+  // 海报覆盖存在 IndexedDB 里，异步
+  const ov = shiftRecord(await loadPosterOverrides(), deletedRowIndex);
+  await savePosterOverrides(ov.next);
+  moved += ov.moved;
+
+  return moved;
+}
+
 // ── 一键导出/导入用户数据 ──
 
 /** localStorage 中属于本项目的所有 key */

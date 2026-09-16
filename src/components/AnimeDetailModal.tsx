@@ -197,6 +197,20 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
    * 与 Excel 里的 4 个角色名槽是两条独立线索：角色名槽要人去填、上限 4 个，
    * 而这里只要角色卡写了这部作品就会出现，用来「从番剧跳到已有角色卡」不会漏。
    */
+  /**
+   * 已经出现在「角色名槽」里、而且已经建卡的条目 id。
+   * 这些槽位上的标签本身就能点击跳转，反查列表里再列一次就是同一批角色
+   * 上下显示两遍 —— Excel 里本来就填了角色名时必现。
+   */
+  const shownCardIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const name of characters) {
+      const card = characterCards.get(name);
+      if (card) ids.add(card.id);
+    }
+    return ids;
+  }, [characters, characterCards]);
+
   const relatedCards = useMemo(() => {
     if (!anime || anime.templateId === CHARACTER_TEMPLATE_ID) return [];
     const out: AnimeEntry[] = [];
@@ -205,10 +219,12 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       const works = String(a.customFields?.char_source || '').split('/').filter(Boolean);
       // 判据是「最佳匹配是否就是当前这部」，而不是「相似度是否达标」——
       // 后者会让同一系列的每一部都列出全部角色卡（实测 45 部虚高 vs 32 部真实归属）
-      if (works.some((w) => resolveWorkEntry(w)?.id === anime.id)) out.push(a);
+      if (!works.some((w) => resolveWorkEntry(w)?.id === anime.id)) continue;
+      if (shownCardIds.has(a.id)) continue;
+      out.push(a);
     }
     return out;
-  }, [anime, allAnime]);
+  }, [anime, allAnime, shownCardIds]);
 
   // 可绑定的作品选项（非角色卡条目标题，供"所属作品"模糊搜索多选）
   const sourceWorkOptions = useMemo(() => {
@@ -1234,6 +1250,21 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                 </Button>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                {/* 删除放在编辑界面顶部右侧：卡片上的删除按钮只在「在看」分类下渲染，
+                    条目被改到别的分类后就找不到入口；放在这里也明显更不容易误点 */}
+                {anime && onDelete && (
+                  <Popconfirm
+                    title="删除这张卡？"
+                    description="会连同 Excel 里对应的那一行数据一起删除"
+                    okText="删除" cancelText="取消" okButtonProps={{ danger: true }}
+                    onConfirm={() => onDelete(anime.id)}
+                  >
+                    <Button size="small" type="text" danger icon={<DeleteOutlined />}
+                      style={{ fontSize: 11 }} title="删除该条目（含 Excel 数据）">
+                      删除
+                    </Button>
+                  </Popconfirm>
+                )}
                 {/* BGM ID 角标 */}
                 {editBangumiId && (
                   <a
@@ -1562,25 +1593,9 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       width={1050}
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Space size={8}>
-            <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-              {editing ? '修改将直接写回 Excel 文件' : '点击「修改」进入编辑模式'}
-            </span>
-            {/* 卡片上的移除按钮只在「在看」分类下出现，而卡片随时可能被改到别的分类；
-                面板里再给一个入口，免得想删却找不到 */}
-            {!editing && anime && onDelete && (
-              <Popconfirm
-                title="从列表移除这张卡？"
-                description="软删除：Excel 里的数据不会动，重新加载也不会再显示"
-                okText="移除" cancelText="取消" okButtonProps={{ danger: true }}
-                onConfirm={() => onDelete(anime.id)}
-              >
-                <Button size="small" type="text" danger icon={<DeleteOutlined />} style={{ fontSize: 12 }}>
-                  移除
-                </Button>
-              </Popconfirm>
-            )}
-          </Space>
+          <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+            {editing ? '修改将直接写回 Excel 文件' : '点击「修改」进入编辑模式'}
+          </span>
           <Space>
             {editing ? (
               <>

@@ -5,8 +5,8 @@
 import React, { createContext, useContext, useReducer, useEffect, useCallback, useMemo, useRef } from 'react';
 import { catgirlMessage } from '../src/theme';
 import type { AnimeCategory, AnimeEntry, AnimeTag } from '../src/types';
-import { loadAnimeList, updateAnimeEntry, appendAnimeEntry, batchSaveAllPosters } from '../features/anime-data/excel-service';
-import { saveCategory, addToWatchingDeleted, removeFromWatchingDeleted, loadImgHeight, saveImgHeight, exportAllUserData, importUserData } from '../features/anime-data/storage-service';
+import { loadAnimeList, updateAnimeEntry, appendAnimeEntry, batchSaveAllPosters, deleteExcelRow } from '../features/anime-data/excel-service';
+import { saveCategory, addToWatchingDeleted, removeFromWatchingDeleted, loadImgHeight, saveImgHeight, exportAllUserData, importUserData, shiftLocalRefsAfterRowDelete } from '../features/anime-data/storage-service';
 import { migrateLegacyDimensions, loadTemplates } from '../features/anime-data/template-service';
 import { getVisibleCategories } from '../src/types';
 import { rankByDimension } from '../features/ranking/ranking-service';
@@ -497,16 +497,48 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     dispatch({ type: 'CLOSE_MODAL', modal: 'detail' });
   }, [state.animeList]);
 
+  /**
+   * 删除一个条目。
+   *
+   * 与旧行为（只把 id 加进本地黑名单、Excel 一行不动）不同：现在**真的把 Excel 里
+   * 那一行删掉**。所以必须连带处理两件事，否则会安静地弄坏数据：
+   *   1. 条目 id 就是行号（excel-N），删一行会让后面所有行的 id 前移 ——
+   *      本地按 id 存的海报覆盖 / 焦点位置 / 分类 / 维度点评要一起迁移，
+   *      不迁就会集体错位到别的条目身上（不是丢失，是张冠李戴）
+   *   2. Excel 里有 845 个公式，服务端会把大于该行的行引用统一减 1
+   *
+   * 不放进黑名单了：行已经不存在，黑名单只会指向一个错误的行号。
+   */
   const handleDeleteFromWatching = useCallback((animeId: string) => {
     const target = state.animeList.find((a) => a.id === animeId);
-    addToWatchingDeleted(animeId);
-    dispatch({ type: 'REMOVE_ANIME', payload: animeId });
-    // 原先拉黑之后没有任何界面入口能恢复（removeFromWatchingDeleted 零调用）
-    catgirlMessage.undo('已从列表移除', () => {
-      removeFromWatchingDeleted(animeId);
-      if (target) dispatch({ type: 'ADD_ANIME', payload: target });
-    });
-  }, [state.animeList]);
+    if (!target) return;
+
+    // 只存在于内存里的条目（手工建的角色卡 char-...）没有 Excel 行可删
+    if (typeof target.excelRowIndex !== 'number') {
+      dispatch({ type: 'REMOVE_ANIME', payload: animeId });
+      catgirlMessage.success('已移除（该条目不在 Excel 中）');
+      return;
+    }
+
+    const rowIndex = target.excelRowIndex;
+    void (async () => {
+      try {
+        const res = await deleteExcelRow({
+          rowIndex,
+          // 用加载时的标题快照做校验：中途被外部改过行号也能发现
+          expectedTitle: target.excelTitleSnapshot || target.title,
+        });
+        const moved = await shiftLocalRefsAfterRowDelete(rowIndex);
+        await refreshAnimeList();
+        catgirlMessage.success(
+          `已删除「${res.removedTitle}」：Excel 删掉 1 行、平移 ${res.formulasShifted} 个公式`
+          + `${moved > 0 ? `、迁移 ${moved} 项本地设置` : ''}`,
+        );
+      } catch (e) {
+        catgirlMessage.error(e instanceof Error ? e.message : '删除失败');
+      }
+    })();
+  }, [state.animeList, refreshAnimeList]);
 
   const handleExportUserData = useCallback(async () => {
     try {

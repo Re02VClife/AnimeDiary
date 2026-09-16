@@ -750,6 +750,38 @@ export async function saveCharacterCardData(
 }
 
 /** 获取 Excel 文件信息 */
+/**
+ * 物理删除 Excel 中的一行（表头行不可删）。
+ *
+ * 与卡片上「移除」的软删除完全不同：软删除只是把 id 加进本地黑名单，Excel 一行不动；
+ * 这里是真的把行抹掉。服务端会同步做三件事：
+ *   - 写前校验标题（对不上就拒绝，避免删到别的条目）
+ *   - 把**所有工作表**公式里大于该行的行引用统一减 1
+ *   - 写前留快照，可以回滚
+ *
+ * 调用方还必须接着调 shiftLocalRefsAfterRowDelete()：条目 id 就是行号，
+ * 删一行会让它后面所有行的 id 平移，不迁移本地设置会张冠李戴。
+ */
+export async function deleteExcelRow(opts: {
+  rowIndex: number;
+  expectedTitle: string;
+}): Promise<{ removedTitle: string; formulasShifted: number; rowsLeft: number }> {
+  const resp = await fetch('/api/excel/delete-row', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sheetName: MAIN_SHEET,
+      rowIndex: opts.rowIndex,
+      expectedTitle: opts.expectedTitle,
+    }),
+  });
+  const data = await resp.json().catch(() => null);
+  if (!resp.ok || !data || !data.success) {
+    throw new Error((data && data.error) || `删除失败 HTTP ${resp.status}`);
+  }
+  return data as { removedTitle: string; formulasShifted: number; rowsLeft: number };
+}
+
 export async function getExcelInfo(): Promise<{ exists: boolean; path?: string; size?: number }> {
   try {
     const response = await fetch(`${API_BASE}/info`);
