@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Modal, InputNumber, Input, Tag, Descriptions, Button, Space, Tooltip, Select, Popover, Image, Typography, Checkbox, Slider, Segmented, DatePicker } from 'antd';
-import { SaveOutlined, PlusOutlined, EditOutlined, LeftOutlined, RightOutlined, PictureOutlined, ImportOutlined, ThunderboltOutlined, TagOutlined, SearchOutlined } from '@ant-design/icons';
+import { Modal, InputNumber, Input, Tag, Descriptions, Button, Space, Tooltip, Select, Popover, Image, Typography, Checkbox, Slider, Segmented, DatePicker, Popconfirm } from 'antd';
+import { SaveOutlined, PlusOutlined, EditOutlined, LeftOutlined, RightOutlined, PictureOutlined, ImportOutlined, ThunderboltOutlined, TagOutlined, SearchOutlined, DeleteOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import type { AnimeEntry, AnimeTag, DimensionScore, DimensionReview, AnimeCategory, BangumiSearchItem, Dimension, DetailLayoutConfig } from '../types';
@@ -21,6 +21,7 @@ import ImageManager from './ImageManager';
 import ScoreSlider from '../../features/anime-detail/ScoreSlider';
 import { useCutoutIndex } from '../../features/image-management/use-cutout-index';
 import { applyCutout } from '../../features/image-management/cutout-service';
+import { workTitleSimilarity } from '../../core/character';
 
 const { TextArea } = Input;
 const { Paragraph } = Typography;
@@ -46,6 +47,8 @@ interface AnimeDetailModalProps {
   onClose: () => void;
   onSave: (entry: AnimeEntry) => Promise<void>;
   onNavigate?: (anime: AnimeEntry) => void;
+  /** 从列表移除该条目（软删除：只加进本地黑名单，Excel 数据不动） */
+  onDelete?: (animeId: string) => void;
   /** 新建条目（点击未建卡的角色标签时创建角色卡） */
   onAddAnime?: (entry: AnimeEntry) => void;
   allAnime?: AnimeEntry[];
@@ -60,8 +63,21 @@ interface AnimeDetailModalProps {
   contentHidden?: boolean;
 }
 
+/**
+ * 「所属作品 ↔ 条目」跳转的匹配阈值，故意低于 core 的 LOW_CONFIDENCE(0.6)。
+ *
+ * 那个 0.6 是给「自动写入数据」把关的（宁可让人工确认），而跳转是可逆的交互：
+ * 跳错了返回即可。卡在 0.6 会让简繁差异（义妹/義妹 0.47）、同音字
+ * （莉兹/利兹 0.52）、助词差异（亚托莉 -我挚爱的时光- 0.44）这些明明
+ * 是同一部作品的记录点不动。
+ * 实测 101 张角色卡：阈值 0.6 只能跳 87 张，0.45 能跳 97 张；
+ * 剩下 4 张是译名差异过大（超辉夜姬！↔ 超时空辉夜姬 0.35），
+ * 这种强行匹配反而会跳错，所以宁可让它显示成不可点的灰标签。
+ */
+const WORK_JUMP_THRESHOLD = 0.45;
+
 const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
-  anime, open, onClose, onSave, onNavigate, onAddAnime, allAnime = [], onPosterChange, imgHeight = 360,
+  anime, open, onClose, onSave, onNavigate, onDelete, onAddAnime, allAnime = [], onPosterChange, imgHeight = 360,
   editMode = false, radarMode = 'percentile', radarMin,
   posterHidden = false,
   contentHidden = false,
@@ -156,6 +172,43 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
     }
     return map;
   }, [allAnime]);
+
+  /**
+   * 「所属作品」里记录的名字 → 实际条目。
+   *
+   * 记录的作品名来自 Bangumi 解析，与卡片标题常有出入（中文译名 / 副标题 /
+   * 第几季 / 全角半角），所以按相似度取最佳匹配并设阈值，
+   * 匹配不上就退化成普通标签 —— 记录里本来就允许写未收录的小说、游戏。
+   */
+  const resolveWorkEntry = (name: string): AnimeEntry | null => {
+    let best: AnimeEntry | null = null;
+    let bestScore = 0;
+    for (const a of allAnime) {
+      if (a.templateId === CHARACTER_TEMPLATE_ID) continue;
+      const score = workTitleSimilarity(a.title, name);
+      if (score > bestScore) { bestScore = score; best = a; }
+    }
+    return best && bestScore >= WORK_JUMP_THRESHOLD ? best : null;
+  };
+
+  /**
+   * 归属当前作品的角色卡（由角色卡的「所属作品」反查）。
+   *
+   * 与 Excel 里的 4 个角色名槽是两条独立线索：角色名槽要人去填、上限 4 个，
+   * 而这里只要角色卡写了这部作品就会出现，用来「从番剧跳到已有角色卡」不会漏。
+   */
+  const relatedCards = useMemo(() => {
+    if (!anime || anime.templateId === CHARACTER_TEMPLATE_ID) return [];
+    const out: AnimeEntry[] = [];
+    for (const a of allAnime) {
+      if (a.templateId !== CHARACTER_TEMPLATE_ID) continue;
+      const works = String(a.customFields?.char_source || '').split('/').filter(Boolean);
+      // 判据是「最佳匹配是否就是当前这部」，而不是「相似度是否达标」——
+      // 后者会让同一系列的每一部都列出全部角色卡（实测 45 部虚高 vs 32 部真实归属）
+      if (works.some((w) => resolveWorkEntry(w)?.id === anime.id)) out.push(a);
+    }
+    return out;
+  }, [anime, allAnime]);
 
   // 可绑定的作品选项（非角色卡条目标题，供"所属作品"模糊搜索多选）
   const sourceWorkOptions = useMemo(() => {
@@ -1032,7 +1085,26 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                 />
               ) : (bound.length > 0 ? (
                 <Space wrap size={[2, 2]}>
-                  {bound.map((w) => <Tag key={w} style={{ fontSize: 10, margin: 0 }}>{w}</Tag>)}
+                  {bound.map((w) => {
+                    // 能找到对应条目才做成可点的；记录里允许写未收录的作品
+                    const target = resolveWorkEntry(w);
+                    return (
+                      <Tooltip key={w} title={target ? `打开《${target.title}》` : '库里没有对应作品卡'}>
+                        <Tag
+                          color={target ? 'blue' : undefined}
+                          style={{
+                            fontSize: 10,
+                            margin: 0,
+                            cursor: target ? 'pointer' : 'default',
+                            opacity: target ? 1 : 0.55,
+                          }}
+                          onClick={target ? () => onNavigate?.(target) : undefined}
+                        >
+                          {w}
+                        </Tag>
+                      </Tooltip>
+                    );
+                  })}
                 </Space>
               ) : '-')}
             </Descriptions.Item>
@@ -1490,9 +1562,25 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       width={1050}
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-            {editing ? '修改将直接写回 Excel 文件' : '点击「修改」进入编辑模式'}
-          </span>
+          <Space size={8}>
+            <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+              {editing ? '修改将直接写回 Excel 文件' : '点击「修改」进入编辑模式'}
+            </span>
+            {/* 卡片上的移除按钮只在「在看」分类下出现，而卡片随时可能被改到别的分类；
+                面板里再给一个入口，免得想删却找不到 */}
+            {!editing && anime && onDelete && (
+              <Popconfirm
+                title="从列表移除这张卡？"
+                description="软删除：Excel 里的数据不会动，重新加载也不会再显示"
+                okText="移除" cancelText="取消" okButtonProps={{ danger: true }}
+                onConfirm={() => onDelete(anime.id)}
+              >
+                <Button size="small" type="text" danger icon={<DeleteOutlined />} style={{ fontSize: 12 }}>
+                  移除
+                </Button>
+              </Popconfirm>
+            )}
+          </Space>
           <Space>
             {editing ? (
               <>
@@ -2078,7 +2166,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
               查看模式：有角色名才显示（空段落没意义）
               编辑模式：始终显示，否则「一个角色名都没有」时根本没有录入入口
                         —— 以前只能去 Excel 手填或用知识图谱连线 */}
-          {templateCfg.showCharacters && (characters.length > 0 || editing) && (
+          {templateCfg.showCharacters && (characters.length > 0 || editing || relatedCards.length > 0) && (
             <div
               data-section-key="characters"
               style={{
@@ -2122,6 +2210,29 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                   );
                 })}
               </Space>
+              {/* 关联角色卡：由角色卡的「所属作品」反查。
+                  与上面手填的角色名槽互补 —— 后者靠人填且上限 4 个，
+                  这里只要角色卡写了这部作品就会出现。 */}
+              {!isCharacterCard && relatedCards.length > 0 && (
+                <div style={{ marginTop: 6 }}>
+                  <Space wrap size={[4, 4]}>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      关联角色卡 {relatedCards.length}
+                    </span>
+                    {relatedCards.map((card) => (
+                      <Tooltip key={card.id} title={`打开角色卡《${card.title}》`}>
+                        <Tag
+                          color="magenta"
+                          style={{ fontSize: 10, margin: 0, cursor: 'pointer' }}
+                          onClick={() => onNavigate?.(card)}
+                        >
+                          {card.title}
+                        </Tag>
+                      </Tooltip>
+                    ))}
+                  </Space>
+                </div>
+              )}
               {editing && characters.length < MAX_CHARACTER_SLOTS && (
                 <Space.Compact size="small" style={{ marginTop: 4 }}>
                   <Input
