@@ -319,6 +319,11 @@ const App: React.FC = () => {
           // 前后番剧切换：直接替换当前选中番剧，保持详情面板打开
           dispatch({ type: 'OPEN_MODAL', modal: 'detail', anime: target });
         }}
+        onDelete={(animeId) => {
+          // 移除后立刻关面板，否则会停在一个已经不存在的条目上
+          handleDeleteFromWatching(animeId);
+          dispatch({ type: 'CLOSE_MODAL', modal: 'detail' });
+        }}
         onAddAnime={handleAddAnime}
         allAnime={state.animeList}
         imgHeight={imgHeight}
