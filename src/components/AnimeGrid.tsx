@@ -7,6 +7,8 @@ import { getTemplate, getPosterObjectPosition } from '../../features/anime-data/
 import { searchPoster } from '../../features/anime-data/excel-service';
 import { formatReleaseDateCn } from '../../core/date';
 import { formatScore } from '../../core/math';
+import { useCutoutIndex } from '../../features/image-management/use-cutout-index';
+import { applyCutout } from '../../features/image-management/cutout-service';
 
 interface AnimeGridProps {
   animeList: AnimeEntry[];
@@ -26,6 +28,8 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
   templateDims,
 }) => {
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
+  /** 已有去底立绘的目录集合；卡片据此决定用原图还是 cover-nobg.png */
+  const cutoutNames = useCutoutIndex();
 
   /**
    * 卡片海报自动补图（仅本次会话的内存，**不写库、不写 Excel**）
@@ -145,7 +149,12 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
 
         const isSelected = batchMode && selectedBatchAnime?.includes(anime.id);
         const autoUrl = autoPosters[anime.id];
-        const posterUrl = anime.posterUrl || autoUrl || '';
+        /**
+         * 已保存的海报优先用去底版（若该角色已有 cover-nobg.png）。
+         * 只对已持久化的 posterUrl 生效 —— 自动搜到的临时图没有对应目录。
+         */
+        const savedPoster = anime.posterUrl ? applyCutout(anime.posterUrl, cutoutNames) : '';
+        const posterUrl = savedPoster || autoUrl || '';
         /** 是否来自"自动搜索"（用于角标提示，且用于触发懒加载） */
         const isAuto = !anime.posterUrl && !!autoUrl;
         const needPoster = !anime.posterUrl;

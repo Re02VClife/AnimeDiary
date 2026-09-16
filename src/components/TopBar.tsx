@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Input, Button, Segmented, Select } from 'antd';
-import { SearchOutlined, PlusOutlined, CloudDownloadOutlined, UserAddOutlined } from '@ant-design/icons';
+import { SearchOutlined, PlusOutlined, CloudDownloadOutlined, UserAddOutlined, BgColorsOutlined } from '@ant-design/icons';
 import type { AnimeCategory, ScoreTemplate, CategoryOverrides } from '../types';
 import { CATEGORY_CONFIG, getVisibleCategories } from '../types';
 
@@ -16,6 +16,8 @@ interface TopBarProps {
   onCompleteData?: () => void;
   /** 打开「角色补全」面板（搜索角色资料并生成角色卡） */
   onCompleteCharacters?: () => void;
+  /** 打开「去白底」面板（把角色立绘的白底变透明） */
+  onCutoutCharacters?: () => void;
   /** 模板筛选 */
   templates: ScoreTemplate[];
   activeTemplateId: string;
@@ -34,6 +36,7 @@ const TopBar: React.FC<TopBarProps> = ({
   onAddAnime,
   onCompleteData,
   onCompleteCharacters,
+  onCutoutCharacters,
   templates,
   activeTemplateId,
   onTemplateChange,
@@ -126,6 +129,16 @@ const TopBar: React.FC<TopBarProps> = ({
               title="搜索角色立绘 / 声优 / 生日 / 人设，一键生成角色卡"
             >
               角色补全
+            </Button>
+          )}
+          {onCutoutCharacters && (
+            <Button
+              icon={<BgColorsOutlined />}
+              onClick={onCutoutCharacters}
+              style={{ borderRadius: 20 }}
+              title="把角色立绘的白色背景变成透明，让角色浮在卡片底色上（原图保留，可撤销）"
+            >
+              去白底
             </Button>
           )}
           {onAddAnime && (

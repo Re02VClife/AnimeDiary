@@ -13,6 +13,7 @@ import AnimeDetailModal from './components/AnimeDetailModal';
 import SearchAddModal from '../features/search-add/SearchAddModal';
 import MediaCompleteModal from '../features/media-complete/MediaCompleteModal';
 import CharacterCompleteModal from '../features/character-complete/CharacterCompleteModal';
+import CharacterCutoutModal from '../features/image-management/CharacterCutoutModal';
 import TemplateManager from './components/TemplateManager';
 import { loadTemplates } from '../features/anime-data/template-service';
 import { getVisibleCategories } from './types';
@@ -32,6 +33,7 @@ const App: React.FC = () => {
   const [mediaCompleteOpen, setMediaCompleteOpen] = useState(false);
   /** 「角色补全」面板开关（搜索角色资料并生成角色卡） */
   const [characterCompleteOpen, setCharacterCompleteOpen] = useState(false);
+  const [characterCutoutOpen, setCharacterCutoutOpen] = useState(false);
 
   // ── FLIP 海报过渡状态 ──
   const [flipState, setFlipState] = useState<{
@@ -218,6 +220,7 @@ const App: React.FC = () => {
             onAddAnime={() => dispatch({ type: 'OPEN_MODAL', modal: 'search' })}
             onCompleteData={() => setMediaCompleteOpen(true)}
             onCompleteCharacters={() => setCharacterCompleteOpen(true)}
+            onCutoutCharacters={() => setCharacterCutoutOpen(true)}
             templates={templates}
             activeTemplateId={activeTemplateId}
             onTemplateChange={(id: string) => dispatch({ type: 'SET_ACTIVE_TEMPLATE', payload: id })}
@@ -357,6 +360,11 @@ const App: React.FC = () => {
         onApplied={refreshAnimeList}
       />
 
+      <CharacterCutoutModal
+        open={characterCutoutOpen}
+        onClose={() => setCharacterCutoutOpen(false)}
+        animeList={state.animeList}
+      />
       <TemplateManager
         open={templateManagerOpen}
         onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'templateManager' })}
