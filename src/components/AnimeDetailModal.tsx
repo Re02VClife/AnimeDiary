@@ -19,6 +19,8 @@ import { hasAIConfig } from '../../features/ai-analysis';
 import RadarChart from './RadarChart';
 import ImageManager from './ImageManager';
 import ScoreSlider from '../../features/anime-detail/ScoreSlider';
+import { useCutoutIndex } from '../../features/image-management/use-cutout-index';
+import { applyCutout } from '../../features/image-management/cutout-service';
 
 const { TextArea } = Input;
 const { Paragraph } = Typography;
@@ -111,6 +113,12 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   const [customFields, setCustomFields] = useState<Record<string, string | number>>({});
   const [link, setLink] = useState('');
   const [posterUrl, setPosterUrl] = useState('');
+  /**
+   * 去底立绘索引。只在**渲染**时替换 src，绝不写回 posterUrl state ——
+   * state 会被 handleSave 写进 Excel，如果里面存的是 cover-nobg.png，
+   * 一旦撤销去底（删掉该文件）海报就会指向不存在的路径而消失。
+   */
+  const cutoutNames = useCutoutIndex();
   const [allImages, setAllImages] = useState<string[]>([]);
   const [slideIdx, setSlideIdx] = useState(0);
   const [imageManagerOpen, setImageManagerOpen] = useState(false);
@@ -1985,7 +1993,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
             onMouseLeave={handlePosterMouseUp}
           >
             {allImages.length > 0 ? (
-              <img src={allImages[slideIdx]} alt={anime.title}
+              <img src={applyCutout(allImages[slideIdx], cutoutNames)} alt={anime.title}
                 draggable={false}
                 data-modal-poster="true"
                 style={{

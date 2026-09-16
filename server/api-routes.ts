@@ -56,6 +56,12 @@ export function createApiHandler({ DATA_DIR, fetchImpl }: ApiContext) {
    * 用户既看不懂也不知道是哪一条数据的问题，所以写前主动拦截。
    */
   const MAX_CELL_CHARS = 32767;
+  /**
+   * 角色立绘去白底后的固定文件名。
+   * 与 cover.jpg **并列存放而不是覆盖它** —— 原图必须留着，
+   * 用户随时能撤销去底回到原样（去底本质上是不可逆的信息丢失）。
+   */
+  const CUTOUT_FILE_NAME = 'cover-nobg.png';
 
   const routes: { prefix: string; handler: ApiHandler }[] = [];
   const router = {
@@ -1750,6 +1756,133 @@ export function createApiHandler({ DATA_DIR, fetchImpl }: ApiContext) {
               res.end(JSON.stringify({ error: e instanceof Error ? e.message : '保存失败' }));
             }
           });
+        });
+
+        // ── 角色立绘去白底 ──
+        //
+        // 像素算法在 core/white-background.ts（纯函数，17 个单测），
+        // 渲染进程用 Canvas 跑完后把 PNG 丢过来落盘。
+        //
+        // 为什么不覆盖原 cover.jpg：去底是不可逆的信息丢失，而且实测 100 张里
+        // 有 12 张算法处理不干净（装饰边框 / 拼贴图 / 非白底）。原图留着，
+        // 用户才能「撤销去底」回到原样。
+        //
+        // 为什么用固定文件名：卡片渲染时只要判断这个文件存不存在就能决定用哪张，
+        // 不需要在 Excel 里额外存状态，也不用改动任何已有数据。
+        router.use('/api/images/cutout/save', (req, res) => {
+          if (req.method !== 'POST') {
+            res.statusCode = 405;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+            return;
+          }
+          const chunks: Buffer[] = [];
+          req.on('data', (chunk: Buffer) => { chunks.push(chunk); });
+          req.on('end', () => {
+            try {
+              const body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+              const animeTitle = String(body.animeTitle || '').trim();
+              const dataUrl = String(body.dataUrl || '');
+              if (!animeTitle || !dataUrl) {
+                res.statusCode = 400;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ error: '缺少 animeTitle 或 dataUrl' }));
+                return;
+              }
+              // 只有 PNG 有 alpha 通道；JPEG 存不下透明，误传会静默变成白底
+              if (!dataUrl.startsWith('data:image/png')) {
+                res.statusCode = 400;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ error: '去底结果必须是 PNG（JPEG 不支持透明通道）' }));
+                return;
+              }
+              const safeName = animeTitle.replace(/[\\/:*?"<>|]/g, '_').trim();
+              if (!isSafePathSegment(safeName)) {
+                res.statusCode = 400;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ error: '角色名非法' }));
+                return;
+              }
+              const buffer = Buffer.from(dataUrl.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+              if (buffer.length === 0) {
+                res.statusCode = 400;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ error: '图片内容为空' }));
+                return;
+              }
+              const dir = path.join(IMAGES_DIR, safeName);
+              fs.mkdirSync(dir, { recursive: true });
+              fs.writeFileSync(path.join(dir, CUTOUT_FILE_NAME), buffer);
+
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({
+                success: true,
+                fileName: CUTOUT_FILE_NAME,
+                url: `/api/images/file?anime=${encodeURIComponent(safeName)}&file=${encodeURIComponent(CUTOUT_FILE_NAME)}`,
+                bytes: buffer.length,
+              }));
+            } catch (e) {
+              res.statusCode = 500;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: e instanceof Error ? e.message : '去底图保存失败' }));
+            }
+          });
+        });
+
+        /** 撤销去底：只删派生的 cover-nobg.png，原图不动 */
+        router.use('/api/images/cutout/delete', (req, res) => {
+          if (req.method !== 'POST') {
+            res.statusCode = 405;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+            return;
+          }
+          const chunks: Buffer[] = [];
+          req.on('data', (chunk: Buffer) => { chunks.push(chunk); });
+          req.on('end', () => {
+            try {
+              const { animeTitle } = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+              const safeName = String(animeTitle || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+              if (!isSafePathSegment(safeName)) {
+                res.statusCode = 400;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ error: '角色名非法' }));
+                return;
+              }
+              const filePath = path.join(IMAGES_DIR, safeName, CUTOUT_FILE_NAME);
+              if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ success: true }));
+            } catch (e) {
+              res.statusCode = 500;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: e instanceof Error ? e.message : '撤销失败' }));
+            }
+          });
+        });
+
+        /**
+         * GET /api/images/cutout/index
+         * 列出所有已有去底图的目录名。前端只需拉一次，
+         * 就能决定每张角色卡该用 cover.jpg 还是 cover-nobg.png。
+         */
+        router.use('/api/images/cutout/index', (_req, res) => {
+          res.setHeader('Content-Type', 'application/json');
+          try {
+            const names: string[] = [];
+            if (fs.existsSync(IMAGES_DIR)) {
+              for (const entry of fs.readdirSync(IMAGES_DIR, { withFileTypes: true })) {
+                if (!entry.isDirectory()) continue;
+                if (fs.existsSync(path.join(IMAGES_DIR, entry.name, CUTOUT_FILE_NAME))) {
+                  names.push(entry.name);
+                }
+              }
+            }
+            res.end(JSON.stringify({ names, count: names.length }));
+          } catch (e) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: e instanceof Error ? e.message : '读取去底索引失败' }));
+          }
         });
 
         // 删除本地图片

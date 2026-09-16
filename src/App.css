@@ -617,3 +617,103 @@
   padding-bottom: 6px;
   vertical-align: middle;
 }
+
+/* ── 角色立绘去白底面板 ──
+   缩略图区用棋盘格打底：去底结果是透明 PNG，铺在实色上根本看不出
+   「哪里透明了」，棋盘格能一眼看出抠掉的区域，也方便发现残留白块。 */
+.cutout-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 10px;
+}
+
+.cutout-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cutout-thumb {
+  position: relative;
+  height: 164px;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 2px solid var(--border-primary);
+  background-color: #3a3a3a;
+  background-image:
+    linear-gradient(45deg, #2a2a2a 25%, transparent 25%),
+    linear-gradient(-45deg, #2a2a2a 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #2a2a2a 75%),
+    linear-gradient(-45deg, transparent 75%, #2a2a2a 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+.cutout-thumb.is-selected {
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 10px rgba(251, 114, 153, 0.35);
+}
+
+.cutout-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+/* 悬停时叠上原图，用于逐张核对边缘 */
+.cutout-thumb .cutout-orig {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.12s;
+  background: #fff;
+}
+
+.cutout-thumb:hover .cutout-orig {
+  opacity: 1;
+}
+
+.cutout-check {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+}
+
+.cutout-mask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+}
+
+.cutout-name {
+  font-size: 12px;
+  text-align: center;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cutout-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  justify-content: center;
+  min-height: 22px;
+}
+
+.cutout-tags .ant-tag {
+  margin-inline-end: 0;
+  font-size: 11px;
+  line-height: 18px;
+  padding-inline: 5px;
+}
+
