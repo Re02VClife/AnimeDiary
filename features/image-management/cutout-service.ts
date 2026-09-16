@@ -192,3 +192,99 @@ export async function removeCutout(dirName: string): Promise<void> {
   }
   invalidateCutoutIndex();
 }
+
+// ── AI 抠图（服务端 isnet-anime 推理）──
+//
+// 与洪泛的分工：洪泛在渲染进程用 Canvas 算，快（0.1s/张）但对
+// 「背景不是一整片白」的图无能为力；AI 在主进程做原生推理（约 0.5s/张），
+// 实景背景、拼贴图、装饰边框都能处理。两条路的结果文件完全一样，
+// 可以混着用，也可以随时互相覆盖。
+
+export type CutoutEngine = 'flood' | 'ai';
+
+export interface AiCutoutStatus {
+  ready: boolean;
+  modelFile: string;
+  modelMB: number;
+  modelPath: string;
+  runtimeReady: boolean;
+  runtimePath: string;
+  error?: string;
+}
+
+export interface AiCutoutResult {
+  /** 暂存文件的预览 URL（已带时间戳，避免命中 24h 缓存） */
+  url: string;
+  width: number;
+  height: number;
+  bytes: number;
+  inferenceMs: number;
+  transparentRatio: number;
+  opaqueRatio: number;
+}
+
+/** 预览 URL 加时间戳：/api/images/file 带 24h 缓存，暂存文件每次都是新内容 */
+function withCacheBust(url: string): string {
+  return `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+}
+
+export async function loadAiStatus(): Promise<AiCutoutStatus | null> {
+  try {
+    const resp = await fetch('/api/images/cutout/ai-status');
+    if (!resp.ok) return null;
+    return (await resp.json()) as AiCutoutStatus;
+  } catch {
+    // 服务端不可达就当作不可用，界面自动退回洪泛，不该弹错
+    return null;
+  }
+}
+
+/**
+ * 让服务端跑一次 AI 抠图。
+ * 结果落在 cover-nobg.preview.png 而不是正式文件 —— 保持「先看再应用」，
+ * 未确认的结果不会出现在卡片上。
+ */
+export async function aiCutout(dirName: string, fileName: string): Promise<AiCutoutResult> {
+  const resp = await fetch('/api/images/cutout/ai', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ animeTitle: dirName, fileName }),
+  });
+  const data = await resp.json().catch(() => null);
+  if (!resp.ok || !data || !data.success) {
+    throw new Error((data && data.error) || `AI 抠图失败 HTTP ${resp.status}`);
+  }
+  return {
+    url: withCacheBust(String(data.url)),
+    width: Number(data.width),
+    height: Number(data.height),
+    bytes: Number(data.bytes),
+    inferenceMs: Number(data.inferenceMs),
+    transparentRatio: Number(data.transparentRatio),
+    opaqueRatio: Number(data.opaqueRatio),
+  };
+}
+
+/** 暂存结果转正 / 丢弃（转正只是同目录改名，不重新推理） */
+export async function applyAiCutout(dirName: string, action: 'apply' | 'discard'): Promise<void> {
+  const resp = await fetch('/api/images/cutout/apply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ animeTitle: dirName, action }),
+  });
+  const data = await resp.json().catch(() => null);
+  if (!resp.ok || !data || !data.success) {
+    throw new Error((data && data.error) || `操作失败 HTTP ${resp.status}`);
+  }
+  invalidateCutoutIndex();
+}
+
+/**
+ * AI 结果的质量提示。
+ * AI 极少给出「没抠掉」的结果，所以判据与洪泛不同：只看透明面积是否异常小。
+ */
+export function describeAiQuality(r: AiCutoutResult): string[] {
+  return r.transparentRatio < 0.05
+    ? [`只移除了 ${(r.transparentRatio * 100).toFixed(1)}% 的背景，建议对照原图确认`]
+    : [];
+}
