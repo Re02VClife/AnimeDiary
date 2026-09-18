@@ -315,15 +315,15 @@ export function createCharacterTemplate(): ScoreTemplate {
     id: CHARACTER_TEMPLATE_ID,
     name: '角色评分',
     applicableGenre: 'custom',
-    // 6 维等权重；key 加 char_ 前缀避开 DIMENSION_COL_MAP，防止误写 Excel 默认评分列
+    // 5 维等权重；key 加 char_ 前缀避开 DIMENSION_COL_MAP，防止误写 Excel 默认评分列
     // 注意不含 overall 维度：append 路径（mapAnimeToRow）会把含 overall 的 0 分写入综合观感列
+    // v5→v6：删除「能力设定」「成长弧光」，新增「好感度」，「外观」更名「角色设计」
     dimensions: [
-      { key: 'char_appearance', label: '外观', description: '角色设计、造型、立绘', weight: 1 / 6 },
-      { key: 'char_personality', label: '性格', description: '性格塑造与魅力', weight: 1 / 6 },
-      { key: 'char_ability', label: '能力设定', description: '能力与设定的巧妙程度', weight: 1 / 6 },
-      { key: 'char_voice', label: '声优', description: '配音表现', weight: 1 / 6 },
-      { key: 'char_growth', label: '成长弧光', description: '角色成长与转变', weight: 1 / 6 },
-      { key: 'char_moe', label: '萌点电波', description: '个人主观喜爱度', weight: 1 / 6 },
+      { key: 'char_appearance', label: '角色设计', description: '角色设计、造型、立绘', weight: 1 / 5 },
+      { key: 'char_personality', label: '性格', description: '性格塑造与魅力', weight: 1 / 5 },
+      { key: 'char_voice', label: '声优', description: '配音表现', weight: 1 / 5 },
+      { key: 'char_moe', label: '萌点电波', description: '个人主观喜爱度', weight: 1 / 5 },
+      { key: 'char_favor', label: '好感度', description: '对角色的整体好感度', weight: 1 / 5 },
     ],
     isDefault: false,
     fieldConfig: {
