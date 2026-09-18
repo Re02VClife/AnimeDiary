@@ -94,6 +94,30 @@ describe('seedCharacterTemplate', () => {
     expect(layout.posterAspectRatio).toBe('3/4');      // 保留用户值
     expect(layout.posterObjectPosition).toBe('50% 0%'); // 只补缺
   });
+
+  it('回归：v5→v6 升级为 5 维（删能力设定/成长弧光，加好感度，外观改名角色设计）', () => {
+    // 造一个 v5 状态：仍是旧的 6 维定义
+    const template = createCharacterTemplate();
+    template.dimensions = [
+      { key: 'char_appearance', label: '外观', description: '角色设计、造型、立绘', weight: 1 / 6 },
+      { key: 'char_personality', label: '性格', description: '性格塑造与魅力', weight: 1 / 6 },
+      { key: 'char_ability', label: '能力设定', description: '能力与设定的巧妙程度', weight: 1 / 6 },
+      { key: 'char_voice', label: '声优', description: '配音表现', weight: 1 / 6 },
+      { key: 'char_growth', label: '成长弧光', description: '角色成长与转变', weight: 1 / 6 },
+      { key: 'char_moe', label: '萌点电波', description: '个人主观喜爱度', weight: 1 / 6 },
+    ] as any;
+    localStorage.setItem(TEMPLATES_KEY, JSON.stringify([template]));
+    localStorage.setItem(SEED_FLAG, '5');
+
+    seedCharacterTemplate();
+
+    const dims = storedTemplates()[0].dimensions;
+    expect(dims.map((d: any) => d.key)).toEqual([
+      'char_appearance', 'char_personality', 'char_voice', 'char_moe', 'char_favor',
+    ]);
+    expect(dims.find((d: any) => d.key === 'char_appearance').label).toBe('角色设计');
+    expect(dims.find((d: any) => d.key === 'char_favor').label).toBe('好感度');
+  });
 });
 
 describe('parsePosterFocus', () => {

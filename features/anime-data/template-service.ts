@@ -169,13 +169,14 @@ export function migrateLegacyDimensions(): void {
 const CHARACTER_SEED_FLAG = 'anime_diary_character_seeded';
 
 /** 角色模板最新种子版本 */
-const CHARACTER_SEED_VERSION = '5';
+const CHARACTER_SEED_VERSION = '6';
 
 /**
- * 种子：补插内置角色评分模板（版本化，当前 v5）
+ * 种子：补插内置角色评分模板（版本化，当前 v6）
  * - flag 记录已种子版本 → 用户删除后不会复活（尊重删除）
  * - 每次版本升级就地更新已有模板（v1→v2 宽高比，v2→v3 删除剧情作用维度，
- *   v3→v4 新增「详细人设」字段，v4→v5 海报焦点锚定顶部）
+ *   v3→v4 新增「详细人设」字段，v4→v5 海报焦点锚定顶部，
+ *   v5→v6 删除「能力设定」「成长弧光」、新增「好感度」、「外观」更名「角色设计」）
  * - 内部先跑 migrateLegacyDimensions（幂等），兼容全新用户与旧版维度用户
  * - 必须在 React 首次渲染前调用（App.tsx 的 loadTemplates useMemo 只求值一次）
  */
@@ -190,10 +191,12 @@ export function seedCharacterTemplate(): void {
     templates.push(createCharacterTemplate());
     saveTemplates(templates);
   } else if (existing) {
-    // 更新已有模板：维度用最新工厂定义覆盖（删除 char_role、权重 1/6）
+    // 更新已有模板：维度用最新工厂定义覆盖（删除 char_role/char_ability/char_growth，权重 1/5）
     const latest = createCharacterTemplate();
-    const hasCharRole = existing.dimensions.some((d: Dimension) => d.key === 'char_role');
-    if (hasCharRole || seeded !== CHARACTER_SEED_VERSION) {
+    const hasStaleDim = existing.dimensions.some(
+      (d: Dimension) => d.key === 'char_role' || d.key === 'char_ability' || d.key === 'char_growth',
+    );
+    if (hasStaleDim || seeded !== CHARACTER_SEED_VERSION) {
       existing.dimensions = latest.dimensions;
       existing.categoryLabels = latest.categoryLabels;
       // 自定义字段：内置的以最新定义覆盖，**用户自己加的保留**。
