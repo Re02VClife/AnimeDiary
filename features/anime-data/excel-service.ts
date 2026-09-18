@@ -25,7 +25,12 @@ const API_BASE = '/api/excel';
  * 而且用户完全看不出是哪一条番剧的问题。
  */
 function isWritablePosterUrl(url: string | undefined): url is string {
-  return !!url && !url.startsWith('data:');
+  if (!url || url.startsWith('data:')) return false;
+  // AI 抠图的**暂存**文件不能作为海报持久化：它在用户点「应用」时会被改名成
+  // cover-nobg.png，存下来的 URL 随即永久 404。实测用户 37 张角色卡因为
+  // 这个 URL 被写进 Excel / 覆盖表而只剩占位图。
+  if (url.includes('cover-nobg.preview.')) return false;
+  return true;
 }
 
 interface ExcelUpdate {
@@ -330,8 +335,11 @@ export async function loadAnimeList(): Promise<AnimeEntry[]> {
           entry.dimensionReviews = dimReviews[entry.id];
         }
         // 应用海报优先级：用户手动覆盖 > Excel 列持久化 > AniList 缓存匹配
-        if (posterOverrides[entry.id]) {
-          entry.posterUrl = posterOverrides[entry.id];
+        const override = posterOverrides[entry.id];
+        // 丢弃指向 AI 暂存文件的覆盖：暂存文件在「应用」时会被改名，URL 随即失效。
+        // 而覆盖的优先级最高，留着它会一直压过 Excel 里正确的值 → 卡片永远是占位图。
+        if (override && !override.includes('cover-nobg.preview.')) {
+          entry.posterUrl = override;
         } else if (entry.posterUrl) {
           // 已有 Excel 列中的海报，保持不变
         } else if (posterMap[entry.id]) {

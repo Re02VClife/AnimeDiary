@@ -1865,6 +1865,11 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
             if (!fs.existsSync(dir)) { res.end(JSON.stringify([])); return; }
             const files = fs.readdirSync(dir)
               .filter((f) => /\.(jpg|jpeg|png|gif|webp|bmp|webm)$/i.test(f))
+              // 排除去底派生文件。它们不是用户素材，而是「当前海报」的另一种形态；
+              // 真正要紧的是 cover-nobg.preview.png —— AI 抠图的**暂存**文件，
+              // 一旦在图片管理器里被误选为海报，等它被「应用」改名后 URL 就永久 404
+              //（实测用户 37 张角色卡因此只剩占位图）。
+              .filter((f) => !/^cover-nobg(\.preview)?\.png$/i.test(f))
               .map((f) => {
                 const stat = fs.statSync(path.join(dir, f));
                 return {

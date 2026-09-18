@@ -8,7 +8,7 @@ import { searchPoster } from '../../features/anime-data/excel-service';
 import { formatReleaseDateCn } from '../../core/date';
 import { formatScore } from '../../core/math';
 import { useCutoutIndex } from '../../features/image-management/use-cutout-index';
-import { applyCutout } from '../../features/image-management/cutout-service';
+import { applyCutout, fallbackPosterUrl } from '../../features/image-management/cutout-service';
 
 interface AnimeGridProps {
   animeList: AnimeEntry[];
@@ -196,8 +196,17 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
                   data-poster-anime-id={anime.id}
                   style={posterObjPos ? { objectPosition: posterObjPos } : undefined}
                   onError={(e) => {
-                    e.currentTarget.style.display = 'none';
-                    e.currentTarget.parentElement!.querySelector('.poster-placeholder')?.classList.remove('hidden');
+                    const img = e.currentTarget;
+                    // 兜底：本地图缺失时先退回同目录的原图，而不是直接只剩占位符。
+                    // 海报 URL 可能指向已失效的派生文件（例如被改名的去底图）。
+                    const fallback = img.dataset.fallback !== '1' ? fallbackPosterUrl(img.getAttribute('src') || '') : null;
+                    if (fallback) {
+                      img.dataset.fallback = '1';
+                      img.src = fallback;
+                      return;
+                    }
+                    img.style.display = 'none';
+                    img.parentElement!.querySelector('.poster-placeholder')?.classList.remove('hidden');
                   }}
                 />
               ) : null}
