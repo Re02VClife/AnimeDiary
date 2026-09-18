@@ -117,6 +117,21 @@ export function applyCutout(posterUrl: string, cutoutNames: Set<string>): string
   return `/api/images/file?anime=${encodeURIComponent(dir)}&file=${encodeURIComponent(CUTOUT_FILE_NAME)}`;
 }
 
+/**
+ * 图片加载失败时的兜底：换成同目录的原图 cover.jpg。
+ *
+ * 目的是「海报 URL 指向的文件已经不在了」时先把画面救回来，而不是直接只剩
+ * 占位符 —— 现实里这会发生在去底图被删、或历史遗留的暂存文件 URL 上。
+ * 返回 null 表示没法兜底（外链、或本来就是原图）。
+ */
+export function fallbackPosterUrl(url: string): string | null {
+  const m = url.match(IMAGE_FILE_RE);
+  if (!m) return null;
+  const file = decodeURIComponent(m[2]);
+  if (/^cover\.(jpe?g|png|webp)$/i.test(file)) return null; // 已经是原图，再失败就没救了
+  return `/api/images/file?anime=${m[1]}&file=cover.jpg`;
+}
+
 // ── 处理与存取 ──
 
 function loadImageElement(url: string): Promise<HTMLImageElement> {

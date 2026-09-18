@@ -20,7 +20,7 @@ import RadarChart from './RadarChart';
 import ImageManager from './ImageManager';
 import ScoreSlider from '../../features/anime-detail/ScoreSlider';
 import { useCutoutIndex } from '../../features/image-management/use-cutout-index';
-import { applyCutout } from '../../features/image-management/cutout-service';
+import { applyCutout, fallbackPosterUrl } from '../../features/image-management/cutout-service';
 import { workTitleSimilarity } from '../../core/character';
 
 const { TextArea } = Input;
@@ -2099,6 +2099,13 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
               <img src={applyCutout(allImages[slideIdx], cutoutNames)} alt={anime.title}
                 draggable={false}
                 data-modal-poster="true"
+                onError={(e) => {
+                  // 与网格同样的兜底：本地图缺失时退回原图，别让详情面板空着
+                  const img = e.currentTarget;
+                  if (img.dataset.fallback === '1') return;
+                  const fb = fallbackPosterUrl(img.getAttribute('src') || '');
+                  if (fb) { img.dataset.fallback = '1'; img.src = fb; }
+                }}
                 style={{
                   width: '100%', height: '100%', objectFit: 'cover',
                   objectPosition: `${posX}% ${posY}%`,
