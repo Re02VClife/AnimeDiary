@@ -125,9 +125,17 @@ const CharacterCutoutModal: React.FC<CharacterCutoutModalProps> = ({ open, onClo
   /** 逐张处理。洪泛是同步像素运算、AI 是本地 HTTP，每张之间都让出主线程让进度条能动 */
   const handleRun = useCallback(async () => {
     if (items.length === 0) { catgirlMessage.warning('没有可处理的角色卡'); return; }
-    const targets = items.filter((it) => filter === 'all' || (filter === 'suspect'
-      ? (states[it.id]?.result?.hints.length ?? 1) > 0
-      : savedNames.has(it.dir)));
+    /**
+     * 勾了谁就只处理谁（勾几张抠几张）；一张没勾才退回「当前筛选下的全部」。
+     *
+     * 以前勾选被写死在「这张已有本次会话的结果」上，于是没跑过引擎时一张都勾不上、
+     * 「全选」亮着却选不动 —— 想分批处理就必须先对全部 185 张整体跑一遍。
+     */
+    const targets = selected.size > 0
+      ? items.filter((it) => selected.has(it.id))
+      : items.filter((it) => filter === 'all' || (filter === 'suspect'
+        ? (states[it.id]?.result?.hints.length ?? 1) > 0
+        : savedNames.has(it.dir)));
     if (targets.length === 0) { catgirlMessage.warning('当前筛选下没有要处理的条目'); return; }
     if (engine === 'ai' && !aiStatus?.ready) {
       catgirlMessage.warning('AI 运行时未就绪，已切回白底洪泛');
@@ -169,7 +177,7 @@ const CharacterCutoutModal: React.FC<CharacterCutoutModalProps> = ({ open, onClo
     catgirlMessage.success(
       `${engine === 'ai' ? 'AI 抠图' : '去底'}完成：自动勾选 ${autoSelect.size} 张干净的${stopped ? '（已提前停止）' : ''}`,
     );
-  }, [items, filter, states, savedNames, engine, aiStatus]);
+  }, [items, filter, states, savedNames, engine, aiStatus, selected]);
 
   const handleSave = useCallback(async () => {
     const targets = items.filter((it) => selected.has(it.id) && (states[it.id]?.aiResult || states[it.id]?.result));
@@ -244,13 +252,13 @@ const CharacterCutoutModal: React.FC<CharacterCutoutModalProps> = ({ open, onClo
   }), [items, filter, states, savedNames]);
 
   /**
-   * 全选 / 全不选。
-   * 自动勾选是「宁可漏不可错」的保守策略，但用户常常只想留几张 ——
-   * 没有这两个按钮就只能一张张点掉，实测连开发自己都点不动。
+   * 全选 / 全不选。勾选既可以用来「挑出要处理的几张」，也可以用来「挑出要应用的结果」，
+   * 所以这里一律选当前筛选下的全部 —— 只挑有结果的那种写法，会让没跑过引擎时
+   * 「全选」亮着却一张都选不上。应用时会自动跳过没有结果的卡片。
    */
   const selectAllVisible = useCallback(() => {
-    setSelected(new Set(visible.filter((it) => states[it.id]?.result || states[it.id]?.aiResult).map((it) => it.id)));
-  }, [visible, states]);
+    setSelected(new Set(visible.map((it) => it.id)));
+  }, [visible]);
 
   const clearSelection = useCallback(() => setSelected(new Set()), []);
 
@@ -288,7 +296,8 @@ const CharacterCutoutModal: React.FC<CharacterCutoutModalProps> = ({ open, onClo
         onClick={handleRun}
         disabled={items.length === 0 || busy || (engine === 'ai' && !aiReady)}
       >
-        开始{currentLabel}（{filter === 'all' ? items.length : visible.length} 张）
+        开始{currentLabel}（
+        {selected.size > 0 ? `选中 ${selected.size}` : (filter === 'all' ? items.length : visible.length)} 张）
       </Button>
     ),
     <Button
@@ -318,7 +327,7 @@ const CharacterCutoutModal: React.FC<CharacterCutoutModalProps> = ({ open, onClo
         showIcon
         style={{ marginBottom: 12 }}
         message="把角色立绘的背景变成透明，角色会直接浮在卡片底色上"
-        description="原图不会被修改：结果另存为 cover-nobg.png，随时可以撤销。AI 抠图会先出预览、确认后才转正。默认只勾选算法认为干净的；标「需核对」的建议对照原图（鼠标悬停缩略图可看原图）后再决定。"
+        description="原图不会被修改：结果另存为 cover-nobg.png，随时可以撤销。AI 抠图会先出预览、确认后才转正。先勾选角色可以只处理这几张，不勾选则处理当前筛选下的全部。默认只勾选算法认为干净的；标「需核对」的建议对照原图（鼠标悬停缩略图可看原图）后再决定。"
       />
 
       {items.length === 0 ? (
@@ -401,22 +410,20 @@ const CharacterCutoutModal: React.FC<CharacterCutoutModalProps> = ({ open, onClo
                 <div className="cutout-cell" key={it.id}>
                   <div
                     className={`cutout-thumb${selected.has(it.id) ? ' is-selected' : ''}`}
-                    onClick={() => { if (hasResult) toggleSelect(it.id); }}
-                    title={hasResult ? '点击勾选 / 取消；悬停看原图' : it.title}
+                    onClick={() => toggleSelect(it.id)}
+                    title={hasResult ? '点击勾选 / 取消；悬停看原图' : '点击勾选 / 取消'}
                   >
                     <img src={displayUrl} alt={it.title} loading="lazy" />
                     {/* 悬停时叠上原图，方便一张一张对比边缘 */}
                     {hasResult && <img className="cutout-orig" src={it.posterUrl} alt={`${it.title} 原图`} loading="lazy" />}
-                    {hasResult && (
-                      <Checkbox
-                        className="cutout-check"
-                        checked={selected.has(it.id)}
-                        // 必须挡住冒泡：外层 .cutout-thumb 也有「点击切换选中」，
-                        // 不拦的话一次点击会 toggle 两下、等于没点。
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={() => toggleSelect(it.id)}
-                      />
-                    )}
+                    <Checkbox
+                      className="cutout-check"
+                      checked={selected.has(it.id)}
+                      // 必须挡住冒泡：外层 .cutout-thumb 也有「点击切换选中」，
+                      // 不拦的话一次点击会 toggle 两下、等于没点。
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => toggleSelect(it.id)}
+                    />
                     {st?.status === 'working' && <div className="cutout-mask">{engine === 'ai' ? 'AI 处理中…' : '解析中…'}</div>}
                   </div>
                   <div className="cutout-name" title={it.title}>{it.title}</div>
