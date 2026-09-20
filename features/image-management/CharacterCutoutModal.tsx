@@ -27,6 +27,7 @@ import {
   loadCutoutIndex,
   getCachedCutoutIndex,
   cutoutDirFor,
+  applyCutout,
   loadAiStatus,
   aiCutout,
   applyAiCutout,
@@ -384,8 +385,17 @@ const CharacterCutoutModal: React.FC<CharacterCutoutModalProps> = ({ open, onClo
               const floodRes = st?.result;
               const hints = aiRes ? describeAiQuality(aiRes) : (floodRes?.hints ?? []);
               const hasResult = !!aiRes || !!floodRes;
-              const displayUrl = aiRes ? aiRes.url : (floodRes ? floodRes.dataUrl : it.posterUrl);
               const isSaved = savedNames.has(it.dir);
+              /**
+               * 已应用的卡片要显示**去底后的图**，不是原图。
+               * 以前这里直接退回 it.posterUrl，于是「已应用 174 张」的标签下面
+               * 全是没有去底的原图，看起来像根本没生效（同一个面板里还会跟
+               * 少数海报列直接存了 cover-nobg.png 的卡片表现不一致）。
+               * applyCutout 自己会判断目录在不在索引里，没去底的仍返回原图。
+               */
+              const displayUrl = aiRes ? aiRes.url
+                : floodRes ? floodRes.dataUrl
+                  : applyCutout(it.posterUrl, savedNames);
               const suspect = hasResult && hints.length > 0;
               return (
                 <div className="cutout-cell" key={it.id}>
