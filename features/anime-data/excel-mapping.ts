@@ -88,6 +88,7 @@ export const DIMENSION_COL_MAP: Record<string, number> = {
 
 /** 用户可编辑列（写回时只修改这些列，不碰公式列） */
 export const EDITABLE_COLS: number[] = [
+  EXCEL_COL.TITLE,
   EXCEL_COL.SEARCH_ALIAS,
   EXCEL_COL.AUDIO,
   EXCEL_COL.PRODUCTION,

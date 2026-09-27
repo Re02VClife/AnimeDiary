@@ -148,6 +148,19 @@ function mapAnimeToUpdates(entry: AnimeEntry): ExcelUpdate[] {
   const rowIdx = entry.excelRowIndex;
   if (rowIdx === undefined) return updates;
 
+  /**
+   * 标题（B 列）。
+   *
+   * 这里以前漏了 —— 编辑已有条目的「名字」根本写不进 Excel：
+   * 保存虽然返回成功，但 handleSaveAnime 会把内存里的 excelTitleSnapshot 更新成新标题，
+   * 于是**下一次**保存的写前校验拿新标题去比 Excel 里的旧标题，必然 409，界面报
+   * 「Excel 中第 N 行现在是「旧名」，不是「新名」」，看起来就是"改不了名字、一直在死循环"。
+   * 追加路径（mapAnimeToRow）本来就写标题，只有这条编辑路径漏了。
+   */
+  if (entry.title) {
+    updates.push({ sheetName: MAIN_SHEET, rowIndex: rowIdx, colIndex: EXCEL_COL.TITLE, value: entry.title });
+  }
+
   for (const score of entry.scores) {
     const col = DIMENSION_COL_MAP[score.dimensionKey];
     if (col !== undefined && EDITABLE_COLS.includes(col)) {
