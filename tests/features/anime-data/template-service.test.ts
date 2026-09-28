@@ -113,10 +113,35 @@ describe('seedCharacterTemplate', () => {
 
     const dims = storedTemplates()[0].dimensions;
     expect(dims.map((d: any) => d.key)).toEqual([
-      'char_appearance', 'char_personality', 'char_voice', 'char_moe', 'char_favor',
+      'overall', 'char_appearance', 'char_personality', 'char_voice', 'char_moe', 'char_favor',
     ]);
     expect(dims.find((d: any) => d.key === 'char_appearance').label).toBe('角色设计');
     expect(dims.find((d: any) => d.key === 'char_favor').label).toBe('好感度');
+  });
+
+  it('回归：v6→v7 补上 overall「总评」维度（与番剧模板对齐）', () => {
+    // 造一个 v6 状态：5 维、没有 overall
+    const template = createCharacterTemplate();
+    template.dimensions = [
+      { key: 'char_appearance', label: '角色设计', description: '角色设计、造型、立绘', weight: 1 / 5 },
+      { key: 'char_personality', label: '性格', description: '性格塑造与魅力', weight: 1 / 5 },
+      { key: 'char_voice', label: '声优', description: '配音表现', weight: 1 / 5 },
+      { key: 'char_moe', label: '萌点电波', description: '个人主观喜爱度', weight: 1 / 5 },
+      { key: 'char_favor', label: '好感度', description: '对角色的整体好感度', weight: 1 / 5 },
+    ] as any;
+    localStorage.setItem(TEMPLATES_KEY, JSON.stringify([template]));
+    localStorage.setItem(SEED_FLAG, '6');
+
+    seedCharacterTemplate();
+
+    const dims = storedTemplates()[0].dimensions;
+    const overall = dims.find((d: any) => d.key === 'overall');
+    expect(overall).toBeTruthy();
+    expect(overall.label).toBe('总评');
+    // weight 0 才会被各处的「加权总评」计算排除，否则总评会把自己算进去
+    expect(overall.weight).toBe(0);
+    // 必须排在最前，和 DEFAULT_DIMENSIONS 一致
+    expect(dims[0].key).toBe('overall');
   });
 });
 
