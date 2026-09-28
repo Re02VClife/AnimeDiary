@@ -315,10 +315,17 @@ export function createCharacterTemplate(): ScoreTemplate {
     id: CHARACTER_TEMPLATE_ID,
     name: '角色评分',
     applicableGenre: 'custom',
-    // 5 维等权重；key 加 char_ 前缀避开 DIMENSION_COL_MAP，防止误写 Excel 默认评分列
-    // 注意不含 overall 维度：append 路径（mapAnimeToRow）会把含 overall 的 0 分写入综合观感列
+    // 首项 overall「总评」与番剧模板对齐：weight 0，不计入加权，值由其余维度现算
+    // （详情面板标题旁的「总评 x.xx」），模板管理里只读展示、不可删。
+    // 其余 5 维等权重；key 加 char_ 前缀避开 DIMENSION_COL_MAP，防止误写 Excel 默认评分列。
+    // overall 是唯一会命中 DIMENSION_COL_MAP 的 key（→ D 列 综合观感），但实际写不进去：
+    // 编辑路径（mapAnimeToUpdates）被 EDITABLE_COLS 挡住 D 列；追加路径（mapAnimeToRow）
+    // 只在 entry.scores 真的含 overall 时才写，而角色卡的 scores 来自 TEMPLATE_JSON（不含
+    // overall），overall 又在 displayDims 里被过滤、没有输入框，所以它永远没有分数。
     // v5→v6：删除「能力设定」「成长弧光」，新增「好感度」，「外观」更名「角色设计」
+    // v6→v7：补上 overall「总评」，与番剧模板对齐
     dimensions: [
+      { key: 'overall', label: '总评', description: '由各维度加权计算得出', weight: 0 },
       { key: 'char_appearance', label: '角色设计', description: '角色设计、造型、立绘', weight: 1 / 5 },
       { key: 'char_personality', label: '性格', description: '性格塑造与魅力', weight: 1 / 5 },
       { key: 'char_voice', label: '声优', description: '配音表现', weight: 1 / 5 },
