@@ -19,8 +19,17 @@ function formatYM(iso: string): string {
   return `${y}年${m}月`;
 }
 
+/**
+ * 默认只列最近 N 个月。
+ *
+ * 侧栏是整条一起滚动的（板块不自带滚动条），而时间轴有 20 个月、200+ 条记录，
+ * 全铺开会把下面的板块顶到很远。要看更早的点底部的「展开全部」。
+ */
+const MONTH_PREVIEW = 6;
+
 const WatchTimeline: React.FC<WatchTimelineProps> = ({ animeList, onAnimeClick }) => {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [showAllMonths, setShowAllMonths] = useState(false);
 
   // 按观看时间分组
   const timelineData = useMemo(() => {
@@ -81,7 +90,7 @@ const WatchTimeline: React.FC<WatchTimelineProps> = ({ animeList, onAnimeClick }
           带 maxHeight + overflowY 时，指针停在板块里滚的是板块自己那一小段，
           用户得先在板块内点一下才能滚动侧栏 —— 反而是障碍。 */}
       <div style={{ paddingRight: 4 }}>
-        {timelineData.map((group) => (
+        {(showAllMonths ? timelineData : timelineData.slice(0, MONTH_PREVIEW)).map((group) => (
           <div key={group.label} style={{ position: 'relative', paddingLeft: 20, marginBottom: 4 }}>
             {/* 时间线竖线 */}
             <div style={{
@@ -134,6 +143,19 @@ const WatchTimeline: React.FC<WatchTimelineProps> = ({ animeList, onAnimeClick }
             ))}
           </div>
         ))}
+        {timelineData.length > MONTH_PREVIEW && (
+          <div
+            onClick={() => setShowAllMonths(!showAllMonths)}
+            style={{
+              fontSize: 12, color: 'var(--text-secondary)', textAlign: 'center',
+              padding: '6px 8px', cursor: 'pointer', borderRadius: 4,
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-tertiary)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+          >
+            {showAllMonths ? '▴ 收起' : `▾ 展开全部 ${timelineData.length} 个月`}
+          </div>
+        )}
       </div>
     </div>
   );

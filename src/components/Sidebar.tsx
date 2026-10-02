@@ -37,6 +37,14 @@ const BGM_DIM: Dimension = { key: 'bgm', label: 'BGM评分', description: 'Bangu
 const NAME_DIM: Dimension = { key: 'namesort', label: '番名', description: '按番剧名称排序', weight: 0 };
 const WATCH_DIM: Dimension = { key: 'watchDate', label: '观看时间', description: '按观看时间排序：最近看的在前，没有记录的排最后（初始默认）', weight: 0 };
 
+/**
+ * 「维度排序」默认只列前 N 名。
+ *
+ * 侧栏现在是整体一起滚动的（板块不自带滚动条），而排行榜有 180+ 条 ——
+ * 全铺开会把下面的板块顶到很远，反而更难用。要看全量点底部的「展开全部」。
+ */
+const RANK_PREVIEW = 20;
+
 const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
   const { state, dispatch, handleDimensionRank, handleAnimeClick, handleRenameTag,
     handleDeleteTag, handleBatchAddTags, handleCancelBatch, handleExportUserData,
@@ -55,6 +63,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [showCalendar, setShowCalendar] = useState(true);
   const [showRanking, setShowRanking] = useState(true);
+  const [showAllRanked, setShowAllRanked] = useState(false);
   const [showTags, setShowTags] = useState(true);
   const [tagEditMode, setTagEditMode] = useState(false); // Tag 编辑模式开关
   const [showGraph, setShowGraph] = useState(false); // 知识图谱折叠
@@ -189,6 +198,12 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
     return rankByDimension(templateFiltered, activeDim);
   }, [templateFiltered, activeDim, calcOverall]);
 
+  /** 当前排序方向下的完整排名（默认只渲染前 RANK_PREVIEW 名） */
+  const rankedList = useMemo(
+    () => (sortDir === 'desc' ? allRanked : [...allRanked].reverse()),
+    [allRanked, sortDir],
+  );
+
   const dimLabel = (key: string) =>
     activeDims.find((d) => d.key === key)?.label || key;
 
@@ -268,7 +283,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
             <div style={{
               display: 'flex', flexDirection: 'column', gap: 2,
             }}>
-              {(sortDir === 'desc' ? allRanked : [...allRanked].reverse()).map((anime, idx) => {
+              {(showAllRanked ? rankedList : rankedList.slice(0, RANK_PREVIEW)).map((anime, idx) => {
                 const score = anime.scores.find((s) => s.dimensionKey === activeDim);
                 const rank = sortDir === 'desc' ? idx + 1 : allRanked.length - idx;
                 return (
@@ -309,6 +324,19 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
                   </div>
                 );
               })}
+              {rankedList.length > RANK_PREVIEW && (
+                <div
+                  onClick={() => setShowAllRanked(!showAllRanked)}
+                  style={{
+                    fontSize: 12, color: 'var(--text-secondary)', textAlign: 'center',
+                    padding: '6px 8px', cursor: 'pointer', borderRadius: 4,
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-tertiary)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                >
+                  {showAllRanked ? '▴ 收起' : `▾ 展开全部 ${rankedList.length} 名`}
+                </div>
+              )}
               {allRanked.length === 0 && (
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: 12 }}>
                   暂无 {dimLabel(activeDim)} 维度数据
