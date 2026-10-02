@@ -1,6 +1,6 @@
 # AnimeDiary 进度与交接
 
-> 最后更新：**2026-10-02** · 当前版本 **1.0.43** · `master` 与 `origin/master` 同步
+> 最后更新：**2026-10-02** · 当前版本 **1.0.44** · `master` 与 `origin/master` 同步
 >
 > 这份文档面向"接手的人 / 下一个 AI 会话"，只写**当前状态、怎么发版、坑在哪**。
 > 2026-06 那次架构重构的完整记录在 [`progress.md`](progress.md) —— 那是历史存档，不要改写它。
@@ -75,7 +75,7 @@ node .review/cdp.js .review/steps-xxx.json      # 自定义 steps：eval / wait 
 | ├ 番剧（默认模板 `default`） | 183 |
 | ├ 角色卡（`character`） | 223 |
 | └ 自定义模板（2 个，`template-1782592748856` / `template-1782669675979`） | 1 + 10 |
-| 检索名为空的行 | 243 |
+| 检索名为空的行 | **238**（番剧 183 行里只剩 4；角色卡 223 + 自定义模板 11 全为空 —— 这两类不走修正流程） |
 | 带 `TEMPLATE_JSON` 的行 | 234 |
 
 **Excel 关键列**（0-based，定义在 `features/anime-data/excel-mapping.ts`）：
@@ -121,18 +121,22 @@ src/types/index.ts        AnimeEntry / ScoreTemplate / 两个内置模板工厂
 
 ## 5. 改代码前必读的坑
 
-### 5.1 同名死副本（已经坑过一次）
+### 5.1 同名死副本（1.0.44 已清理，留作教训）
 
-下面这些文件**没有任何 import**，是历史遗留的重复副本。改到它们身上不会有任何效果，而且重新构建后**文件名 hash 都不会变**：
+曾有 4 个**没有任何 import** 的历史副本，改到它们身上不会有任何效果，重新构建后**文件名 hash 都不会变**（就是这么踩进去的）。已在 1.0.44 删除：
 
-| 死文件 | 真正生效的文件 |
+| 已删除的死文件 | 真正生效的文件 |
 |---|---|
 | `src/components/WatchCalendar.tsx` | `features/watch-calendar/WatchCalendar.tsx` |
 | `src/services/excelService.ts` | `features/anime-data/excel-service.ts` |
 | `src/services/excelMapping.ts` | `features/anime-data/excel-mapping.ts` |
 | `src/services/storageService.ts` | `features/anime-data/storage-service.ts` |
 
-⚠️ 注意 `src/services/imageService.ts` 和 `aiSkills.ts` 是**活的**（被多处引用），别一起删。
+⚠️ `src/services/` 剩下的 7 个文件**全是活的**（`aiCache` / `aiConfig` / `aiSkills` / `graphService` / `imageService` / `llmService` / `rankingService`），别再当副本删。
+
+⚠️ 另有两组**并存的两套实现**（不是副本，不同组件各用一套，别误合并）：
+`src/services/rankingService.ts` ↔ `features/ranking/ranking-service.ts`；
+`src/services/graphService.ts` ↔ `features/knowledge-graph/`。
 
 **判断改对了没**：构建后在产物里搜一个你新写的字符串，例如
 
@@ -186,6 +190,7 @@ $c = [System.IO.File]::ReadAllText('dist\assets\index-*.js', [System.Text.Encodi
 | 1.0.39 | `cca8d06` | 角色评分模板补上 `overall`「总评」维度（v6→v7），与番剧模板对齐 |
 | 1.0.40~42 | `8b5e51f` | 按「改进.doc」修 5 处：时间轴只显示「看过」、海报轮播越界、上/下一张顺序跟随网格排序、侧栏滚动劫持、设置项分组整理 |
 | 1.0.43 | `0c114cc` | 侧栏板块改为「默认 20 名 / 6 个月 + 展开全部」，避免全铺开 |
+| 1.0.44 | 本次 | 删掉 4 个死副本；`handleFixSearchAlias` 改用 Bangumi + 置信度阈值；清理 26 个 preview 暂存文件；修正 3 个标题错别字 |
 
 **同阶段的数据维护**（不进 git，直接写 Excel）：
 
@@ -197,22 +202,28 @@ $c = [System.IO.File]::ReadAllText('dist\assets\index-*.js', [System.Text.Encodi
 
 ## 7. 待办
 
-### 高优先级
+### 已完成（1.0.44）
 
-- [ ] **清理 4 个同名死副本**（见 5.1）。已确认无人引用，但属于删除文件，动手前先确认一次。
-- [ ] **`handleFixSearchAlias` 会污染数据**（`context/AnimeContext.tsx:667`）：它拿 `data.list[0].name`（AniList top-1）**无条件覆盖**每一条有 `excelRowIndex` 的检索名，不管当前值对不对 —— 之前那 35 条错配就是这么来的。建议改成 Bangumi 优先 + 要求 `name_cn` 与标题相似度过阈值才写。
+- [x] 删掉 4 个同名死副本（见 5.1）
+- [x] **`handleFixSearchAlias` 重写**：只处理番剧 → 查 Bangumi → `pickBestMatch`（季数消歧 + 年份修正）打分
+      → **分数 < `LOW_CONFIDENCE`(0.6) 一律跳过不写**，写入的是原名（日文）。
+      实测 183 条：**写入 45、已正确 129、拿不准跳过 9**；抽查 12 条全部正确，续作没错配到相邻季度
+- [x] 26 个残留 `*.preview.png` 已删（备份在 `.review/removed-previews/`，需要可还原）
+- [x] 3 个标题错别字已修：`AngleBeats!`→`Angel Beats!`、`党大胆`→`胆大党`、`党大胆2`→`胆大党 第二季`
+      （顺手修掉「胆大党2」那条错配到「辉夜大小姐」的检索名）
 
-### 数据清理
+### 仍待处理
 
-- [ ] 243 行检索名为空（会影响海报自动搜索的命中率）
-- [ ] 3 个标题错别字：`AngleBeats!` → `Angel Beats!`、`党大胆` → `胆大党`、`党大胆2` → `胆大党2`
-- [ ] 26 个残留的 `*.preview.png`（去底过程的暂存文件，`images/` 下）
+- [ ] 番剧里还有 **4 条检索名为空**：`记忆管理局`、`21世纪电气目录`、`无职转生2上半`、`无职转生3上半`。
+      前两条是 Bangumi 匹配分数不够被主动跳过；后两条是用户自己拆的上/下半，源站没有对应条目。
+      留着不影响使用 —— 检索名为空时会回退用标题去搜。
 - [ ] 2 行海报 URL 仍指向 `cover-nobg.png`（「星野爱」，该目录没有原图可回退）
+- [ ] 上面 5.1 提到的两组「并存实现」可以合并，但属于重构，动手前先逐条确认两边行为一致
 
 ### 待定口味
 
-- [ ] 侧栏折叠默认值（排行榜 20 名 / 时间轴 6 个月）目前是我选的，可调
-- [ ] 顶栏把「数据补全 / 角色补全 / 去白底」收进了「批量工具」下拉，也可改回平铺
+- [ ] 侧栏折叠默认值（排行榜 20 名 / 时间轴 6 个月）
+- [ ] 顶栏把三个批量工具收进「批量工具」下拉，是否保留
 
 ---
 
