@@ -52,6 +52,11 @@ interface AnimeDetailModalProps {
   /** 新建条目（点击未建卡的角色标签时创建角色卡） */
   onAddAnime?: (entry: AnimeEntry) => void;
   allAnime?: AnimeEntry[];
+  /**
+   * 当前网格的显示顺序（App 的 filteredAnime）。
+   * 上/下一张按它取相邻条目；缺省时退回 allAnime。
+   */
+  navList?: AnimeEntry[];
   onPosterChange?: (animeId: string, posterUrl: string) => void;
   imgHeight?: number;
   editMode?: boolean;
@@ -77,7 +82,7 @@ interface AnimeDetailModalProps {
 const WORK_JUMP_THRESHOLD = 0.45;
 
 const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
-  anime, open, onClose, onSave, onNavigate, onDelete, onAddAnime, allAnime = [], onPosterChange, imgHeight = 360,
+  anime, open, onClose, onSave, onNavigate, onDelete, onAddAnime, allAnime = [], navList, onPosterChange, imgHeight = 360,
   editMode = false, radarMode = 'percentile', radarMin,
   posterHidden = false,
   contentHidden = false,
@@ -137,6 +142,34 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   const cutoutNames = useCutoutIndex();
   const [allImages, setAllImages] = useState<string[]>([]);
   const [slideIdx, setSlideIdx] = useState(0);
+  /**
+   * allImages 的实时镜像。
+   *
+   * 轮播定时器是在那个 effect 里按**当时那次渲染的闭包**启动的，闭包里的 allImages 会过期：
+   * 从有 3 张图的条目切到只有 1 张图的条目后，定时器仍按旧长度（3）取模，
+   * slideIdx 于是涨到超出实际长度，allImages[slideIdx] 变成 undefined
+   * → <img src={undefined}> 什么都不加载，只剩容器渐变底 + alt 文字，
+   * 看起来就是「海报展示几秒后自己变成了默认图」。
+   */
+  const allImagesRef = useRef<string[]>([]);
+  useEffect(() => { allImagesRef.current = allImages; }, [allImages]);
+  /** 当前轮播到的图；slideIdx 万一越界就退回第一张，绝不渲染出 src=undefined 的 <img> */
+  const slideImage = allImages[slideIdx] ?? allImages[0];
+
+  /**
+   * 轮播跟着 allImages.length 走，而不是"打开条目时启动一次"。
+   *
+   * 打开条目的那一刻本地图片还在异步加载，allImages 只有海报 1 张，
+   * 于是多图条目的自动轮播实际上从来没启动过；而旧实现用闭包里的长度开定时器，
+   * 切到单图条目后又会算出越界的 slideIdx（海报变成空 src，只剩渐变底 + alt 文字）。
+   * 交给这个 effect 统一评估，两个毛病一起消失；手动翻页仍然会 stopSlide 停住，
+   * 直到换条目（length 变化）才重新开始。
+   */
+  useEffect(() => {
+    if (!open || allImages.length <= 1) { stopSlide(); return; }
+    if (slideTimer.current) return; // 已经在轮播
+    startSlide();
+  }, [open, allImages.length]);
   const [imageManagerOpen, setImageManagerOpen] = useState(false);
   const [posX, setPosX] = useState(50); // 海报焦点 X (0-100)
   const [posY, setPosY] = useState(50); // 海报焦点 Y (0-100)
@@ -152,13 +185,29 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   const layoutSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── 前后番剧导航 ──
+  /**
+   * 上/下一张跟随**当前网格的显示顺序**（filteredAnime：已按模板/分类/搜索/标签/排序过滤），
+   * 而不是 allAnime（Excel 原始行序）。
+   *
+   * 用 allAnime 时会错位到"另一个维度下的邻居"：按观看时间排序打开
+   * RE:从零开始的异世界生活4下半（10-02），下一张本该是无职转生3上半（09-28），
+   * 却跳到了记忆管理局（Excel 里恰好排在它后面）。
+   *
+   * 当前条目不在网格里时（从时间轴、排行榜点进来）退回全量列表，保证导航仍可用。
+   */
+  const navSequence = useMemo(() => {
+    if (!anime) return [];
+    if (navList && navList.some((a) => a.id === anime.id)) return navList;
+    return allAnime;
+  }, [anime, navList, allAnime]);
+
   const navIndex = useMemo(() => {
     if (!anime) return -1;
-    return allAnime.findIndex((a) => a.id === anime.id);
-  }, [anime, allAnime]);
+    return navSequence.findIndex((a) => a.id === anime.id);
+  }, [anime, navSequence]);
 
-  const prevAnime = navIndex > 0 ? allAnime[navIndex - 1] : null;
-  const nextAnime = navIndex >= 0 && navIndex < allAnime.length - 1 ? allAnime[navIndex + 1] : null;
+  const prevAnime = navIndex > 0 ? navSequence[navIndex - 1] : null;
+  const nextAnime = navIndex >= 0 && navIndex < navSequence.length - 1 ? navSequence[navIndex + 1] : null;
 
   const handleNavigate = useCallback((target: AnimeEntry) => {
     onNavigate?.(target);
@@ -512,7 +561,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   };
   const handleSavePoster = async () => {
     if (!anime) return;
-    const currentUrl = allImages[slideIdx];
+    const currentUrl = slideImage;
     if (!currentUrl || currentUrl.startsWith('/api/images/')) return; // 已是本地文件
     setSavingPoster(true);
     try {
@@ -555,11 +604,14 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   // 启动轮播
   const startSlide = () => {
     stopSlide();
-    if (allImages.length > 1) {
-      slideTimer.current = setInterval(() => {
-        setSlideIdx((prev) => (prev + 1) % allImages.length);
-      }, 3000);
-    }
+    if (allImagesRef.current.length <= 1) return;
+    slideTimer.current = setInterval(() => {
+      // 用 ref 里的**实时**长度取模：轮播启动后图片列表还可能被 loadImages 追加、
+      // 或被图片管理面板整体替换，闭包里的旧长度会算出越界的 slideIdx（见 allImagesRef 注释）
+      const len = allImagesRef.current.length;
+      if (len <= 1) { stopSlide(); return; }
+      setSlideIdx((prev) => (prev + 1) % len);
+    }, 3000);
   };
 
   /** 将已有日期字符串解析为 dayjs，兼容多种旧格式 */
@@ -628,7 +680,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
           const newUrls = storedUrls.filter(u => !existing.has(u));
           return [...prev, ...newUrls];
         });
-        if (storedUrls.length > 0) startSlide();
+        // 轮播由上面的 allImages.length effect 统一启停，这里不再手动 startSlide
       });
       setSlideIdx(0);
       stopSlide();
@@ -2096,7 +2148,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
             onMouseLeave={handlePosterMouseUp}
           >
             {allImages.length > 0 ? (
-              <img src={applyCutout(allImages[slideIdx], cutoutNames)} alt={anime.title}
+              <img src={applyCutout(slideImage, cutoutNames)} alt={anime.title}
                 draggable={false}
                 data-modal-poster="true"
                 onError={(e) => {
@@ -2133,7 +2185,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                 {allImages.map((_,i)=><div key={i} style={{ width:6,height:6,borderRadius:'50%',background:i===slideIdx?'var(--brand-primary)':'rgba(255,255,255,0.4)' }} />)}
               </div>
             </>)}
-            {allImages[slideIdx]===posterUrl && allImages.length>0 && (
+            {slideImage===posterUrl && allImages.length>0 && (
               <div style={{ position:'absolute',top:6,left:6,background:'rgba(251,114,153,0.85)',borderRadius:4,padding:'1px 6px',fontSize:10,color:'#fff',fontWeight:600 }}>封面</div>
             )}
           </div>
@@ -2143,13 +2195,13 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
           <div style={{ display:'flex',gap:6, flexWrap:'wrap' }}>
             <Button size="small" icon={<PictureOutlined />} onClick={()=>setImageManagerOpen(true)}>图片管理</Button>
             {/* 保存外部封面到本地 */}
-            {allImages.length > 0 && allImages[slideIdx]?.startsWith('http') && (
+            {allImages.length > 0 && slideImage?.startsWith('http') && (
               <Button size="small" loading={savingPoster} onClick={handleSavePoster}>💾 保存封面</Button>
             )}
-            {allImages.length > 0 && allImages[slideIdx] && (
+            {allImages.length > 0 && slideImage && (
               <>
                 <Button size="small" onClick={() => setPreviewVisible(true)}>🔍 原图</Button>
-                <Image src={allImages[slideIdx]} style={{ display: 'none' }}
+                <Image src={slideImage} style={{ display: 'none' }}
                   preview={{ visible: previewVisible, onVisibleChange: (v) => setPreviewVisible(v) }} />
               </>
             )}

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
-import { Input, Button, Segmented, Select } from 'antd';
-import { SearchOutlined, PlusOutlined, CloudDownloadOutlined, UserAddOutlined, BgColorsOutlined } from '@ant-design/icons';
+import { Input, Button, Segmented, Select, Dropdown } from 'antd';
+import type { MenuProps } from 'antd';
+import { SearchOutlined, PlusOutlined, CloudDownloadOutlined, UserAddOutlined, BgColorsOutlined, ToolOutlined } from '@ant-design/icons';
 import type { AnimeCategory, ScoreTemplate, CategoryOverrides } from '../types';
 import { CATEGORY_CONFIG, getVisibleCategories } from '../types';
 
@@ -49,6 +50,45 @@ const TopBar: React.FC<TopBarProps> = ({
 
   // 可用的分类 tab 列表（空=隐藏全部，显示该模板所有条目）
   const displayCategories = visibleCategories.length > 0 ? visibleCategories : [];
+
+  /**
+   * 三个批量工具收进一个下拉。
+   *
+   * 之前它们和「新增」平铺成一排四个按钮：那是低频的批量操作，却和日常的
+   * "新增一部"并排抢视线，顶栏右侧因此显得杂乱。说明文字放在菜单项里，
+   * 比原来的 title 悬浮提示更容易被发现。
+   */
+  const toolItems: MenuProps['items'] = [];
+  const toolLabel = (title: string, desc: string) => (
+    <div style={{ lineHeight: 1.35 }}>
+      <div>{title}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{desc}</div>
+    </div>
+  );
+  if (onCompleteData) {
+    toolItems.push({
+      key: 'complete-data',
+      icon: <CloudDownloadOutlined />,
+      label: toolLabel('数据补全', '从 Bangumi / Bilibili 补齐元数据与封面'),
+      onClick: onCompleteData,
+    });
+  }
+  if (onCompleteCharacters) {
+    toolItems.push({
+      key: 'complete-characters',
+      icon: <UserAddOutlined />,
+      label: toolLabel('角色补全', '搜索立绘 / 声优 / 生日 / 人设，生成角色卡'),
+      onClick: onCompleteCharacters,
+    });
+  }
+  if (onCutoutCharacters) {
+    toolItems.push({
+      key: 'cutout',
+      icon: <BgColorsOutlined />,
+      label: toolLabel('去白底', '把角色立绘的白底变透明（原图保留，可撤销）'),
+      onClick: onCutoutCharacters,
+    });
+  }
 
   return (
     <div className="top-bar">
@@ -111,35 +151,12 @@ const TopBar: React.FC<TopBarProps> = ({
               }))}
             />
           )}
-          {onCompleteData && (
-            <Button
-              icon={<CloudDownloadOutlined />}
-              onClick={onCompleteData}
-              style={{ borderRadius: 20 }}
-              title="从 Bangumi / Bilibili 自动补齐元数据与封面"
-            >
-              数据补全
-            </Button>
-          )}
-          {onCompleteCharacters && (
-            <Button
-              icon={<UserAddOutlined />}
-              onClick={onCompleteCharacters}
-              style={{ borderRadius: 20 }}
-              title="搜索角色立绘 / 声优 / 生日 / 人设，一键生成角色卡"
-            >
-              角色补全
-            </Button>
-          )}
-          {onCutoutCharacters && (
-            <Button
-              icon={<BgColorsOutlined />}
-              onClick={onCutoutCharacters}
-              style={{ borderRadius: 20 }}
-              title="把角色立绘的白色背景变成透明，让角色浮在卡片底色上（原图保留，可撤销）"
-            >
-              去白底
-            </Button>
+          {toolItems.length > 0 && (
+            <Dropdown menu={{ items: toolItems }} trigger={['click']} placement="bottomRight">
+              <Button icon={<ToolOutlined />} style={{ borderRadius: 20 }}>
+                批量工具
+              </Button>
+            </Dropdown>
           )}
           {onAddAnime && (
             <Button

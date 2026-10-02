@@ -24,9 +24,17 @@ const WatchTimeline: React.FC<WatchTimelineProps> = ({ animeList, onAnimeClick }
 
   // 按观看时间分组
   const timelineData = useMemo(() => {
-    // 筛选有观看时间的条目，排除角色卡
+    /**
+     * 只收录「看过」的条目。
+     *
+     * 时间轴讲的是"看完了什么、什么时候看的"，所以在看/想看/搁置/抛弃都不属于这里。
+     * 之前只排除了角色卡，于是一堆没看完的（例如「凉宫春日的忧郁 2009」
+     * 「21世纪电气目录」）也跟着混了进来。
+     */
     const dated = animeList.filter(
-      (a) => a.templateId !== CHARACTER_TEMPLATE_ID && a.createdAt && a.createdAt.length >= 7,
+      (a) => a.category === 'watched'
+        && a.templateId !== CHARACTER_TEMPLATE_ID
+        && a.createdAt && a.createdAt.length >= 7,
     );
     const sorted = [...dated].sort((a, b) => {
       const cmp = (a.createdAt || '').localeCompare(b.createdAt || '');
@@ -69,7 +77,10 @@ const WatchTimeline: React.FC<WatchTimelineProps> = ({ animeList, onAnimeClick }
         />
       </div>
 
-      <div style={{ maxHeight: 400, overflowY: 'auto', paddingRight: 4 }}>
+      {/* 不设内层滚动：滚轮留给整个侧栏。
+          带 maxHeight + overflowY 时，指针停在板块里滚的是板块自己那一小段，
+          用户得先在板块内点一下才能滚动侧栏 —— 反而是障碍。 */}
+      <div style={{ paddingRight: 4 }}>
         {timelineData.map((group) => (
           <div key={group.label} style={{ position: 'relative', paddingLeft: 20, marginBottom: 4 }}>
             {/* 时间线竖线 */}

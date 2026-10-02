@@ -326,6 +326,8 @@ const App: React.FC = () => {
         }}
         onAddAnime={handleAddAnime}
         allAnime={state.animeList}
+        // 上/下一张跟随网格的显示顺序（排序/筛选后），而不是 Excel 原始行序
+        navList={filteredAnime}
         imgHeight={imgHeight}
         radarMode={radarMode}
         radarMin={radarMin}

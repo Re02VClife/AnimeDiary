@@ -417,6 +417,14 @@
   gap: 2px;
 }
 
+/* 设置项的二级分组标题：十来个设置平铺在一起太长，按用途分块 */
+.settings-group {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 8px 10px 2px;
+}
+
 .settings-item {
   display: flex;
   align-items: center;
