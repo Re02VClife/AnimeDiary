@@ -264,10 +264,9 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
               />
             </div>
 
-            {/* 排名列表（可滚动全量） */}
+            {/* 排名列表（不设内层滚动：滚轮交给整个侧栏，理由同时间轴） */}
             <div style={{
               display: 'flex', flexDirection: 'column', gap: 2,
-              maxHeight: 500, overflowY: 'auto',
             }}>
               {(sortDir === 'desc' ? allRanked : [...allRanked].reverse()).map((anime, idx) => {
                 const score = anime.scores.find((s) => s.dimensionKey === activeDim);
@@ -381,7 +380,8 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
         </div>
         {showTags && (
           <>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxHeight: 200, overflowY: 'auto', marginBottom: 8 }}>
+            {/* 不设内层滚动：滚轮交给整个侧栏 */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
               {tagStats.length === 0 && !newTagName ? (
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', width: '100%', padding: 12 }}>
                   暂无标签数据
@@ -697,6 +697,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
       <div className="sidebar-section">
         <div className="section-title"><AppIcon name="settings" size={14} /> 设置</div>
         <div className="settings-list">
+          <div className="settings-group">表格数据</div>
           <div className="settings-item" onClick={handleImportExcel}>
             <span>📤 导入 Excel</span>
           </div>
@@ -706,12 +707,16 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
           <div className="settings-item" onClick={handleOpenExcel}>
             <span>📋 查看 Excel</span>
           </div>
+
+          <div className="settings-group">海报</div>
           <div className="settings-item" onClick={handleBatchSavePosters}>
             <span>🖼 持久化所有海报</span>
           </div>
           <div className="settings-item" onClick={() => setPosterFixOpen(true)}>
             <span>🔍 批量补全海报（人工确认）</span>
           </div>
+
+          <div className="settings-group">备份与恢复</div>
           <div className="settings-item" onClick={handleExportUserData}>
             <span>💾 导出用户数据</span>
           </div>
@@ -730,12 +735,16 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
           >
             <span>📂 导入用户数据</span>
           </div>
+
+          <div className="settings-group">工具</div>
           <div className="settings-item" onClick={handleFixSearchAlias}>
             <span>🔄 修正检索名</span>
           </div>
           <div className="settings-item" onClick={() => dispatch({ type: 'OPEN_MODAL', modal: 'templateManager' })}>
             <span>📐 维度管理</span>
           </div>
+
+          <div className="settings-group">显示</div>
           <div style={{ padding: '6px 10px' }}>
             <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 2 }}>
               🖼️ 图片高度: {imgHeight}px
