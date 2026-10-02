@@ -8,9 +8,10 @@ import type { AnimeCategory, AnimeEntry, AnimeTag } from '../src/types';
 import { loadAnimeList, updateAnimeEntry, appendAnimeEntry, batchSaveAllPosters, deleteExcelRow } from '../features/anime-data/excel-service';
 import { saveCategory, addToWatchingDeleted, removeFromWatchingDeleted, loadImgHeight, saveImgHeight, exportAllUserData, importUserData, shiftLocalRefsAfterRowDelete } from '../features/anime-data/storage-service';
 import { migrateLegacyDimensions, loadTemplates } from '../features/anime-data/template-service';
-import { getVisibleCategories } from '../src/types';
+import { getVisibleCategories, DEFAULT_TEMPLATE_ID } from '../src/types';
 import { rankByDimension } from '../features/ranking/ranking-service';
 import { DIMENSION_COL_MAP, EXCEL_COL } from '../features/anime-data/excel-mapping';
+import { searchCandidates, pickBestMatch, LOW_CONFIDENCE } from '../features/media-complete/media-service';
 
 /**
  * 汇总批量写回 Excel 的结果。
@@ -664,35 +665,68 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     dispatch({ type: 'SET_BATCH_ANIME', payload: [] });
   }, []);
 
+  /**
+   * 批量修正检索名。
+   *
+   * 旧实现直接拿 AniList 的 `list[0].name` **无条件覆盖**每一条 —— 而中文标题在
+   * AniList 的 top-1 命中率很低，于是「罪恶王冠 → ギルティクラウン」这类错配成批出现
+   * （实测污染过 35 条，只能事后逐条回查 Bangumi 才修回来）。
+   *
+   * 现在复用「数据补全」那套匹配：查 Bangumi → pickBestMatch（带季数消歧 + 年份修正）
+   * → 只有分数 ≥ LOW_CONFIDENCE 才写，拿不准就跳过。写入的是**原名**（日文），
+   * 因为检索名的用途就是拿原名去源站搜。
+   */
   const handleFixSearchAlias = useCallback(async () => {
-    const candidates = state.animeList.filter((a) => a.excelRowIndex !== undefined);
+    // 只处理番剧：角色卡和自定义模板没有"检索名"的语义，查了也是白查
+    const candidates = state.animeList.filter(
+      (a) => a.excelRowIndex !== undefined && (!a.templateId || a.templateId === DEFAULT_TEMPLATE_ID),
+    );
     if (candidates.length === 0) { catgirlMessage.warning('没有可修正的番剧'); return; }
-    const hide = catgirlMessage.loading('正在修正检索名 (0/' + candidates.length + ')…', 0);
-    let done = 0;
+
+    const hide = catgirlMessage.loading(`正在修正检索名 (0/${candidates.length})…`, 0);
+    let filled = 0;       // 写入成功
+    let kept = 0;         // 原值已经等于原名，无需改动
+    let unsure = 0;       // 匹配分数不够 → 跳过（宁可不写，也不写错）
     let writeFailed = 0;
-    for (const anime of candidates) {
+
+    for (let i = 0; i < candidates.length; i++) {
+      const anime = candidates[i];
       try {
-        const resp = await fetch(`/api/anilist/search?keyword=${encodeURIComponent(anime.title)}`);
-        if (!resp.ok) { done++; continue; }
-        const data = await resp.json();
-        const alias = data?.list?.[0]?.name || '';
-        if (!alias || alias === anime.searchAlias) { done++; continue; }
-        const updated = { ...anime, searchAlias: alias, updatedAt: new Date().toISOString().split('T')[0] };
-        dispatch({ type: 'UPDATE_ANIME_IN_LIST', payload: updated });
-        try {
-          await updateAnimeEntry(updated);
-        } catch {
-          writeFailed++; // 原先静默吞掉，结尾还无条件报"完成"
+        const { candidates: found } = await searchCandidates(anime.title, 'bangumi');
+        const best = pickBestMatch(
+          found,
+          [anime.title, anime.titleJa].filter(Boolean) as string[],
+          anime.releaseDate,
+        );
+        if (!best || best.score < LOW_CONFIDENCE) {
+          unsure++;
+        } else {
+          const alias = (best.candidate.title || '').trim();
+          if (!alias || alias === anime.title || alias === anime.searchAlias) {
+            kept++;
+          } else {
+            const updated = { ...anime, searchAlias: alias, updatedAt: new Date().toISOString().split('T')[0] };
+            dispatch({ type: 'UPDATE_ANIME_IN_LIST', payload: updated });
+            try {
+              await updateAnimeEntry(updated);
+              filled++;
+            } catch {
+              writeFailed++; // 原先静默吞掉，结尾还无条件报"完成"
+            }
+          }
         }
-        done++;
-      } catch { done++; }
-      if (done < candidates.length) await new Promise((r) => setTimeout(r, 800));
+      } catch {
+        unsure++;
+      }
+      if (i < candidates.length - 1) await new Promise((r) => setTimeout(r, 600));
     }
     hide();
+
+    const summary = `写入 ${filled} 条，已正确 ${kept} 条，拿不准跳过 ${unsure} 条`;
     if (writeFailed > 0) {
-      catgirlMessage.error(`检索名修正完成 (${done}/${candidates.length})，但有 ${writeFailed} 条写回 Excel 失败`);
+      catgirlMessage.error(`检索名修正完成：${summary}；其中 ${writeFailed} 条写回 Excel 失败`);
     } else {
-      catgirlMessage.success(`检索名修正完成 (${done}/${candidates.length})`);
+      catgirlMessage.success(`检索名修正完成：${summary}`);
     }
   }, [state.animeList]);
 
