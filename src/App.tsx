@@ -15,6 +15,7 @@ import MediaCompleteModal from '../features/media-complete/MediaCompleteModal';
 import CharacterCompleteModal from '../features/character-complete/CharacterCompleteModal';
 import CharacterCutoutModal from '../features/image-management/CharacterCutoutModal';
 import TemplateManager from './components/TemplateManager';
+import ExcelEditor from './components/ExcelEditor';
 import { loadTemplates } from '../features/anime-data/template-service';
 import { getVisibleCategories } from './types';
 import KnowledgeGraphModal from '../features/knowledge-graph/KnowledgeGraphModal';
@@ -91,6 +92,7 @@ const App: React.FC = () => {
     knowledgeGraphOpen,
     aiSettingsOpen,
     tasteReportOpen,
+    excelOpen,
     batchMode,
     selectedBatchTags,
     selectedBatchAnime,
@@ -375,6 +377,12 @@ const App: React.FC = () => {
       <TemplateManager
         open={templateManagerOpen}
         onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'templateManager' })}
+      />
+
+      {/* 表格视图：应用内直接看 / 改列表原始数据 */}
+      <ExcelEditor
+        open={excelOpen}
+        onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'excel' })}
       />
 
       <KnowledgeGraphModal

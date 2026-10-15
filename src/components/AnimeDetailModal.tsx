@@ -12,7 +12,7 @@ import { fetchPoster, savePosterUrlToExcel } from '../../features/anime-data/exc
 import { loadImages, saveImage as saveImageToLocal } from '../services/imageService';
 import { addToPosterBlacklist, loadPosterBlacklist, savePosterOverride, loadPosterPositions, savePosterPosition } from '../../features/anime-data/storage-service';
 import { formatReleaseDateCn, parseReleaseDate } from '../../core/date';
-import { round2, formatScore } from '../../core/math';
+import { round2, formatScore, fmt2 } from '../../core/math';
 import { singleAnimeAnalysis, autoTag } from '../../features/ai-analysis';
 import type { SingleAnimeAnalysisResult, AutoTagResult } from '../../features/ai-analysis';
 import { hasAIConfig } from '../../features/ai-analysis';
@@ -767,16 +767,24 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
 
   // 计算总评（使用当前选中模板的维度和权重）
   const overallScore = useMemo(() => {
-    const tid = templateId;
-    const t = tid ? getTemplate(tid) : null;
-    const templateDims = t?.dimensions || DEFAULT_DIMENSIONS;
+    /**
+     * ⚠️ 这里不能写 `templateId ? getTemplate(templateId) : null`。
+     *
+     * 番剧条目的 templateId 是 **undefined**（默认模板的条目不写模板ID），那样写会让
+     * t 变成 null，再被 `|| DEFAULT_DIMENSIONS` 兜到**代码里硬编码的维度权重**上，
+     * 于是用户在「维度管理」里改过的权重在这里被整个忽略 —— 表现就是
+     * 同一部番：卡片按用户权重显示一个总评、详情面板按默认权重显示另一个。
+     *
+     * getTemplate(undefined) 本来就会回退到用户的默认模板，直接交给它。
+     */
+    const templateDims = getTemplate(templateId).dimensions;
     const dims = templateDims.filter((d) => d.key !== 'overall' && d.weight > 0);
     let tw = 0, ws = 0;
     for (const dim of dims) {
       const score = scores.find((s) => s.dimensionKey === dim.key)?.score ?? 0;
       if (score > 0) { ws += score * dim.weight; tw += dim.weight; }
     }
-    return tw > 0 ? (ws / tw).toFixed(2) : '-';
+    return tw > 0 ? fmt2(ws / tw, '-') : '-';
   }, [scores, templateId]);
 
   // 更新维度分数（统一收敛到两位小数，杜绝 7.500000000000001 这类浮点噪声）
@@ -2278,7 +2286,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                   if (!card) return tag;
                   const ov = calcCardOverall(card);
                   return (
-                    <Tooltip key={i} title={`角色卡总评 ${ov > 0 ? ov.toFixed(2) : '未评分'}`}>
+                    <Tooltip key={i} title={`角色卡总评 ${ov > 0 ? fmt2(ov) : '未评分'}`}>
                       {tag}
                     </Tooltip>
                   );

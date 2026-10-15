@@ -27,6 +27,7 @@ import {
   CATEGORY_TO_INDEX,
 } from './graph-types';
 import { buildGraph, filterGraph, hasEnoughData } from './graph-engine';
+import { fmt2 } from '../../core/math';
 
 // 注册 ECharts 必要组件
 echarts.use([GraphChart, TooltipComponent, LegendComponent, CanvasRenderer]);
@@ -786,7 +787,7 @@ const KnowledgeGraphModal: React.FC<KnowledgeGraphModalProps> = ({
                     </AntTag>
                     {selectedAnime.bangumiScore && (
                       <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                        BGM: {selectedAnime.bangumiScore.toFixed(1)}
+                        BGM: {fmt2(selectedAnime.bangumiScore)}
                       </span>
                     )}
                     {selectedAnime.studio && (

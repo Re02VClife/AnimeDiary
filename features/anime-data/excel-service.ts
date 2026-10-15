@@ -43,6 +43,11 @@ interface ExcelUpdate {
    * 服务器比对不一致时整批拒绝，避免按旧行号写到别的番剧上。
    */
   expectedTitle?: string;
+  /**
+   * 可选：与 value 一起写入的 Excel 公式（不带开头的 `=`）。
+   * 只有「重建综合(观感) D 列」用得到；留空表示这是普通数据列、单元格里不应有公式。
+   */
+  formula?: string;
 }
 
 // ── 辅助函数 ──
@@ -280,6 +285,111 @@ function mapAnimeToUpdates(entry: AnimeEntry): ExcelUpdate[] {
 }
 
 // ── 公开 API ──
+
+/**
+ * 读主表全部原始行（含表头，未解析）。
+ *
+ * 与 loadAnimeList 的区别：这里**不做任何解析/过滤** —— 名字为空、会被加载流程
+ * 丢弃的行也在里面。两处需要它：
+ *   1. 「导出 Excel」要能把被丢弃的异常行列出来，只有原始行里有
+ *   2. 「表格视图」要显示公式列（赋分/偏差值/列1/代餐…）的原值，
+ *      这些列不在 AnimeEntry 里，只存在于原始行
+ *
+ * 注意：返回的行号就是 Excel 行号（下标即 0-based 行号，与 excelRowIndex 一致）。
+ */
+export async function readRawRows(): Promise<unknown[][]> {
+  const response = await fetch(`${API_BASE}/read`);
+  if (!response.ok) throw new Error(`读取数据源失败：HTTP ${response.status}`);
+  const data = await response.json();
+  if (data.error) throw new Error(String(data.error));
+  const rows = data[MAIN_SHEET];
+  if (!Array.isArray(rows)) throw new Error(`数据源里找不到「${MAIN_SHEET}」表`);
+  return rows as unknown[][];
+}
+
+/** 把一批更新 POST 给服务端（写前校验 + 原子写 + 快照都在服务端） */
+async function postExcelUpdates(updates: ExcelUpdate[]): Promise<void> {
+  const response = await fetch(`${API_BASE}/write`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as
+      | { error?: string; conflicts?: { rowIndex: number; expected: string; actual: string; ambiguous?: boolean }[] }
+      | null;
+    if (response.status === 409 && body?.conflicts?.length) {
+      const c = body.conflicts[0];
+      throw new Error(
+        c.ambiguous
+          ? `表中有多行标题都是「${c.expected}」，无法确定该写哪一行 —— 请刷新后重试（本次未写入）。`
+          : `Excel 第 ${c.rowIndex + 1} 行现在是「${c.actual || '(空)'}」，不是「${c.expected}」——请刷新后重试（本次未写入）。`,
+      );
+    }
+    throw new Error(body?.error || `HTTP ${response.status}`);
+  }
+  const data = await response.json();
+  if (data.error) throw new Error(data.error);
+}
+
+export interface RebuildOverallSummary {
+  /** 重建了公式的行数 */
+  rows: number;
+  /** 缓存值发生变化的行数 */
+  changed: number;
+  /** 参与公式的维度 */
+  dims: { label: string; weight: number; col: string }[];
+  /** 权重和（写进公式的分母） */
+  weightSum: number;
+}
+
+/**
+ * 按当前模板权重重建「综合(观感)」（D 列）的公式，并把缓存值刷成同一口径。
+ *
+ * ⚠️ D 列不在 `EDITABLE_COLS` 里（它是公式列，普通编辑路径一律不碰）。
+ * 这里是**唯一的显式例外**，必须由用户主动触发 —— 它改的是"全表口径统一"，
+ * 不是某一条编辑。所以只从设置面板的入口调用，不挂在自动保存路径上。
+ */
+export async function rebuildOverallColumn(): Promise<RebuildOverallSummary> {
+  const XLSX = await import('xlsx');
+  const [{ rebuildOverallFormula }, { loadTemplates }] = await Promise.all([
+    import('./excel-transfer'),
+    import('./template-service'),
+  ]);
+  const sheetRows = await readRawRows();
+
+  // 重建必须在**单元格层面**做：旧公式只存在于 sheet 里，改 aoa 数组抹不掉它
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(sheetRows), MAIN_SHEET);
+  const ws = book.Sheets[MAIN_SHEET];
+  /**
+   * ⚠️ templates 必须**显式传**，不能让 rebuildOverallFormula 自己去 loadTemplates()。
+   *
+   * 它默认会自己读 localStorage，但打包后 `excel-transfer` 里那份引用拿不到用户在
+   * 「维度管理」里改过的权重，重建出来的公式会退回代码默认权重 —— 正好是要修的问题。
+   */
+  const res = rebuildOverallFormula(ws, { templates: loadTemplates(), sheetRows });
+
+  const updates: ExcelUpdate[] = [];
+  for (let r = 1; r < sheetRows.length; r++) {
+    const cell = ws[XLSX.utils.encode_cell({ c: EXCEL_COL.OVERALL, r })] as
+      | { v?: unknown; f?: string }
+      | undefined;
+    if (!cell || typeof cell.v !== 'number' || !cell.f) continue;
+    const title = String(sheetRows[r]?.[EXCEL_COL.TITLE] ?? '').trim();
+    if (!title) continue;
+    updates.push({
+      sheetName: MAIN_SHEET,
+      rowIndex: r,
+      colIndex: EXCEL_COL.OVERALL,
+      value: cell.v,
+      formula: cell.f,
+      expectedTitle: title,
+    });
+  }
+  if (updates.length > 0) await postExcelUpdates(updates);
+  return res;
+}
 
 /** 从 Excel 加载番剧列表，应用用户覆盖并过滤已删条目 */
 export async function loadAnimeList(): Promise<AnimeEntry[]> {

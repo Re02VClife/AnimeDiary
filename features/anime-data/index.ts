@@ -5,6 +5,7 @@
 export { EXCEL_COL, EXCEL_SHEETS, MAIN_SHEET, DIMENSION_COL_MAP, EDITABLE_COLS } from './excel-mapping';
 export {
   loadAnimeList,
+  readRawRows,
   updateAnimeEntry,
   savePosterUrlToExcel,
   batchSaveAllPosters,
@@ -48,3 +49,13 @@ export {
   deleteTemplate,
   migrateLegacyDimensions,
 } from './template-service';
+export {
+  SHEET_ANIME,
+  SHEET_CHARACTER,
+  SHEET_ANOMALY,
+  buildTransferWorkbook,
+  parseTransferWorkbook,
+  exportFileName,
+  mergeImportedTemplates,
+} from './excel-transfer';
+export type { BuildExportOptions, ParsedTransfer } from './excel-transfer';

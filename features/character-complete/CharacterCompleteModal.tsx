@@ -16,6 +16,7 @@ import type { ColumnsType } from 'antd/es/table';
 import type { AnimeEntry, ScoreTemplate, TemplateGenre } from '../../src/types';
 import { CHARACTER_TEMPLATE_ID, DEFAULT_TEMPLATE_ID } from '../../src/types';
 import { LOW_CONFIDENCE } from '../../core/character';
+import { fmt2 } from '../../core/math';
 import { appendAnimeEntry, saveCharacterNames, saveCharacterCardData } from '../anime-data/excel-service';
 import { catgirlMessage } from '../../src/theme';
 import {
@@ -660,7 +661,7 @@ const CharacterCompleteModal: React.FC<CharacterCompleteModalProps> = ({
                 {row.work ? (row.work.titleCn || row.work.title) : '未匹配'}
               </Tag>
               <Text type="secondary" style={{ fontSize: 10 }}>
-                标题分 {row.workScore.toFixed(2)} · {row.characters.length} 角色 · {((row.ms || 0) / 1000).toFixed(1)}s
+                标题分 {fmt2(row.workScore)} · {row.characters.length} 角色 · {((row.ms || 0) / 1000).toFixed(1)}s
               </Text>
             </Space>
             {row.matches.length > 0 && (
@@ -672,7 +673,7 @@ const CharacterCompleteModal: React.FC<CharacterCompleteModalProps> = ({
                     style={{ fontSize: 10, marginInlineEnd: 2 }}
                   >
                     {m.name}
-                    {m.character ? `→${m.character.nameCn || m.character.name}${m.lowConfidence ? `(${m.score.toFixed(2)})` : ''}` : ' 未找到'}
+                    {m.character ? `→${m.character.nameCn || m.character.name}${m.lowConfidence ? `(${fmt2(m.score)})` : ''}` : ' 未找到'}
                   </Tag>
                 ))}
               </Text>

@@ -49,7 +49,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
   const { state, dispatch, handleDimensionRank, handleAnimeClick, handleRenameTag,
     handleDeleteTag, handleBatchAddTags, handleCancelBatch, handleExportUserData,
     handleImportUserData, handleFixSearchAlias, handleOpenExcel, handleBatchSavePosters,
-    handleImportExcel, handleExportExcel } = useAnimeContext();
+    handleImportExcel, handleExportExcel, handleRebuildOverallColumn } = useAnimeContext();
   const { animeList, activeDim, imgHeight, radarMode, radarMin, activeTag, batchMode, selectedBatchTags, activeTemplateId } = state;
 
   // 批量补全海报面板（搜索后由你人工确认，不自动写入）
@@ -732,8 +732,11 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
           <div className="settings-item" onClick={handleExportExcel}>
             <span>📥 导出 Excel</span>
           </div>
+          <div className="settings-item" onClick={() => dispatch({ type: 'OPEN_MODAL', modal: 'excel' })}>
+            <span>📋 表格视图（应用内编辑）</span>
+          </div>
           <div className="settings-item" onClick={handleOpenExcel}>
-            <span>📋 查看 Excel</span>
+            <span>📂 用系统程序打开 Excel</span>
           </div>
 
           <div className="settings-group">海报</div>
@@ -767,6 +770,9 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
           <div className="settings-group">工具</div>
           <div className="settings-item" onClick={handleFixSearchAlias}>
             <span>🔄 修正检索名</span>
+          </div>
+          <div className="settings-item" onClick={() => void handleRebuildOverallColumn()}>
+            <span>🧮 按模板权重重建总评列</span>
           </div>
           <div className="settings-item" onClick={() => dispatch({ type: 'OPEN_MODAL', modal: 'templateManager' })}>
             <span>📐 维度管理</span>

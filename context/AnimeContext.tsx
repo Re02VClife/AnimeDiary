@@ -5,12 +5,12 @@
 import React, { createContext, useContext, useReducer, useEffect, useCallback, useMemo, useRef } from 'react';
 import { catgirlMessage } from '../src/theme';
 import type { AnimeCategory, AnimeEntry, AnimeTag } from '../src/types';
-import { loadAnimeList, updateAnimeEntry, appendAnimeEntry, batchSaveAllPosters, deleteExcelRow } from '../features/anime-data/excel-service';
-import { saveCategory, addToWatchingDeleted, removeFromWatchingDeleted, loadImgHeight, saveImgHeight, exportAllUserData, importUserData, shiftLocalRefsAfterRowDelete } from '../features/anime-data/storage-service';
+import { loadAnimeList, updateAnimeEntry, appendAnimeEntry, batchSaveAllPosters, deleteExcelRow, readRawRows, rebuildOverallColumn } from '../features/anime-data/excel-service';
+import { saveCategory, addToWatchingDeleted, removeFromWatchingDeleted, loadImgHeight, saveImgHeight, exportAllUserData, importUserData, shiftLocalRefsAfterRowDelete, loadWatchingDeleted } from '../features/anime-data/storage-service';
 import { migrateLegacyDimensions, loadTemplates } from '../features/anime-data/template-service';
+import { buildTransferWorkbook, parseTransferWorkbook, exportFileName, mergeImportedTemplates, SHEET_ANIME } from '../features/anime-data/excel-transfer';
 import { getVisibleCategories, DEFAULT_TEMPLATE_ID } from '../src/types';
 import { rankByDimension } from '../features/ranking/ranking-service';
-import { DIMENSION_COL_MAP, EXCEL_COL } from '../features/anime-data/excel-mapping';
 import { searchCandidates, pickBestMatch, LOW_CONFIDENCE } from '../features/media-complete/media-service';
 
 /**
@@ -57,6 +57,8 @@ export interface AnimeState {
   knowledgeGraphOpen: boolean;
   aiSettingsOpen: boolean;
   tasteReportOpen: boolean;
+  /** 表格视图（应用内直接看/改列表原始数据） */
+  excelOpen: boolean;
 
   // 批量模式
   batchMode: boolean;
@@ -128,6 +130,7 @@ const initialState: AnimeState = {
   knowledgeGraphOpen: false,
   aiSettingsOpen: false,
   tasteReportOpen: false,
+  excelOpen: false,
   batchMode: false,
   detailEditMode: false,
   radarMode: (localStorage.getItem('anime_diary_radar_mode') as 'percentile' | 'fixed') || 'percentile',
@@ -317,7 +320,7 @@ interface AnimeContextValue {
   refreshAnimeList: () => Promise<void>;
   filteredAnime: AnimeEntry[];
   handleAnimeClick: (anime: AnimeEntry) => void;
-  handleSaveAnime: (updated: AnimeEntry) => Promise<void>;
+  handleSaveAnime: (updated: AnimeEntry, keepModal?: boolean) => Promise<void>;
   handleDeleteFromWatching: (animeId: string) => void;
   handleExportUserData: () => Promise<void>;
   handleImportUserData: (file: File) => Promise<void>;
@@ -330,6 +333,8 @@ interface AnimeContextValue {
   handleBatchAddTags: () => void;
   handleCancelBatch: () => void;
   handleFixSearchAlias: () => Promise<void>;
+  /** 按模板权重重建 Excel 的「综合(观感)」D 列（公式 + 值） */
+  handleRebuildOverallColumn: () => Promise<void>;
   handleCreateRelation: (animeId: string, targetType: 'tag' | 'studio' | 'character', targetName: string) => void;
   // Excel 导入导出
   handleImportExcel: () => void;
@@ -468,7 +473,14 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     dispatch({ type: 'OPEN_MODAL', modal: 'detail', anime });
   }, []);
 
-  const handleSaveAnime = useCallback(async (updated: AnimeEntry) => {
+  /**
+   * 保存一个条目并写回 Excel。
+   *
+   * `keepModal` 供「表格视图」这类**不在详情弹窗里**的编辑入口使用：
+   * 默认行为（详情面板的保存）会顺手关掉 detail 弹窗并退出编辑态，
+   * 表格视图沿用那个行为会在每次单元格保存时把自己的弹窗也关掉。
+   */
+  const handleSaveAnime = useCallback(async (updated: AnimeEntry, keepModal = false) => {
     let savedEntry = updated;
     // 新条目（无 excelRowIndex）→ 追加到 Excel 末尾，并获取分配的行号
     if (updated.excelRowIndex === undefined) {
@@ -494,8 +506,10 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         payload: { ...savedEntry, updatedAt: new Date().toISOString().split('T')[0] },
       });
     }
-    dispatch({ type: 'SET_DETAIL_EDIT_MODE', payload: false });
-    dispatch({ type: 'CLOSE_MODAL', modal: 'detail' });
+    if (!keepModal) {
+      dispatch({ type: 'SET_DETAIL_EDIT_MODE', payload: false });
+      dispatch({ type: 'CLOSE_MODAL', modal: 'detail' });
+    }
   }, [state.animeList]);
 
   /**
@@ -585,6 +599,42 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       catgirlMessage.error('打开 Excel 失败：' + (e instanceof Error ? e.message : '请检查 Excel 文件是否存在'));
     }
   }, []);
+
+  /**
+   * 按当前模板权重重建 Excel 里「综合(观感)」（D 列）的公式 + 刷新缓存值。
+   *
+   * 为什么需要：D 列历史上是**另一套手工公式**（只用 5 个维度、还有「内容」这种
+   * 不在模板里的列），和界面上按模板算的总评不是一个数 —— 同一部番会出现两个总评。
+   * 这个入口把它统一成模板口径。
+   */
+  const handleRebuildOverallColumn = useCallback(async () => {
+    const tpl = loadTemplates().find((t) => t.isDefault) ?? loadTemplates()[0];
+    const dims = (tpl?.dimensions ?? []).filter((d) => d.key !== 'overall' && d.weight > 0);
+    const desc = dims.map((d) => `${d.label} ${d.weight}`).join('、');
+    const ok = window.confirm(
+      `将用「${tpl?.name ?? '当前模板'}」的权重重建 Excel 里 D 列「综合(观感)」的公式，\n`
+      + `并刷新全部番剧的该列数值。\n\n`
+      + `参与的维度：${desc}\n\n`
+      + `只影响默认模板的番剧行（角色卡/自定义模板不动）。文件会先自动留快照。\n\n确定继续？`,
+    );
+    if (!ok) return;
+    const hide = catgirlMessage.loading('正在重建总评列…', 0);
+    try {
+      const res = await rebuildOverallColumn();
+      hide();
+      if (res.rows === 0) {
+        catgirlMessage.warning('没有可重建的行（模板里没有带权重的维度？）');
+        return;
+      }
+      catgirlMessage.success(
+        `已重建 ${res.rows} 行总评公式，其中 ${res.changed} 行数值被更新`,
+      );
+      await refreshAnimeList();
+    } catch (e) {
+      hide();
+      catgirlMessage.error('重建失败：' + (e instanceof Error ? e.message : '未知错误'));
+    }
+  }, [refreshAnimeList]);
 
   const handleBatchSavePosters = useCallback(async () => {
     const candidates = state.animeList.filter((a) => a.excelRowIndex !== undefined && a.posterUrl);
@@ -769,6 +819,15 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     fileInputRef.current?.click();
   }, []);
 
+  /**
+   * 导入 Excel。
+   *
+   * 旧实现是「把上传的文件原样覆盖数据源」—— 因为它压根不解析结构，只把文件字节写过去。
+   * 后果有新格式后是致命的：导出文件的列义（「音/制作/…」）和内部 43 列存储格式不是一回事，
+   * 直接覆盖会让应用再也读不出这些行。
+   *
+   * 现在：解析 → 重建内部格式工作簿 → 落盘。既能吃新导出格式，也继续吃旧格式。
+   */
   const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -785,59 +844,27 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const XLSX = await import('xlsx');
       const data = await file.arrayBuffer();
       const wb = XLSX.read(data, { type: 'array' });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as unknown[][];
-      const entries: AnimeEntry[] = [];
-      for (let i = 1; i < rows.length; i++) {
-        const row = rows[i];
-        const title = String(row[EXCEL_COL.TITLE] || '').trim();
-        if (!title) continue;
-        const scores: { dimensionKey: string; score: number }[] = [];
-        for (const [dimKey, colIdx] of Object.entries(DIMENSION_COL_MAP)) {
-          const v = Number(row[colIdx]);
-          if (v > 0) scores.push({ dimensionKey: dimKey, score: v });
-        }
-        // 读取模板数据
-        const templateId = String(row[EXCEL_COL.TEMPLATE_ID] || '').trim() || undefined;
-        const templateJson = String(row[EXCEL_COL.TEMPLATE_JSON] || '').trim();
-        let customFields: Record<string, string | number> | undefined;
-        if (templateId && templateId !== 'default' && templateJson) {
-          try {
-            const parsed = JSON.parse(templateJson);
-            if (Array.isArray(parsed)) {
-              if (parsed.length > 0) { scores.length = 0; scores.push(...parsed.filter((s: { score: number }) => s.score > 0)); }
-            } else {
-              const cs = parsed.scores;
-              if (cs && cs.length > 0) { scores.length = 0; scores.push(...cs.filter((s: { score: number }) => s.score > 0)); }
-              customFields = parsed.customFields;
-            }
-          } catch { /* ignore */ }
-        }
-        entries.push({
-          id: `import-${i}-${Date.now()}`,
-          title,
-          posterUrl: '',
-          category: 'watched' as AnimeCategory,
-          tags: String(row[EXCEL_COL.TAG] || '').split(/[/、]/).filter(Boolean).map((n: string) => ({ name: n.trim(), highlighted: false })),
-          templateId,
-          customFields,
-          scores,
-          releaseDate: String(row[EXCEL_COL.RELEASE_DATE] || ''),
-          bangumiScore: Number(row[EXCEL_COL.BGM_SCORE]) || undefined,
-          review: String(row[EXCEL_COL.REVIEW] || ''),
-          studio: String(row[EXCEL_COL.STUDIO] || ''),
-          link: String(row[EXCEL_COL.LINK] || '').trim() || undefined,
-          createdAt: new Date().toISOString().split('T')[0],
-          updatedAt: new Date().toISOString().split('T')[0],
-        });
+      const parsed = parseTransferWorkbook(wb);
+      if (parsed.count === 0) {
+        const sheets = wb.SheetNames.join('、');
+        throw new Error(
+          `没认出任何可导入的记录（文件里的表：${sheets}）。\n` +
+          `需要包含「${SHEET_ANIME}」或旧格式的「番剧列表」表。`,
+        );
       }
-      // 导入必须落盘：原先只改内存，刷新即丢；而且这些条目之后保存会以 append 追加出重复行
-      const resp = await fetch('/api/excel/replace', { method: 'POST', body: file });
+      // 自定义模板的定义不在导出文件里，按维度列名反推补回 localStorage，否则这些条目没有模板可显示
+      const addedTemplates = mergeImportedTemplates(parsed.templates);
+      const out = XLSX.write(parsed.workbook, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
+      const resp = await fetch('/api/excel/replace', { method: 'POST', body: out });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
         throw new Error((err as { error?: string }).error || `HTTP ${resp.status}`);
       }
-      catgirlMessage.success(`已导入 ${entries.length} 条记录，并已替换数据源文件`);
+      const detail = parsed.summary.map((s) => `${s.sheet} ${s.count}`).join('、');
+      catgirlMessage.success(
+        `已导入 ${parsed.count} 条（${detail}）`
+        + `${addedTemplates > 0 ? `，并补回 ${addedTemplates} 个模板定义` : ''}`,
+      );
       await fetchData();
     } catch (err) {
       catgirlMessage.error('导入失败：' + (err instanceof Error ? err.message : '文件格式错误'));
@@ -845,82 +872,36 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, [fetchData]);
 
+  /**
+   * 导出 Excel。
+   *
+   * 输出是**按记录类型分表**的：番剧 / 角色卡 / 每个自定义模板一张表 / 异常行。
+   * 原来是一张 43 列的内部格式平铺表，三类记录混在一起、非默认模板的分只存在于
+   * 「模板JSON」列里。详见 features/anime-data/excel-transfer.ts 的模块注释。
+   *
+   * 这里的数据源必须是 Excel 原始行（不是 state.animeList）：只有原始行里才有
+   * 源表里名字为空、被程序丢弃的「异常行」—— 那正是用户说「已删除的数据也导出来了」的东西。
+   */
   const handleExportExcel = useCallback(async () => {
     try {
       const XLSX = await import('xlsx');
-      // 表头必须与 EXCEL_COL 的列号一一对应：
-      // 原来只有 26 项，数据却写到索引 39/42，导出的文件列会整体错位
-      const headers: string[] = Array(43).fill('');
-      headers[EXCEL_COL.SEARCH_ALIAS] = '检索名';
-      headers[EXCEL_COL.TITLE] = '名字';
-      headers[EXCEL_COL.OVERALL] = '综合(观感)';
-      headers[EXCEL_COL.AUDIO] = '音';
-      headers[EXCEL_COL.PRODUCTION] = '制作';
-      headers[EXCEL_COL.FRAME_COUNT] = '张数';
-      headers[EXCEL_COL.ANIMATION] = '作画';
-      headers[EXCEL_COL.STUDIO] = '制作组';
-      headers[EXCEL_COL.IMMERSION] = '沉浸感';
-      headers[EXCEL_COL.PLOT] = '剧情';
-      headers[EXCEL_COL.CHARACTER] = '人设';
-      headers[EXCEL_COL.DEPTH] = '深度';
-      headers[EXCEL_COL.VIBE] = '电波';
-      headers[EXCEL_COL.REVIEW] = '评价';
-      headers[EXCEL_COL.RELEASE_DATE] = '上映年月';
-      headers[EXCEL_COL.FIRST_WATCH] = '首刷时间';
-      headers[EXCEL_COL.NOTES] = '备注';
-      headers[EXCEL_COL.COL1] = '列1';
-      headers[EXCEL_COL.BGM_SCORE] = 'BGM';
-      headers[EXCEL_COL.ANILIST_SCORE] = 'AniList';
-      headers[EXCEL_COL.TAG] = 'tag';
-      headers[EXCEL_COL.CHAR1_NAME] = '角色1';
-      headers[EXCEL_COL.CHAR2_NAME] = '角色2';
-      headers[EXCEL_COL.CHAR3_NAME] = '角色3';
-      headers[EXCEL_COL.CHAR4_NAME] = '角色4';
-      headers[EXCEL_COL.TEMPLATE_JSON] = '模板JSON';
-      headers[EXCEL_COL.TEMPLATE_ID] = '模板ID';
-      headers[EXCEL_COL.LINK] = '链接';
-      headers[EXCEL_COL.EPISODES] = '总集数';
-      headers[EXCEL_COL.CURRENT_EP] = '当前集';
-      const rows: (string | number)[][] = [headers];
-      for (const a of state.animeList) {
-        const row: (string | number)[] = Array(43).fill('');
-        row[EXCEL_COL.TITLE] = a.title;
-        row[EXCEL_COL.SEARCH_ALIAS] = a.searchAlias || '';
-        row[EXCEL_COL.STUDIO] = a.studio || '';
-        row[EXCEL_COL.REVIEW] = a.review || '';
-        row[EXCEL_COL.RELEASE_DATE] = a.releaseDate || '';
-        row[EXCEL_COL.BGM_SCORE] = a.bangumiScore || '';
-        row[EXCEL_COL.TAG] = a.tags.map((t) => t.name).join('/');
-        row[EXCEL_COL.LINK] = a.link || '';
-        row[EXCEL_COL.NOTES] = a.notes || '';
-        row[EXCEL_COL.FIRST_WATCH] = a.watchDate || a.createdAt || '';
-        row[EXCEL_COL.POSTER_URL] = a.posterUrl || '';
-        row[EXCEL_COL.ANILIST_SCORE] = a.aniListScore ?? '';
-        row[EXCEL_COL.EPISODES] = a.episodes ?? '';
-        row[EXCEL_COL.CURRENT_EP] = a.currentEpisode ?? '';
-        // 角色名写入 AA/AD/AG/AJ
-        [EXCEL_COL.CHAR1_NAME, EXCEL_COL.CHAR2_NAME, EXCEL_COL.CHAR3_NAME, EXCEL_COL.CHAR4_NAME]
-          .forEach((col, i) => { if (a.characters?.[i]) row[col] = a.characters[i]; });
-        for (const s of a.scores) {
-          const col = DIMENSION_COL_MAP[s.dimensionKey];
-          if (col !== undefined) row[col] = s.score;
-        }
-        // 写入模板数据（新格式：{ scores, customFields }）
-        if (a.templateId && a.templateId !== 'default') {
-          row[EXCEL_COL.TEMPLATE_JSON] = JSON.stringify({ scores: a.scores, customFields: a.customFields });
-        }
-        if (a.templateId) {
-          row[EXCEL_COL.TEMPLATE_ID] = a.templateId;
-        }
-        rows.push(row);
-      }
-      const ws = XLSX.utils.aoa_to_sheet(rows);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, '番剧列表');
-      XLSX.writeFile(wb, '番评分_导出.xlsx');
-      catgirlMessage.success(`已导出 ${state.animeList.length} 条记录`);
-    } catch { catgirlMessage.error('导出失败'); }
-  }, [state.animeList]);
+      const rows = await readRawRows();
+      const wb = buildTransferWorkbook({
+        rows,
+        templates: loadTemplates(),
+        // 界面上被隐藏/删除、但行还在源文件里的条目，在「状态」列标出来
+        hiddenIds: loadWatchingDeleted(),
+      });
+      const fileName = exportFileName();
+      XLSX.writeFile(wb, fileName);
+      const sheetCount = wb.SheetNames.length;
+      catgirlMessage.success(
+        `已导出到「${fileName}」：${sheetCount} 张表（源表 ${rows.length - 1} 行）`,
+      );
+    } catch (e) {
+      catgirlMessage.error('导出失败：' + (e instanceof Error ? e.message : '未知错误'));
+    }
+  }, []);
 
   const value: AnimeContextValue = {
     state,
@@ -942,6 +923,7 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     handleBatchAddTags,
     handleCancelBatch,
     handleFixSearchAlias,
+    handleRebuildOverallColumn,
     handleCreateRelation,
     handleImportExcel,
     handleFileChange,

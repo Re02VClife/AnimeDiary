@@ -20,6 +20,7 @@ import {
 } from '@ant-design/icons';
 import type { AnimeEntry } from '../../src/types';
 import { DEFAULT_DIMENSIONS, DIMENSION_LABEL_MAP } from '../../src/types';
+import { fmt2 } from '../../core/math';
 import { hasAIConfig, loadAIConfig } from './ai-config';
 import { tasteAnalysis } from './taste-analysis';
 import { buildTasteStats } from './taste-analysis';
@@ -327,7 +328,7 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
                   />
                 </div>
                 <span style={{ fontSize: 10, color: 'var(--text-primary)', width: 36, textAlign: 'right' }}>
-                  σ={d.std.toFixed(2)}
+                  σ={fmt2(d.std)}
                 </span>
               </div>
             ))}
@@ -729,7 +730,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
                         fontSize: 8, color: diff > 0.3 ? 'var(--brand-primary)' : diff < -0.3 ? 'var(--color-error)' : 'var(--text-muted)',
                         width: 28, textAlign: 'center',
                       }}>
-                        {diff > 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1)}
+                        {diff > 0 ? `+${fmt2(diff)}` : fmt2(diff)}
                       </span>
                       {/* 低偏差组 */}
                       <div style={{ flex: 1 }}>
@@ -844,7 +845,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
               {a.title}
               {dev && (
                 <span style={{ fontSize: 9, opacity: 0.6, marginLeft: 3 }}>
-                  {dev.deviation > 0 ? '+' : ''}{dev.deviation.toFixed(1)}
+                  {dev.deviation > 0 ? '+' : ''}{fmt2(dev.deviation)}
                 </span>
               )}
             </span>
@@ -1258,7 +1259,7 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
                           fontSize: 10, color: 'var(--brand-primary)', fontWeight: 600,
                           background: 'rgba(251,114,153,0.1)', padding: '1px 6px', borderRadius: 8,
                         }}>
-                          AniList {r.bgmScore.toFixed(1)}
+                          AniList {fmt2(r.bgmScore)}
                         </span>
                       )}
                       {r.airDate && (
