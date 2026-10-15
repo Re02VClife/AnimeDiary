@@ -436,12 +436,24 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
               }
 
               for (const update of updates) {
-                const { sheetName, rowIndex, colIndex, value } = update;
+                const { sheetName, rowIndex, colIndex, value, formula } = update;
                 const ws = wb.Sheets[sheetName];
                 if (!ws) continue;
                 // 使用 sheet_add_aoa 替代直接赋值，它会自动扩展 !ref 范围
                 const cellAddr = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
                 XLSX.utils.sheet_add_aoa(ws, [[value]], { origin: cellAddr });
+                /**
+                 * 可选：连公式一起写。
+                 *
+                 * 绝大多数写入不带 formula（普通数据列没有公式）。只有「按模板权重重建
+                 * 综合(观感) D 列」这一条路径需要：sheet_add_aoa 会把单元格整个替换掉，
+                 * 只写 v 会把原公式抹掉。这里把 f 补回去，v 作为缓存值 —— 应用读缓存值、
+                 * Excel 打开后按公式自己重算，两边同源。
+                 */
+                if (typeof formula === 'string' && formula) {
+                  const cell = ws[cellAddr] as XLSX.CellObject | undefined;
+                  if (cell) cell.f = formula;
+                }
               }
               const wbOut = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
               writeFileAtomic(EXCEL_PATH, wbOut);

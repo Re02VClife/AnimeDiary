@@ -2,7 +2,7 @@
  * core/math 单元测试
  */
 import { describe, it, expect } from 'vitest';
-import { cosineSimilarity, jaccardSimilarity, jaccardArrays, calcOverall, round2, formatScore } from '../../core/math';
+import { cosineSimilarity, jaccardSimilarity, jaccardArrays, calcOverall, round2, formatScore, fmt2 } from '../../core/math';
 
 describe('cosineSimilarity', () => {
   it('相同向量返回 1', () => {
@@ -130,5 +130,40 @@ describe('round2 / formatScore', () => {
     expect(formatScore(undefined)).toBe('-');
     expect(formatScore(null)).toBe('-');
     expect(formatScore(0, '未评分')).toBe('未评分');
+  });
+});
+
+describe('fmt2（任意数字的两位展示）', () => {
+  it('抹掉浮点噪声，最多两位、不补零', () => {
+    // 真实数据里的公式列值（赋分/偏差值/较客观评分）
+    expect(fmt2(10.265625000000009)).toBe('10.27');
+    expect(fmt2(3.590000000000046)).toBe('3.59');
+    expect(fmt2(9.070000000000006)).toBe('9.07');
+    expect(fmt2(9.72000000000004)).toBe('9.72');
+  });
+
+  it('不补零：9.6 不是 9.60，10 不是 10.00', () => {
+    expect(fmt2(9.6)).toBe('9.6');
+    expect(fmt2(4.5)).toBe('4.5');
+    expect(fmt2(10)).toBe('10');
+    expect(fmt2(9.07)).toBe('9.07');
+  });
+
+  it('与 formatScore 的关键区别：0 是合法值', () => {
+    expect(fmt2(0)).toBe('0');
+    expect(formatScore(0)).toBe('-');
+  });
+
+  it('空值与非数字返回占位符（默认空串）', () => {
+    expect(fmt2(undefined)).toBe('');
+    expect(fmt2(null)).toBe('');
+    expect(fmt2(NaN)).toBe('');
+    expect(fmt2(Infinity)).toBe('');
+    expect(fmt2(undefined, '—')).toBe('—');
+  });
+
+  it('负数保留符号', () => {
+    expect(fmt2(-3.590000000000046)).toBe('-3.59');
+    expect(fmt2(-0.5)).toBe('-0.5');
   });
 });

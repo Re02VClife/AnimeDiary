@@ -55,6 +55,21 @@ export function formatScore(n: number | undefined | null, empty = '-'): string {
 }
 
 /**
+ * 任意数字的展示串：**最多两位小数、不补零**，且保留 0（9.6 / 9.6 不会是 9.60；10 → '10'；0 → '0'）。
+ *
+ * 与 formatScore 的区别：那个是「评分」语义（0 视为未评分 → '-'），这个用于
+ * 「赋分/偏差值/较客观评分/张数」这类**0 是合法值**的数字，以及 CSV/Excel 显示。
+ *
+ * 为什么要它：Excel 公式列读出来常带 10.265625000000009、3.590000000000046 这种
+ * 浮点噪声，直接渲染就是一堆没意义的尾数。round2 再转字符串，尾数自然收敛。
+ */
+export function fmt2(n: number | undefined | null, empty = ''): string {
+  if (n === undefined || n === null) return empty;
+  if (typeof n !== 'number' || !Number.isFinite(n)) return empty;
+  return String(round2(n));
+}
+
+/**
  * 按加权维度计算总评
  * @param scores 维度分数字典 { dimensionKey: score }
  * @param dimensions 维度定义列表（含 key 和 weight），排除 overall
