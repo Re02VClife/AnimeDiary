@@ -675,6 +675,23 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div
               className="settings-item"
+              onClick={() => dispatch({ type: 'OPEN_MODAL', modal: 'aiChat' })}
+              style={{
+                background: 'linear-gradient(135deg, rgba(251,114,153,0.12), rgba(251,114,153,0.03))',
+                border: '1px solid rgba(251,114,153,0.25)',
+                borderRadius: 8,
+                padding: '10px 14px',
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--brand-primary)' }}>
+                💬 开始对话
+              </span>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                随时问
+              </span>
+            </div>
+            <div
+              className="settings-item"
               onClick={() => dispatch({ type: 'OPEN_MODAL', modal: 'tasteReport' })}
               style={{
                 background: 'linear-gradient(135deg, rgba(251,114,153,0.1), rgba(251,114,153,0.02))',

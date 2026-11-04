@@ -21,6 +21,7 @@ import { getVisibleCategories } from './types';
 import KnowledgeGraphModal from '../features/knowledge-graph/KnowledgeGraphModal';
 import AppIcon from './theme/AppIcon';
 import AISettings from '../features/ai-analysis/AISettings';
+import AIChatDrawer from './components/AIChatDrawer';
 import BackupHistoryModal from './components/BackupHistoryModal';
 import { initAIConfig } from '../features/ai-analysis/ai-config';
 import TasteReportModal from '../features/ai-analysis/TasteReportModal';
@@ -94,6 +95,7 @@ const App: React.FC = () => {
     knowledgeGraphOpen,
     aiSettingsOpen,
     tasteReportOpen,
+    aiChatOpen,
     backupHistoryOpen,
     excelOpen,
     batchMode,
@@ -283,7 +285,10 @@ const App: React.FC = () => {
 
           {batchMode && (
             <div style={{
-              position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)',
+              position: 'fixed', bottom: 20,
+              // 抽屉拉开时在「剩余可视区域」里居中，否则会被压在抽屉底下
+              left: 'calc((100vw - var(--ai-chat-width, 0px)) / 2)',
+              transform: 'translateX(-50%)',
               background: 'var(--bg-tertiary)', border: '1px solid #30363d', borderRadius: 20,
               padding: '8px 20px', display: 'flex', alignItems: 'center', gap: 16,
               boxShadow: '0 4px 24px rgba(0,0,0,0.5)', zIndex: 100,
@@ -420,6 +425,14 @@ const App: React.FC = () => {
         open={backupHistoryOpen}
         onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'backupHistory' })}
         onRestored={refreshAnimeList}
+      />
+
+      {/* AI 对话抽屉：贴在右侧、可拖拽调宽，不遮挡网格布局 */}
+      <AIChatDrawer
+        open={aiChatOpen}
+        onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'aiChat' })}
+        animeList={state.animeList}
+        onOpenSettings={() => dispatch({ type: 'OPEN_MODAL', modal: 'aiSettings' })}
       />
 
       <input ref={fileInputRef} type="file" accept=".xlsx,.xls"

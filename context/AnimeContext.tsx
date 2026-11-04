@@ -63,6 +63,8 @@ export interface AnimeState {
   knowledgeGraphOpen: boolean;
   aiSettingsOpen: boolean;
   tasteReportOpen: boolean;
+  /** AI 对话抽屉 */
+  aiChatOpen: boolean;
   /** 存档与回退（快照列表 + 写操作日志） */
   backupHistoryOpen: boolean;
   /** 表格视图（应用内直接看/改列表原始数据） */
@@ -140,6 +142,7 @@ const initialState: AnimeState = {
   knowledgeGraphOpen: false,
   aiSettingsOpen: false,
   tasteReportOpen: false,
+  aiChatOpen: false,
   backupHistoryOpen: false,
   excelOpen: false,
   batchMode: false,
