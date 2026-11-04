@@ -78,11 +78,31 @@ export function buildTaggedEntry(entry: AnimeEntry, names: string[]): AnimeEntry
   return { ...entry, tags: [...entry.tags, ...added] };
 }
 
+/**
+ * 从整库统计出「已有标签库」，喂给模型让它优先复用。
+ * 按使用次数倒序取前 N 个：长尾只出现一次的标签对复用没有帮助，还会把 prompt 撑长。
+ */
+export function buildTagVocabulary(list: AnimeEntry[], limit = 120): string[] {
+  const counts = new Map<string, number>();
+  for (const a of list) {
+    for (const t of a.tags) {
+      const key = (t.name || '').trim();
+      if (key) counts.set(key, (counts.get(key) || 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh'))
+    .slice(0, limit)
+    .map(([name]) => name);
+}
+
 export interface RunBatchTagOptions {
   targets: AnimeEntry[];
   concurrency?: number;
   signal?: AbortSignal;
   run?: AIRun;
+  /** 已有标签库；不传则从 targets + 其它条目里现算一个 */
+  vocabulary?: string[];
   /** 每部开始 / 结束时回调，UI 靠它实时更新 */
   onItemChange?: (item: BatchTagItem) => void;
 }
@@ -96,6 +116,8 @@ export interface RunBatchTagOptions {
 export async function runBatchTag(opts: RunBatchTagOptions): Promise<BatchTagItem[]> {
   const { targets, onItemChange } = opts;
   const limit = Math.max(1, opts.concurrency ?? BATCH_TAG_CONCURRENCY);
+  // 一次算好，别在每部里重复统计
+  const vocabulary = opts.vocabulary ?? buildTagVocabulary(targets);
 
   const items: BatchTagItem[] = targets.map((a) => ({
     animeId: a.id,
@@ -117,7 +139,7 @@ export async function runBatchTag(opts: RunBatchTagOptions): Promise<BatchTagIte
       onItemChange?.(items[index]);
 
       try {
-        const result = await autoTag(target, { signal: opts.signal, run: opts.run });
+        const result = await autoTag(target, { signal: opts.signal, run: opts.run, vocabulary });
         const fresh = diffSuggested(items[index].existingTags, result.suggestedTags || []);
         items[index] = { ...items[index], status: 'done', suggested: fresh };
       } catch (e) {

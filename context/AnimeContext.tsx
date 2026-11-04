@@ -5,11 +5,12 @@
 import React, { createContext, useContext, useReducer, useEffect, useCallback, useMemo, useRef } from 'react';
 import { catgirlMessage } from '../src/theme';
 import type { AnimeCategory, AnimeEntry, AnimeTag } from '../src/types';
-import { loadAnimeList, updateAnimeEntry, appendAnimeEntry, batchSaveAllPosters, deleteExcelRow, readRawRows, rebuildOverallColumn } from '../features/anime-data/excel-service';
+import { loadAnimeList, updateAnimeEntry, updateAnimeEntries, appendAnimeEntry, batchSaveAllPosters, deleteExcelRow, readRawRows, rebuildOverallColumn } from '../features/anime-data/excel-service';
 import { saveCategory, addToWatchingDeleted, removeFromWatchingDeleted, loadImgHeight, saveImgHeight, exportAllUserData, importUserData, shiftLocalRefsAfterRowDelete, loadWatchingDeleted } from '../features/anime-data/storage-service';
 import { migrateLegacyDimensions, loadTemplates } from '../features/anime-data/template-service';
 import { buildTransferWorkbook, parseTransferWorkbook, exportFileName, mergeImportedTemplates, SHEET_ANIME } from '../features/anime-data/excel-transfer';
 import { getVisibleCategories, DEFAULT_TEMPLATE_ID } from '../src/types';
+import { sameTagName } from '../core/tag-name';
 import { rankByDimension } from '../features/ranking/ranking-service';
 import type { ScoreRange, ScoreFocus } from '../features/ranking/score-distribution';
 import { searchCandidates, pickBestMatch, LOW_CONFIDENCE } from '../features/media-complete/media-service';
@@ -288,11 +289,12 @@ function animeReducer(state: AnimeState, action: AnimeAction): AnimeState {
         animeList: state.animeList.map((a) => ({
           ...a,
           tags: a.tags.map((t) =>
-            t.name === action.oldName ? { ...t, name: action.newName } : t,
+            // 按归一化比较：一次重命名把 `科幻` / `科幻 ` 这类变体一并合并成新名字
+            sameTagName(t.name, action.oldName) ? { ...t, name: action.newName } : t,
           ),
         })),
         activeTag:
-          state.activeTag === action.oldName ? action.newName : state.activeTag,
+          state.activeTag && sameTagName(state.activeTag, action.oldName) ? action.newName : state.activeTag,
       };
 
     case 'DELETE_TAG':
@@ -300,10 +302,10 @@ function animeReducer(state: AnimeState, action: AnimeAction): AnimeState {
         ...state,
         animeList: state.animeList.map((a) => ({
           ...a,
-          tags: a.tags.filter((t) => t.name !== action.tagName),
+          tags: a.tags.filter((t) => !sameTagName(t.name, action.tagName)),
         })),
         activeTag:
-          state.activeTag === action.tagName ? null : state.activeTag,
+          state.activeTag && sameTagName(state.activeTag, action.tagName) ? null : state.activeTag,
       };
 
     case 'BATCH_ADD_TAGS':
@@ -434,7 +436,7 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           matchSearch = a.title.includes(state.searchText) || (a.searchAlias || '').includes(state.searchText);
         }
       }
-      const matchTag = !state.activeTag || a.tags.some((t) => t.name === state.activeTag);
+      const matchTag = !state.activeTag || a.tags.some((t) => sameTagName(t.name, state.activeTag!));
       // 模板筛选：始终按模板分类，'default'=缺省模板，其他=匹配指定模板ID
       const matchTemplate = state.activeTemplateId === 'default'
         ? (!a.templateId || a.templateId === 'default')
@@ -688,28 +690,31 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const handleRenameTag = useCallback((oldName: string, newName: string) => {
-    if (oldName === newName) return;
+    if (sameTagName(oldName, newName)) return;
     dispatch({ type: 'RENAME_TAG', oldName, newName });
     const affected = state.animeList
-      .filter((a) => a.tags.some((t) => t.name === oldName) && a.excelRowIndex !== undefined)
+      .filter((a) => a.tags.some((t) => sameTagName(t.name, oldName)) && a.excelRowIndex !== undefined)
       .map((a) => ({
         ...a,
-        tags: a.tags.map((t) => t.name === oldName ? { ...t, name: newName } : t),
+        tags: a.tags.map((t) => sameTagName(t.name, oldName) ? { ...t, name: newName } : t),
       }));
-    void Promise.allSettled(affected.map((a) => updateAnimeEntry(a)))
-      .then((rs) => reportWriteResults(rs, `已将「${oldName}」重命名为「${newName}」`));
+    // 一次写回：重命名一个高频标签可能牵动几十行，逐条写会把快照窗口挤满
+    void updateAnimeEntries(affected)
+      .then((n) => catgirlMessage.success(`已将「${oldName}」重命名为「${newName}」，影响 ${n} 部`))
+      .catch((e) => catgirlMessage.error(`重命名失败：${e instanceof Error ? e.message : String(e)}`));
   }, [state.animeList]);
 
   const handleDeleteTag = useCallback((tagName: string) => {
     dispatch({ type: 'DELETE_TAG', tagName });
     const affected = state.animeList
-      .filter((a) => a.tags.some((t) => t.name === tagName) && a.excelRowIndex !== undefined)
+      .filter((a) => a.tags.some((t) => sameTagName(t.name, tagName)) && a.excelRowIndex !== undefined)
       .map((a) => ({
         ...a,
-        tags: a.tags.filter((t) => t.name !== tagName),
+        tags: a.tags.filter((t) => !sameTagName(t.name, tagName)),
       }));
-    void Promise.allSettled(affected.map((a) => updateAnimeEntry(a)))
-      .then((rs) => reportWriteResults(rs, `已全局删除标签「${tagName}」`));
+    void updateAnimeEntries(affected)
+      .then((n) => catgirlMessage.success(`已全局删除标签「${tagName}」，影响 ${n} 部`))
+      .catch((e) => catgirlMessage.error(`删除失败：${e instanceof Error ? e.message : String(e)}`));
   }, [state.animeList]);
 
   const handleBatchAddTags = useCallback(() => {

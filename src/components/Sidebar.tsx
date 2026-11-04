@@ -9,6 +9,10 @@ import { findScoreRangeIndex } from '../../features/ranking/score-distribution';
 import WatchTimeline from '../../features/watch-calendar/WatchCalendar';
 import { useAnimeContext } from '../../context/AnimeContext';
 import { formatScore } from '../../core/math';
+import { groupTagNames, normalizeTagName, sameTagName, findLikelyDuplicates } from '../../core/tag-name';
+
+/** 计数小于这个值的标签默认收起（批量打标签会把标签数推到上百） */
+const TAG_COLLAPSE_THRESHOLD = 5;
 import { catgirlMessage } from '../theme';
 import { useTheme } from '../theme/ThemeContext';
 import AppIcon from '../theme/AppIcon';
@@ -91,20 +95,42 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
   const [editingColors, setEditingColors] = useState<Partial<ThemeColors>>({});
 
   // ── Tag 统计：收集全部标签（含预设），按使用次数排序 ──
+  // 归一化后聚合：模型造标签时会吐出 `科幻` / `科幻 `（尾空格）、`３D动画` / `3D动画`
+  // 这种「看着一样其实两个」的变体，不合并的话计数会被劈成两半，筛选也筛不全。
   const tagStats = useMemo(() => {
-    const counts: Record<string, number> = {};
+    const names: string[] = [];
     for (const a of animeList) {
-      for (const t of a.tags) {
-        counts[t.name] = (counts[t.name] || 0) + 1;
+      for (const t of a.tags) names.push(t.name);
+    }
+    const groups = groupTagNames(names);
+
+    // 预设里没被任何番剧用到的，补一条计数 0（这些就是「有标签但没有对应番剧」）
+    const known = new Set(groups.map((g) => g.key));
+    for (const preset of tagPresets) {
+      const key = normalizeTagName(preset);
+      if (key && !known.has(key)) {
+        known.add(key);
+        groups.push({ key, label: preset, count: 0, variants: [preset] });
       }
     }
-    // 合并预设标签（未在番剧中出现的计数为 0）
-    for (const preset of tagPresets) {
-      if (!(preset in counts)) counts[preset] = 0;
-    }
-    return Object.entries(counts)
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh'));
+
+    groups.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'zh'));
+    return groups;
   }, [animeList, tagPresets]);
+
+  /** 用得少的标签默认收起（批量打标签之后标签墙会长到没法看） */
+  const [showAllTags, setShowAllTags] = useState(false);
+  const visibleTags = useMemo(() => {
+    if (showAllTags || tagEditMode) return tagStats;
+    return tagStats.filter((g) => g.count >= TAG_COLLAPSE_THRESHOLD);
+  }, [tagStats, showAllTags, tagEditMode]);
+  const hiddenTagCount = tagStats.length - visibleTags.length;
+
+  /** 疑似重复（`漫改` / `漫改画` 这类同概念的不同写法），只在编辑模式下提示，由用户决定是否合并 */
+  const duplicateTags = useMemo(
+    () => (tagEditMode ? findLikelyDuplicates(tagStats).slice(0, 12) : []),
+    [tagStats, tagEditMode],
+  );
 
   // 开始重命名
   const startRename = useCallback((name: string) => {
@@ -120,19 +146,38 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
       return;
     }
     handleRenameTag(editingTag, newName);
-    // 同步更新预设列表
-    const updated = tagPresets.map((p) => p === editingTag ? newName : p);
+    // 同步更新预设列表（按归一化匹配：一次把 `科幻`/`科幻 ` 这类变体都并到新名字）
+    const updated = Array.from(new Set(
+      tagPresets
+        .map((p) => (sameTagName(p, editingTag) ? newName : p))
+        .map((p) => p.trim())
+        .filter(Boolean),
+    ));
     setTagPresets(updated);
     saveTagPresets(updated);
     setEditingTag(null);
     catgirlMessage.success(`已重命名「${editingTag}」→「${newName}」`);
   }, [editingTag, editValue, tagPresets, handleRenameTag]);
 
+  /** 把「疑似重复」里用得少的那个并进用得多的（走同一条重命名链路） */
+  const mergeTag = useCallback((from: string, to: string) => {
+    handleRenameTag(from, to);
+    const updated = Array.from(new Set(
+      tagPresets
+        .map((p) => (sameTagName(p, from) ? to : p))
+        .map((p) => p.trim())
+        .filter(Boolean),
+    ));
+    setTagPresets(updated);
+    saveTagPresets(updated);
+    catgirlMessage.success(`已把「${from}」并入「${to}」`);
+  }, [handleRenameTag, tagPresets, saveTagPresets]);
+
   // 删除标签
   const confirmDelete = useCallback((name: string) => {
     handleDeleteTag(name);
-    // 同步从预设列表移除
-    const updated = tagPresets.filter((p) => p !== name);
+    // 同步从预设列表移除（同样按归一化，变体一并清掉）
+    const updated = tagPresets.filter((p) => !sameTagName(p, name));
     setTagPresets(updated);
     saveTagPresets(updated);
   }, [tagPresets, handleDeleteTag]);
@@ -141,7 +186,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
   const addTagPreset = useCallback(() => {
     const name = newTagName.trim();
     if (!name) return;
-    if (tagPresets.includes(name)) { catgirlMessage.warning('标签已存在'); return; }
+    if (tagPresets.some((p) => sameTagName(p, name))) { catgirlMessage.warning('标签已存在'); return; }
     const updated = [...tagPresets, name];
     setTagPresets(updated);
     saveTagPresets(updated);
@@ -494,15 +539,21 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
                   暂无标签数据
                 </div>
               ) : (
-                tagStats.map(([name, count]) => (
+                visibleTags.map((g) => {
+                  const name = g.label;
+                  const count = g.count;
+                  const isActive = Boolean(activeTag) && sameTagName(activeTag!, name);
+                  return (
                   <div
-                    key={name}
+                    key={g.key}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 2,
                       padding: '2px 4px 2px 10px', borderRadius: 12, fontSize: 12,
-                      background: activeTag === name ? 'rgba(251,114,153,0.2)' : 'var(--bg-quaternary)',
-                      border: `1px solid ${activeTag === name ? 'var(--brand-primary)' : 'var(--border-primary)'}`,
-                      color: activeTag === name ? 'var(--brand-primary)' : 'var(--text-secondary)',
+                      background: isActive ? 'rgba(251,114,153,0.2)' : 'var(--bg-quaternary)',
+                      border: `1px solid ${isActive ? 'var(--brand-primary)' : 'var(--border-primary)'}`,
+                      color: isActive ? 'var(--brand-primary)' : 'var(--text-secondary)',
+                      // 计数 0 = 没有任何番剧在用（只存在于预设里），压暗一档
+                      opacity: count === 0 ? 0.55 : 1,
                     }}
                   >
                     {/* 编辑模式 → 输入框 */}
@@ -531,7 +582,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
                               payload: sel.includes(name) ? sel.filter((t) => t !== name) : [...sel, name],
                             });
                           } else {
-                            dispatch({ type: 'SET_ACTIVE_TAG', payload: activeTag === name ? null : name });
+                            dispatch({ type: 'SET_ACTIVE_TAG', payload: isActive ? null : name });
                           }
                         }}
                         style={{ cursor: 'pointer' }}
@@ -581,9 +632,58 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
                       </span>
                     )}
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
+
+            {/* 用得少的标签默认收起：批量打标签之后标签墙会涨到一百多个 */}
+            {hiddenTagCount > 0 && !tagEditMode && (
+              <button
+                onClick={() => setShowAllTags(!showAllTags)}
+                style={{
+                  width: '100%', marginBottom: 8, padding: '4px 0', cursor: 'pointer',
+                  fontSize: 11, color: 'var(--text-secondary)',
+                  background: 'transparent', border: '1px dashed var(--border-primary)',
+                  borderRadius: 6,
+                }}
+              >
+                {showAllTags
+                  ? `收起（隐藏 ${hiddenTagCount} 个用得少的）`
+                  : `展开全部（还有 ${hiddenTagCount} 个用得少的 / 未使用的）`}
+              </button>
+            )}
+            {/* 疑似重复：只在编辑模式下出现，只给建议不自动动手 */}
+            {duplicateTags.length > 0 && (
+              <div style={{
+                marginBottom: 8, padding: '6px 8px', borderRadius: 6,
+                background: 'rgba(251,114,153,0.06)', border: '1px dashed rgba(251,114,153,0.3)',
+              }}>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 4 }}>
+                  🔍 疑似重复（{duplicateTags.length} 组），点「合并」把少的并进多的
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {duplicateTags.map(({ keep, merge }) => (
+                    <button
+                      key={`${keep.key}|${merge.key}`}
+                      onClick={() => mergeTag(merge.label, keep.label)}
+                      title={`把「${merge.label}」（${merge.count} 部）全部改成「${keep.label}」（${keep.count} 部）`}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer',
+                        fontSize: 11, padding: '2px 6px', borderRadius: 10,
+                        background: 'var(--bg-quaternary)', border: '1px solid var(--border-primary)',
+                        color: 'var(--text-secondary)',
+                      }}
+                    >
+                      <span>{merge.label}</span>
+                      <span style={{ opacity: 0.6 }}>→</span>
+                      <span style={{ color: 'var(--brand-primary)' }}>{keep.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* 新增预设标签（仅在编辑模式下显示） */}
             {tagEditMode && (
             <div style={{ display: 'flex', gap: 4 }}>

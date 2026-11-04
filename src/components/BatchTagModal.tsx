@@ -13,7 +13,7 @@ import { Modal, Button, Segmented, Progress, Checkbox, Tag as AntTag, Alert, Emp
 import { catgirlMessage } from '../theme';
 import { getAIPermission } from '../../features/ai-analysis';
 import { canAIPropose, AI_PERMISSION_INFO } from '../../core/ai-permission';
-import { planBatchTagTargets, runBatchTag, buildTaggedEntry, summarizeBatchTag } from '../../features/ai-analysis/batch-tag';
+import { planBatchTagTargets, runBatchTag, buildTaggedEntry, summarizeBatchTag, buildTagVocabulary } from '../../features/ai-analysis/batch-tag';
 import type { BatchTagItem, BatchTagScope } from '../../features/ai-analysis/batch-tag';
 import { updateAnimeEntries } from '../../features/anime-data/excel-service';
 import type { AnimeEntry } from '../types';
@@ -91,6 +91,8 @@ const BatchTagModal: React.FC<BatchTagModalProps> = ({ open, onClose, animeList,
     const result = await runBatchTag({
       targets,
       signal: controller.signal,
+      // 用整库做词库（不是只用于本批），这样新标签会尽量落在已有体系里
+      vocabulary: buildTagVocabulary(animeList),
       onItemChange: (item) => {
         setItems((prev) => prev.map((it) => (it.animeId === item.animeId ? item : it)));
       },

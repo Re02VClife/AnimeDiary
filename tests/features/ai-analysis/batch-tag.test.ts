@@ -191,6 +191,31 @@ describe('summarizeBatchTag', () => {
   });
 });
 
+describe('buildTagVocabulary', () => {
+  it('按使用次数倒序，限制条数', async () => {
+    const { buildTagVocabulary } = await import('../../../features/ai-analysis/batch-tag');
+    const list = [
+      anime('1', 'A', ['刀', '治愈'], 1),
+      anime('2', 'B', ['刀'], 2),
+      anime('3', 'C', ['刀', '冷门'], 3),
+    ];
+    const vocab = buildTagVocabulary(list);
+    // 用得最多的排最前；1 次的按 zh 排序次之
+    expect(vocab[0]).toBe('刀');
+    expect(vocab.slice(1).sort()).toEqual(['冷门', '治愈'].sort());
+    // limit 生效
+    expect(buildTagVocabulary(list, 2)).toHaveLength(2);
+    expect(buildTagVocabulary(list, 2)[0]).toBe('刀');
+  });
+
+  it('模型收到的词库里带着已有标签（这样才会复用而不是另造）', async () => {
+    const targets = [anime('1', 'A', [], 1)];
+    await runBatchTag({ targets, vocabulary: ['漫改', '治愈'] });
+    const passed = autoTagMock.mock.calls[0][1] as { vocabulary?: string[] };
+    expect(passed.vocabulary).toEqual(['漫改', '治愈']);
+  });
+});
+
 describe('常量', () => {
   it('默认并发是 4（太高会被网关限流）', () => {
     expect(BATCH_TAG_CONCURRENCY).toBe(4);
