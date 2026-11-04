@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Tooltip } from 'antd';
 import { SendOutlined, PlusOutlined, CloseOutlined, StopOutlined } from '@ant-design/icons';
 import { catgirlMessage } from '../theme';
+import Markdown from './Markdown';
 import { hasAIConfig, getAIPermission } from '../../features/ai-analysis';
 import { AI_PERMISSION_INFO } from '../../core/ai-permission';
 import { createAIRun } from '../../features/ai-analysis/ai-runtime';
@@ -376,11 +377,8 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
             }
             if (it.kind === 'assistant') {
               return (
-                <div key={it.id} style={{
-                  fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                  color: 'var(--text-primary)',
-                }}>
-                  {it.text}
+                <div key={it.id} style={{ fontSize: 13, color: 'var(--text-primary)', wordBreak: 'break-word' }}>
+                  <Markdown text={it.text} />
                 </div>
               );
             }
@@ -449,7 +447,9 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
                 </details>
               )}
               {streamText && (
-                <div style={{ whiteSpace: 'pre-wrap', color: 'var(--text-primary)' }}>{streamText}</div>
+                <div style={{ color: 'var(--text-primary)', wordBreak: 'break-word' }}>
+                  <Markdown text={streamText} />
+                </div>
               )}
               {!streamReasoning && !streamText && (
                 <span style={{ opacity: 0.7 }}>思考中…</span>

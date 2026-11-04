@@ -129,7 +129,8 @@ function buildSystemPrompt(list: AnimeEntry[], skills: readonly AnyAISkill[]): s
     '【可用能力】',
     skillLines,
     '',
-    '回答用简体中文，具体、有洞察，不要说空话。工具已经给过结论时不要再重复调用同一个工具。',
+    '回答用简体中文。用 Markdown 组织（小标题、列表、必要时表格），但别堆砌——窄栏里长篇大论很难读。',
+    '工具已经给过结论时不要再重复调用同一个工具。',
   ].join('\n');
 }
 
