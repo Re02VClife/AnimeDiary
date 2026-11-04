@@ -120,11 +120,25 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
 
   /** 用得少的标签默认收起（批量打标签之后标签墙会长到没法看） */
   const [showAllTags, setShowAllTags] = useState(false);
+
+  // 计数为 0 = 只存在于预设列表里、没有任何番剧在用 —— 正常模式完全不显示。
+  // 编辑模式才露出来，否则用户没有地方把它们删掉（那就永远清不掉了）。
+  const displayTags = useMemo(
+    () => (tagEditMode ? tagStats : tagStats.filter((g) => g.count > 0)),
+    [tagStats, tagEditMode],
+  );
+
+  // 「用得少」的数量必须**独立算**：先前是按 visibleTags 反推的，
+  // 展开之后差值变成 0，按钮就整个消失了 —— 于是只有展开没有收起。
+  const lowCountTagCount = useMemo(
+    () => displayTags.filter((g) => g.count < TAG_COLLAPSE_THRESHOLD).length,
+    [displayTags],
+  );
+
   const visibleTags = useMemo(() => {
-    if (showAllTags || tagEditMode) return tagStats;
-    return tagStats.filter((g) => g.count >= TAG_COLLAPSE_THRESHOLD);
-  }, [tagStats, showAllTags, tagEditMode]);
-  const hiddenTagCount = tagStats.length - visibleTags.length;
+    if (showAllTags || tagEditMode) return displayTags;
+    return displayTags.filter((g) => g.count >= TAG_COLLAPSE_THRESHOLD);
+  }, [displayTags, showAllTags, tagEditMode]);
 
   /** 疑似重复（`漫改` / `漫改画` 这类同概念的不同写法），只在编辑模式下提示，由用户决定是否合并 */
   const duplicateTags = useMemo(
@@ -534,7 +548,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
           <>
             {/* 不设内层滚动：滚轮交给整个侧栏 */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
-              {tagStats.length === 0 && !newTagName ? (
+              {displayTags.length === 0 && !newTagName ? (
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', width: '100%', padding: 12 }}>
                   暂无标签数据
                 </div>
@@ -638,7 +652,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
             </div>
 
             {/* 用得少的标签默认收起：批量打标签之后标签墙会涨到一百多个 */}
-            {hiddenTagCount > 0 && !tagEditMode && (
+            {lowCountTagCount > 0 && !tagEditMode && (
               <button
                 onClick={() => setShowAllTags(!showAllTags)}
                 style={{
@@ -649,8 +663,8 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
                 }}
               >
                 {showAllTags
-                  ? `收起（隐藏 ${hiddenTagCount} 个用得少的）`
-                  : `展开全部（还有 ${hiddenTagCount} 个用得少的 / 未使用的）`}
+                  ? `收起（隐藏 ${lowCountTagCount} 个用得少的）`
+                  : `展开全部（还有 ${lowCountTagCount} 个用得少的）`}
               </button>
             )}
             {/* 疑似重复：只在编辑模式下出现，只给建议不自动动手 */}
