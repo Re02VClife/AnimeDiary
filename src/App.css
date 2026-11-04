@@ -338,6 +338,20 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px;
+}
+
+.anime-card .card-meta > span {
+  white-space: nowrap;
+}
+
+/* 中间列：观看时间（完整日期）。窄卡片时省略，不挤压两侧 */
+.anime-card .card-watch {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .anime-card .dim-score {
@@ -408,6 +422,142 @@
   background: rgba(251, 114, 153, 0.15);
   border-color: var(--brand-primary);
   color: var(--brand-primary);
+}
+
+/* ── 维度排序：左标签 / 右分数分布（筹码峰） ── */
+.dim-sort-split {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  margin-bottom: 8px;
+}
+
+/* 标签列：单列竖排，与右侧分布图等高 */
+.dim-sort-tags {
+  flex: 0 0 84px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.dimension-chip.block {
+  display: block;
+  padding: 3px 4px;
+  text-align: center;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.score-dist {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.score-dist-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  line-height: 12px;
+  color: var(--text-muted);
+}
+
+.score-dist-range.picked {
+  color: var(--brand-primary);
+  font-weight: 600;
+}
+
+/* 分数高在上、低在下；每档等分高度 */
+.score-dist-plot {
+  position: relative;
+  flex: 1;
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border-primary);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.score-dist-row {
+  position: relative;
+  flex: 1;
+  min-height: 4px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.score-dist-row:hover {
+  background: rgba(251, 114, 153, 0.08);
+}
+
+.score-dist-row.active {
+  background: rgba(251, 114, 153, 0.16);
+}
+
+.score-dist-bar {
+  height: 62%;
+  min-height: 2px;
+  border-radius: 0 1px 1px 0;
+  background: linear-gradient(90deg, rgba(251, 114, 153, 0.45), rgba(251, 114, 153, 0.85));
+  transition: width 0.25s ease;
+}
+
+.score-dist-row.active .score-dist-bar {
+  background: linear-gradient(90deg, rgba(251, 114, 153, 0.75), var(--brand-primary));
+}
+
+/* 平均分线：虚线压在条上，标签贴右侧 */
+.score-dist-avg {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed var(--color-warning);
+  pointer-events: none;
+}
+
+.score-dist-avg span {
+  position: absolute;
+  right: 1px;
+  top: -9px;
+  padding: 0 2px;
+  font-size: 9px;
+  line-height: 12px;
+  white-space: nowrap;
+  color: var(--color-warning);
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+}
+
+.score-dist-empty {
+  flex: 1;
+  min-height: 150px;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  border: 1px dashed var(--border-primary);
+  border-radius: 6px;
+}
+
+/* 排名列表：内滚 —— 点分布图时只滑这一块，分布图不会被顶出视野 */
+.rank-list {
+  max-height: 300px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+}
+
+.rank-list::-webkit-scrollbar {
+  width: 4px;
 }
 
 /* ── 设置 ── */

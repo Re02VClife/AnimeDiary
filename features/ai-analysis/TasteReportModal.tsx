@@ -33,8 +33,9 @@ import type {
   DeviationData,
   RecommendResult,
 } from './ai-types';
-import type { TokenUsage } from './llm-service';
-import { saveProfileCache, loadProfileCache } from './ai-cache';
+import { beginAIRun, getAIRunSummary, setAIStreamListener } from './ai-runtime';
+import type { AIRunSummary } from './ai-runtime';
+import { saveProfileCache, loadProfileCache, saveTasteCache, buildListFingerprint } from './ai-cache';
 
 interface TasteReportModalProps {
   open: boolean;
@@ -145,6 +146,88 @@ const PhaseDivider: React.FC<{ label: string; active: boolean; done: boolean }> 
 );
 
 // ═══════════════════════════════════════════════════════
+// 共享：运行用量条
+// ═══════════════════════════════════════════════════════
+
+/** 真实用量（来自网关返回的 usage，不再是按字符数估的） */
+const UsageBar: React.FC<{ summary: AIRunSummary | null }> = ({ summary }) => {
+  if (!summary || summary.calls === 0) return null;
+  return (
+    <div
+      style={{
+        marginTop: 10,
+        padding: '8px 14px',
+        background: 'var(--bg-secondary)',
+        border: '1px solid #30363d',
+        borderRadius: 8,
+        display: 'flex',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: 12,
+        fontSize: 11,
+      }}
+    >
+      <span style={{ color: 'var(--text-secondary)' }}>📊 本次消耗：</span>
+      <span style={{ color: 'var(--text-primary)' }}>
+        <span style={{ color: 'var(--brand-primary)', fontWeight: 600 }}>{summary.totalTokens.toLocaleString()}</span> tokens
+      </span>
+      <span style={{ color: 'var(--text-muted)' }}>|</span>
+      <span style={{ color: 'var(--text-secondary)' }}>
+        输入 <span style={{ color: 'var(--color-info)' }}>{summary.promptTokens.toLocaleString()}</span>
+      </span>
+      <span style={{ color: 'var(--text-secondary)' }}>
+        输出 <span style={{ color: 'var(--color-success)' }}>{summary.completionTokens.toLocaleString()}</span>
+        {summary.reasoningTokens > 0 && (
+          <span style={{ color: 'var(--text-muted)' }}>（思考 {summary.reasoningTokens.toLocaleString()}）</span>
+        )}
+      </span>
+      <span style={{ color: 'var(--text-muted)' }}>|</span>
+      <span style={{ color: 'var(--text-secondary)' }}>
+        {(summary.latencyMs / 1000).toFixed(1)}s · {summary.calls} 次调用
+        {summary.retries > 0 ? ` · ${summary.retries} 次重试` : ''}
+      </span>
+      {typeof summary.cost === 'number' && summary.cost > 0 && (
+        <>
+          <span style={{ color: 'var(--text-muted)' }}>|</span>
+          <span style={{ color: 'var(--color-warning)', fontWeight: 600 }}>${summary.cost.toFixed(4)}</span>
+        </>
+      )}
+    </div>
+  );
+};
+
+/** 分析进行中：把模型的思考片段滚出来，避免长时间白屏 */
+const ThinkingBox: React.FC<{ text: string; label: string }> = ({ text, label }) => (
+  <div style={{ textAlign: 'center', padding: '20px 0' }}>
+    <Spin size="default" />
+    <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 10 }}>{label}</div>
+    {text && (
+      <div
+        style={{
+          margin: '10px auto 0',
+          maxWidth: 520,
+          maxHeight: 64,
+          overflow: 'hidden',
+          textAlign: 'left',
+          fontSize: 10,
+          lineHeight: 1.6,
+          color: 'var(--text-muted)',
+          background: 'var(--bg-primary)',
+          border: '1px solid #30363d',
+          borderRadius: 6,
+          padding: '6px 10px',
+          whiteSpace: 'pre-wrap',
+          maskImage: 'linear-gradient(to bottom, rgba(0,0,0,0.9), transparent)',
+          WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,0.9), transparent)',
+        }}
+      >
+        {text.slice(-220)}
+      </div>
+    )}
+  </div>
+);
+
+// ═══════════════════════════════════════════════════════
 // Tab 1: 品味分析
 // ═══════════════════════════════════════════════════════
 
@@ -155,7 +238,8 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
   const [phase, setPhase] = useState<'stats' | 'llm' | 'done'>('stats');
   const [reportText, setReportText] = useState('');
   const [editing, setEditing] = useState(false);
-  const [usage, setUsage] = useState<TokenUsage | null>(null);
+  const [usage, setUsage] = useState<AIRunSummary | null>(null);
+  const [thinking, setThinking] = useState('');
   const [error, setError] = useState<string | null>(null);
   const runningRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -163,6 +247,7 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
     runningRef.current = false;
+    setAIStreamListener(null);
     setPhase('stats');
   }, []);
 
@@ -173,12 +258,21 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
     setEditing(false);
     setError(null);
     setReportText('');
+    setUsage(null);
+    setThinking('');
+    beginAIRun();
 
     const abort = new AbortController();
     abortRef.current = abort;
 
+    let streamed = '';
+    setAIStreamListener((chunk) => {
+      streamed = (streamed + chunk.text).slice(-1000);
+      setThinking(streamed);
+    });
+
     try {
-      const report = await tasteAnalysis(animeList);
+      const report = await tasteAnalysis(animeList, { signal: abort.signal, stream: true });
       if (abort.signal.aborted || !runningRef.current) return;
 
       const s = (v: unknown): string => (typeof v === 'string' ? v : JSON.stringify(v));
@@ -192,10 +286,8 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
         report.notes.forEach((n) => lines.push(`· ${s(n)}`));
       }
       setReportText(lines.join('\n'));
-
-      const estPrompt = 1500;
-      const estComp = Math.round(lines.join('\n').length / 1.5);
-      setUsage({ promptTokens: estPrompt, completionTokens: estComp, totalTokens: estPrompt + estComp });
+      saveTasteCache(report, buildListFingerprint(animeList, 'taste'));
+      setUsage(getAIRunSummary());
       setPhase('done');
     } catch (e) {
       if (!abort.signal.aborted && runningRef.current) {
@@ -203,6 +295,7 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
         setPhase('stats');
       }
     } finally {
+      setAIStreamListener(null);
       runningRef.current = false;
       abortRef.current = null;
     }
@@ -355,23 +448,22 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
             开始 AI 分析
           </Button>
           <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6 }}>
-            将以上统计数据发送给 AI，生成品味报告（约 2000 token / ¥0.004）
+            将以上统计数据摘要交给模型，生成一份品味报告（费用取决于 AI 设置里选的服务商）
           </div>
         </div>
       )}
 
       {/* ═══ Phase 2: LLM 分析中 ═══ */}
       {phase === 'llm' && (
-        <div style={{ textAlign: 'center', padding: '24px 0' }}>
-          <Spin size="default" />
-          <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 10 }}>
-            AI 正在分析你的品味数据…
+        <>
+          <ThinkingBox text={thinking} label="AI 正在读你的评分数据…" />
+          <div style={{ textAlign: 'center' }}>
+            <Button size="small" onClick={handleCancel}
+              style={{ background: 'var(--bg-quaternary)', borderColor: 'var(--border-primary)', color: 'var(--color-error)', fontSize: 11 }}>
+              取消
+            </Button>
           </div>
-          <Button size="small" onClick={handleCancel}
-            style={{ marginTop: 12, background: 'var(--bg-quaternary)', borderColor: 'var(--border-primary)', color: 'var(--color-error)', fontSize: 11 }}>
-            取消
-          </Button>
-        </div>
+        </>
       )}
 
       {/* ═══ Phase 3: 分析结果 ═══ */}
@@ -379,6 +471,7 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
         <>
           <PhaseDivider label="AI 分析报告" active={false} done={true} />
 
+          {/* 可编辑文案 */}
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
             <Button
               size="small"
@@ -423,42 +516,7 @@ const TastePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
             </div>
           )}
 
-          {usage && (
-            <div
-              style={{
-                marginTop: 10,
-                padding: '8px 14px',
-                background: 'var(--bg-secondary)',
-                border: '1px solid #30363d',
-                borderRadius: 8,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 16,
-                fontSize: 11,
-              }}
-            >
-              <span style={{ color: 'var(--text-secondary)' }}>
-                📊 本次消耗：
-              </span>
-              <span style={{ color: 'var(--text-primary)' }}>
-                <span style={{ color: 'var(--brand-primary)', fontWeight: 600 }}>{usage.totalTokens.toLocaleString()}</span> tokens
-              </span>
-              <span style={{ color: 'var(--text-muted)' }}>|</span>
-              <span style={{ color: 'var(--text-secondary)' }}>
-                输入 <span style={{ color: 'var(--color-info)' }}>{usage.promptTokens.toLocaleString()}</span>
-              </span>
-              <span style={{ color: 'var(--text-secondary)' }}>
-                输出 <span style={{ color: 'var(--color-success)' }}>{usage.completionTokens.toLocaleString()}</span>
-              </span>
-              <span style={{ color: 'var(--text-muted)' }}>|</span>
-              <span style={{ color: 'var(--text-secondary)' }}>
-                预估费用 <span style={{ color: 'var(--color-warning)', fontWeight: 600 }}>
-                  ¥{(usage.totalTokens / 1_000_000 * 2).toFixed(4)}
-                </span>
-                <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>（DeepSeek ¥2/1M tokens）</span>
-              </span>
-            </div>
-          )}
+          <UsageBar summary={usage} />
         </>
       )}
 
@@ -500,7 +558,8 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
   const [reportText, setReportText] = useState('');
   const [editing, setEditing] = useState(false);
   const [profile, setProfile] = useState<PreferenceProfile | null>(null);
-  const [usage, setUsage] = useState<TokenUsage | null>(null);
+  const [usage, setUsage] = useState<AIRunSummary | null>(null);
+  const [thinking, setThinking] = useState('');
   const [error, setError] = useState<string | null>(null);
   const runningRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -508,6 +567,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
     runningRef.current = false;
+    setAIStreamListener(null);
     setPhase('stats');
   }, []);
 
@@ -522,9 +582,18 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
     setProfile(null);
     setDeepPhaseLabel('');
     setDeepProgress(null);
+    setUsage(null);
+    setThinking('');
+    beginAIRun();
 
     const abort = new AbortController();
     abortRef.current = abort;
+
+    let streamed = '';
+    setAIStreamListener((chunk) => {
+      streamed = (streamed + chunk.text).slice(-1000);
+      setThinking(streamed);
+    });
 
     try {
       const config = loadAIConfig();
@@ -532,7 +601,6 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
 
       let result: PreferenceProfile;
       if (useDeepMode) {
-        // 深度模式：三步流程
         result = await preferenceProfileDeep(
           animeList,
           (phase) => {
@@ -548,17 +616,18 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
             if (abort.signal.aborted) return;
             setDeepProgress({ current, total });
           },
+          { signal: abort.signal, stream: true },
         );
         setDeepPhaseLabel('');
         setDeepProgress(null);
       } else {
-        result = await preferenceProfile(animeList);
+        result = await preferenceProfile(animeList, 'metadata', { signal: abort.signal, stream: true });
       }
 
       if (abort.signal.aborted || !runningRef.current) return;
 
       setProfile(result);
-      saveProfileCache(result);
+      saveProfileCache(result, buildListFingerprint(animeList, useDeepMode ? 'profile-deep' : 'profile'));
 
       // 构建文本摘要
       const s = (v: unknown): string => (typeof v === 'string' ? v : JSON.stringify(v));
@@ -567,9 +636,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
       if (result.tasteDeviation) lines.push(s(result.tasteDeviation));
       setReportText(lines.join('\n'));
 
-      const estPrompt = useDeepMode ? 50000 : 2500;
-      const estComp = useDeepMode ? 5000 : 300;
-      setUsage({ promptTokens: estPrompt, completionTokens: estComp, totalTokens: estPrompt + estComp });
+      setUsage(getAIRunSummary());
       setPhase('done');
     } catch (e) {
       if (!abort.signal.aborted && runningRef.current) {
@@ -577,6 +644,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
         setPhase('stats');
       }
     } finally {
+      setAIStreamListener(null);
       runningRef.current = false;
       abortRef.current = null;
     }
@@ -873,22 +941,19 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
           </Button>
           <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6 }}>
             {loadAIConfig().deepMode
-              ? '深度模式：采集 Bangumi 社区评论 + 逐番 LLM 分析（约 5 万 token / ¥0.1-0.2）'
-              : '将口味偏差数据发送给 AI，生成偏好画像（约 2500 token / ¥0.005）'}
+              ? '深度模式：采集 Bangumi 社区评论 → 逐番归纳 → 汇总画像（调用次数多，耗时更长）'
+              : '把口味偏差数据交给模型，提炼偏好画像'}
           </div>
         </div>
       )}
 
       {/* ═══ Phase 2: LLM 分析中 ═══ */}
       {phase === 'llm' && (
-        <div style={{ textAlign: 'center', padding: '24px 0' }}>
-          <Spin size="default" />
-          <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 10 }}>
-            {deepPhaseLabel || 'AI 正在提取你的偏好特征…'}
-          </div>
+        <>
+          <ThinkingBox text={thinking} label={deepPhaseLabel || 'AI 正在提取你的偏好特征…'} />
           {/* 深度模式逐番进度条 */}
           {deepProgress && (
-            <div style={{ marginTop: 12 }}>
+            <div style={{ marginTop: 4, marginBottom: 8 }}>
               <div style={{
                 width: '80%', margin: '0 auto', height: 8,
                 background: 'var(--bg-quaternary)', borderRadius: 4, overflow: 'hidden',
@@ -901,16 +966,18 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
                   transition: 'width 0.3s ease',
                 }} />
               </div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, textAlign: 'center' }}>
                 正在分析 {deepProgress.current}/{deepProgress.total} 部番剧
               </div>
             </div>
           )}
-          <Button size="small" onClick={handleCancel}
-            style={{ marginTop: 12, background: 'var(--bg-quaternary)', borderColor: 'var(--border-primary)', color: 'var(--color-error)', fontSize: 11 }}>
-            取消
-          </Button>
-        </div>
+          <div style={{ textAlign: 'center' }}>
+            <Button size="small" onClick={handleCancel}
+              style={{ background: 'var(--bg-quaternary)', borderColor: 'var(--border-primary)', color: 'var(--color-error)', fontSize: 11 }}>
+              取消
+            </Button>
+          </div>
+        </>
       )}
 
       {/* ═══ Phase 3: 分析结果 ═══ */}
@@ -1032,39 +1099,7 @@ const ProfilePanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) => {
             )
           )}
 
-          {usage && (
-            <div
-              style={{
-                marginTop: 10,
-                padding: '8px 14px',
-                background: 'var(--bg-secondary)',
-                border: '1px solid #30363d',
-                borderRadius: 8,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 16,
-                fontSize: 11,
-              }}
-            >
-              <span style={{ color: 'var(--text-secondary)' }}>📊 本次消耗：</span>
-              <span style={{ color: 'var(--text-primary)' }}>
-                <span style={{ color: 'var(--brand-primary)', fontWeight: 600 }}>{usage.totalTokens.toLocaleString()}</span> tokens
-              </span>
-              <span style={{ color: 'var(--text-muted)' }}>|</span>
-              <span style={{ color: 'var(--text-secondary)' }}>
-                输入 <span style={{ color: 'var(--color-info)' }}>{usage.promptTokens.toLocaleString()}</span>
-              </span>
-              <span style={{ color: 'var(--text-secondary)' }}>
-                输出 <span style={{ color: 'var(--color-success)' }}>{usage.completionTokens.toLocaleString()}</span>
-              </span>
-              <span style={{ color: 'var(--text-muted)' }}>|</span>
-              <span style={{ color: 'var(--text-secondary)' }}>
-                预估费用 <span style={{ color: 'var(--color-warning)', fontWeight: 600 }}>
-                  ¥{(usage.totalTokens / 1_000_000 * 2).toFixed(4)}
-                </span>
-              </span>
-            </div>
-          )}
+          <UsageBar summary={usage} />
         </>
       )}
 
@@ -1098,7 +1133,8 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
   const [phase, setPhase] = useState<'idle' | 'llm' | 'done'>('idle');
   const [recommendations, setRecommendations] = useState<RecommendResult | null>(null);
   const [llmPhase, setLlmPhase] = useState('');
-  const [usage, setUsage] = useState<TokenUsage | null>(null);
+  const [usage, setUsage] = useState<AIRunSummary | null>(null);
+  const [thinking, setThinking] = useState('');
   const [error, setError] = useState<string | null>(null);
   const runningRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -1106,6 +1142,7 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
     runningRef.current = false;
+    setAIStreamListener(null);
     setPhase('idle');
   }, []);
 
@@ -1116,25 +1153,33 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
     setError(null);
     setRecommendations(null);
     setLlmPhase('');
+    setUsage(null);
+    setThinking('');
+    beginAIRun();
 
     const abort = new AbortController();
     abortRef.current = abort;
 
+    let streamed = '';
+    setAIStreamListener((chunk) => {
+      streamed = (streamed + chunk.text).slice(-800);
+      setThinking(streamed);
+    });
+
     try {
-      const cachedProfile = loadProfileCache();
+      const cachedProfile = loadProfileCache(buildListFingerprint(animeList, 'profile'));
       const result = await smartRecommend(
         animeList,
         cachedProfile,
         (msg) => {
           if (!abort.signal.aborted) setLlmPhase(msg);
         },
+        { signal: abort.signal },
       );
       if (abort.signal.aborted || !runningRef.current) return;
 
       setRecommendations(result);
-      const estPrompt = 3000;
-      const estComp = 800;
-      setUsage({ promptTokens: estPrompt, completionTokens: estComp, totalTokens: estPrompt + estComp });
+      setUsage(getAIRunSummary());
       setPhase('done');
     } catch (e) {
       if (!abort.signal.aborted && runningRef.current) {
@@ -1142,6 +1187,7 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
         setPhase('idle');
       }
     } finally {
+      setAIStreamListener(null);
       runningRef.current = false;
       abortRef.current = null;
     }
@@ -1183,22 +1229,21 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
             发现新番
           </Button>
           <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6 }}>
-            AniList 搜索 + AI 精选 · 约 3000 token / ¥0.006
+            AniList / Bangumi 搜索 + AI 精选
           </div>
         </div>
       )}
 
       {phase === 'llm' && (
-        <div style={{ textAlign: 'center', padding: '24px 0' }}>
-          <Spin size="default" />
-          <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 10 }}>
-            {llmPhase || '正在搜索…'}
+        <>
+          <ThinkingBox text={thinking} label={llmPhase || '正在搜索…'} />
+          <div style={{ textAlign: 'center' }}>
+            <Button size="small" onClick={handleCancel}
+              style={{ background: 'var(--bg-quaternary)', borderColor: 'var(--border-primary)', color: 'var(--color-error)', fontSize: 11 }}>
+              取消
+            </Button>
           </div>
-          <Button size="small" onClick={handleCancel}
-            style={{ marginTop: 12, background: 'var(--bg-quaternary)', borderColor: 'var(--border-primary)', color: 'var(--color-error)', fontSize: 11 }}>
-            取消
-          </Button>
-        </div>
+        </>
       )}
 
       {phase === 'done' && recommendations && (
@@ -1212,10 +1257,13 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
             <div style={{ textAlign: 'center', padding: '20px 0' }}>
               <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.4 }}>📭</div>
               <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>
-                外部搜索未找到匹配的新番
+                外部搜索没有返回候选，AI 也没给出可用推荐
               </div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                已尝试 AniList / Bangumi v0 / Bangumi 搜索三层降级。请打开浏览器控制台查看具体失败原因。
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.7 }}>
+                已并行尝试 AniList / Bangumi 标签浏览 / Bangumi 搜索（各 15 秒超时）。
+                <br />
+                如果是浏览器里跑 `npm run dev:web`，Node 进程不读系统代理，Bangumi 会连不上；
+                用桌面版（npm run dev）或在无代理网络下重试即可。
               </div>
               <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 4 }}>
                 搜索标签: {recommendations.searchedTags.join('、')}
@@ -1268,6 +1316,21 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
                       <Tag color="gold" style={{ fontSize: 9, lineHeight: '16px', margin: 0 }}>
                         {(r.confidence * 100).toFixed(0)}%
                       </Tag>
+                      {r.verified === false && (
+                        <span
+                          title="没有在 Bangumi 查到这部作品，可能是模型编的"
+                          style={{
+                            fontSize: 9,
+                            color: 'var(--color-warning)',
+                            border: '1px solid rgba(255,179,71,0.35)',
+                            borderRadius: 6,
+                            padding: '0 4px',
+                            flexShrink: 0,
+                          }}
+                        >
+                          未校验
+                        </span>
+                      )}
                     </div>
 
                     {/* 简介（不剧透） */}
@@ -1310,18 +1373,10 @@ const RecommendPanel: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList }) =>
             </div>
           )}
 
-          {usage && (
-            <div style={{ marginTop: 12, padding: '8px 14px', background: 'var(--bg-secondary)', border: '1px solid #30363d',
-              borderRadius: 8, display: 'flex', alignItems: 'center', gap: 16, fontSize: 11 }}>
-              <span style={{ color: 'var(--text-secondary)' }}>📊 {usage.totalTokens.toLocaleString()} tokens</span>
-              <span style={{ color: 'var(--text-muted)' }}>|</span>
-              <span style={{ color: 'var(--text-secondary)' }}>
-                预估 ¥{(usage.totalTokens / 1_000_000 * 2).toFixed(4)}（DeepSeek ¥2/1M tokens）
-              </span>
-              <span style={{ color: 'var(--text-muted)' }}>|</span>
-              <span style={{ color: 'var(--text-secondary)' }}>
-                {recommendations.sourceLabel || '外部'} 发现 {recommendations.candidateCount} 部
-              </span>
+          <UsageBar summary={usage} />
+          {recommendations && (
+            <div style={{ marginTop: 6, fontSize: 10, color: 'var(--text-muted)', textAlign: 'right' }}>
+              {recommendations.sourceLabel || '外部'} 候选 {recommendations.candidateCount} 部
             </div>
           )}
         </>
@@ -1372,10 +1427,10 @@ const TasteReportModal: React.FC<TasteReportModalProps> = ({
         <div style={{ textAlign: 'center', padding: '40px 0' }}>
           <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.4 }}>🔑</div>
           <div style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 8 }}>
-            请先在侧栏「🤖 AI 分析」→「⚙️ AI 设置」中配置 API Key
+            还没配置模型。请到侧栏「🤖 AI 分析」→「⚙️ AI 设置」选好服务商和模型
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-            支持 DeepSeek / OpenAI / 通义千问 / Ollama
+            支持 OpenCode Go / DeepSeek / OpenAI / Ollama 等 OpenAI 兼容服务
           </div>
         </div>
       </Modal>

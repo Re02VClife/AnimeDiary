@@ -103,12 +103,15 @@ node .review/cdp.js .review/steps-xxx.json      # 自定义 steps：eval / wait 
 
 ```
 core/                     纯工具函数（math/color/text/date/character）
-features/                 11 个业务模块
+  voice-clips.ts             语音：静音检测解析 + 片段挑选（纯函数，可单测）
+  voice-search.ts            语音：B 站候选打分排序（纯函数，可单测）
+features/                 12 个业务模块
   ai-analysis/            AI 分析套件（14 文件）
   anime-data/             Excel 读写 + 模板持久化
     excel-transfer.ts       导出分表 / 导入重建 / D 列公式重建
   anime-detail/           ScoreSlider
   character-complete/     角色补全 + 角色卡合并（4 文件）
+  character-voice/        角色原声语音抓取（语音面板 + 角色卡播放条）
   image-management/       海报 / 截图 / 去白底（5 文件）
   knowledge-graph/        力导向图
   media-complete/         数据补全面板
@@ -116,11 +119,12 @@ features/                 11 个业务模块
   search-add/             Bangumi / AniList 搜索入库
   watch-calendar/         侧栏时间轴
 context/AnimeContext.tsx  useReducer 全局状态（~890 行）
-src/components/           UI 组件（AnimeGrid / AnimeDetailModal ~2470 行 / Sidebar / TopBar …）
+src/components/           UI 组件（AnimeGrid / AnimeDetailModal ~2490 行 / Sidebar / TopBar …）
   ExcelEditor.tsx         表格视图（应用内看/改列表数据）
   excel-editor-model.ts   表格视图的数据层（列定义/读值/排序/应用编辑，可单测）
 src/types/index.ts        AnimeEntry / ScoreTemplate / 两个内置模板工厂
 server/api-routes.ts      共用的 /api 处理器（dev 中间件 + Electron 生产同源）
+server/character-voice.ts 语音抓取：B 站搜索/下载 + ffmpeg 切片拼接
 ```
 
 **评分模板**：模板存 localStorage（`anime_diary_templates`）。两个内置模板由代码里的工厂函数定义：
@@ -220,6 +224,20 @@ $c = [System.IO.File]::ReadAllText('dist\assets\index-*.js', [System.Text.Encodi
 **不要**用 `(Get-Content -Raw) -replace ... | Set-Content` 改含中文的文件 —— `Set-Content` 默认用系统 ANSI，
 会把中文写成 `?` 且**不可逆**（1.0.48 期间就把本文件搞坏过一次，只能 `git checkout` 整份恢复后重改）。
 要改文本用编辑工具；要在命令行处理，必须显式 `-Encoding utf8`。
+
+### 5.9 `tsc --noEmit` **不检查 `server/`**
+
+`tsconfig.json` 的 `include` 只有 `src / core / features / context / tests`，**没有 `server/`**。
+后果：在 `server/*.ts` 里写出语法错误，`npx tsc --noEmit` 依然全绿，直到 `vite` 启动
+（dev 模式的 vite 插件会直接 import `server/api-routes.ts`）才炸在 esbuild 里。
+
+改过 `server/` 之后，至少跑一次：
+
+```bash
+npm run build:api     # esbuild 打包，顺带做语法检查
+```
+
+同理，`core/` 是被 `tsc` 检查的，但 `server/` 只能靠 esbuild。
 
 ---
 
@@ -365,6 +383,81 @@ dims = 模板.dimensions.filter(d => d.key !== 'overall')   // 排除总评自�
 
 **验证**：打包版实测 卡片 = 文件 D 列 = 详情面板（多条一致）；D 列 188 行逐行校验 0 不一致。
 
+### 已完成（1.0.52）—— 角色卡原声语音
+
+**需求**：角色面板里能为每个角色弄到「至少 30 秒人声音频」。方向选的是**抓角色原声台词**
+（不是 TTS 合成），入口只放在角色卡详情面板。
+
+先说清楚一条硬约束：**动漫角色的原声语音没有公开 API**。Bangumi / AniList 只给文字资料
+（声优、生日、人设），实测确认没有任何音频字段。所以"原声"只能从别人剪好的视频里取。
+
+**链路**（`server/character-voice.ts`）：
+
+```
+B 站搜索（WBI 签名）→ 用户挑一个视频 → 取 DASH 最低码率音轨 →
+ffmpeg silencedetect 找人声段 → 跳过开场音乐取人声密集的一段 →
+atrim + concat 拼够 35 秒 → audio/{角色名}/voice.mp3
+```
+
+**四条实测出来的硬约束**（踩过才知道）：
+
+1. **必须带 `buvid3` cookie**：先打 `/x/frontend/finger/spi` 换匿名 buvid，不带时搜索接口直接 **412**。
+2. **wbi 签名必须算**：`/x/web-interface/wbi/search/type` 缺 `w_rid` 返回 **-403**；签名用的
+   `img_key`/`sub_key` 来自 `/x/nav` 且会轮换，不能写死（缓存 30 分钟）。
+3. **音频流要带 `Referer`**：`bilivideo.com` 有防盗链，缺 Referer 一律 403。
+4. **YouTube 走不通**：`yt-dlp` 下载直接报 `Sign in to confirm you're not a bot`，
+   要登录 cookie，不能内置。所以只走 B 站，且**不用 yt-dlp**（纯 Node 就能拿流）。
+
+**为什么音频不写进 Excel**：一张角色卡可能没有语音、也可能换过源，塞进 `TEMPLATE_JSON`
+会让 222 张卡每次保存都多背一坨数据。约定「目录名 = 角色名」，存在性用文件系统判断
+（与 `images/{番剧名}/` 一致）。元数据在同目录的 `voice.json`。
+
+**同名角色消歧**：角色名重复很常见（实测搜「蕾娜 语音」，前几条全是《魔女之旅》的伊蕾娜和
+《超神学院》的女神蕾娜）。所以搜索词会自动拼上角色卡的「所属作品」：
+`蕾娜 86 不存在的战区 语音`。打分里作品名命中 +7/个（封顶 12）。
+
+**依赖 ffmpeg**：本机 PATH 里有就能用；没有时面板顶部给红色提示并禁用生成按钮。
+可用环境变量 `ANIMEDIARY_FFMPEG` 指向可执行文件。
+
+**验证**（dev 模式 CDP 实测）：
+
+- `蕾娜` 卡：自动搜索词 `蕾娜 86 不存在的战区 part1 语音`，候选全部是 86 相关；
+  生成 35.0 秒、拼 1 段、mp3 24kHz 单声道 40kbps ≈ 172KB，`<audio>` `readyState=4`
+- Range 请求返回 `206` + `Content-Range`，进度条可拖动
+- 网络失败 / 慢请求 / 控制台报错三栏皆空
+
+**已知局限**：视频是别人剪的，混进别的角色或旁白时工具无法自动识别，
+只能靠候选列表的标题/时长/播放量人工挑、以及「换一个源」。这是这条路线的天花板。
+
+---
+
+### 已完成 —— AI 分析模块重做（走本地网关 + 结构化输出）
+
+**触发原因**：想用 OpenCode 的 `deepseek-v4.1-flash` 跑分析，实测**浏览器根本调不通**：
+`opencode.ai/zen/go` 的 `OPTIONS` 预检返回 404（无 CORS），且网关强制要求 `x-opencode-session`，
+缺了 400 `MissingSessionID`。另外推理模型会把 `max_tokens` 全花在思维链上，
+老代码给 500 token 稳定拿回空字符串，`JSON.parse` 直接抛错。
+
+**做法**：
+
+1. **模型调用搬到本地服务**：`server/ai-gateway.ts` + `server/ai-routes.ts`
+   （`/api/ai/config|models|chat|test|usage`），重试退避、超时、取消、用量记账都在服务端；
+   Key 只落 `{DATA_DIR}/ai-config.json`（已 gitignore），localStorage 里只有镜像。
+2. **结构化输出契约**：`core/ai-json.ts` + `aiJSON()` ——
+   去代码块/去废话/按括号配对截取 → 纠偏（数组包装、数字字符串、夹紧、删多余字段）→
+   Schema 校验 → 带错误清单让模型重写（≤3 轮）；`finish_reason=length` 且正文为空时预算翻倍。
+3. **6 个 Skill 全部重写**：模板维度不再写死、支持 `AbortSignal`（老代码的"取消"只是不显示结果、
+   请求还在跑）、总结用真实 usage；推荐改成三源并行 + 15 秒硬超时（原来串行失败要等 5 分钟），
+   Tier 4 纯模型推荐会回查 Bangumi 并标 `未校验`。
+4. **删掉死副本**：`src/services/ai{Skills,llmService,aiCache,aiConfig}.ts`、
+   `src/components/{AISettings,TasteReportModal}.tsx`（与 features 版重复，且 AI.md 一直在指它们）。
+
+**验证**：`tests/core/ai-json.test.ts`、`tests/server/ai-gateway.test.ts`（假 fetch），
+以及真实模型联调 `tests/features/ai-analysis/live.test.ts`（`AI_LIVE=1`，读真 Excel 跑 6 个 Skill，
+报告写 `.review/ai-live-report.md`）。在 dsv41 上 6/6 通过，输出能引用具体番剧名与分数。
+
+详细架构见 `AI.md`。
+
 ---
 
 ## 8. 待办
@@ -405,8 +498,9 @@ dims = 模板.dimensions.filter(d => d.key !== 'overall')   // 排除总评自�
 ## 9. 验证手段速查
 
 ```bash
-npx tsc --noEmit                 # 类型
-npx vitest run                   # 单测（384）
+npx tsc --noEmit                 # 类型（注意：不含 server/，见 5.9）
+npx vitest run                   # 单测（434）
+npm run build:api                # server/ 的语法检查 + 打包
 node .review/check-poster.js     # 抽查 Excel 的 posterUrl
 node .review/check-category.js   # 看 category 的派生结果
 ```

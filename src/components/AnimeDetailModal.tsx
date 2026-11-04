@@ -22,6 +22,7 @@ import ScoreSlider from '../../features/anime-detail/ScoreSlider';
 import { useCutoutIndex } from '../../features/image-management/use-cutout-index';
 import { applyCutout, fallbackPosterUrl } from '../../features/image-management/cutout-service';
 import { workTitleSimilarity } from '../../core/character';
+import CharacterVoiceBar from '../../features/character-voice/CharacterVoiceBar';
 
 const { TextArea } = Input;
 const { Paragraph } = Typography;
@@ -1710,7 +1711,16 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
         {/* ── 左侧栏（宽度可拖动调整） ── */}
         <div style={{ flex: layoutCfg.leftRatio / (100 - layoutCfg.leftRatio), display: 'flex', flexDirection: 'column' }}>
           {/* 角色卡：基本信息显示在海报左侧（固定最前，不参与拖拽排序） */}
-          {isCharacterCard && <div style={{ order: -1 }}>{infoDescriptions}</div>}
+          {/* 角色语音播放条挂在基本信息下面：只在角色模板出现，且不占拖拽区块 */}
+          {isCharacterCard && (
+            <div style={{ order: -1 }}>
+              {infoDescriptions}
+              <CharacterVoiceBar
+                characterName={anime.title}
+                workTitle={String((anime.customFields || {}).char_source ?? '')}
+              />
+            </div>
+          )}
           {/* 雷达图（上方） */}
           <div
             data-section-key="radar"

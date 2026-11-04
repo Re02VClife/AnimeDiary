@@ -55,7 +55,11 @@ export default defineConfig({
     strictPort: true,
     watch: {
       // 主进程/构建产物与前端无关；监视 electron/ 会在原子写文件时触发 EBUSY 让 dev server 崩溃
-      ignored: ['**/electron/**', '**/server/**', '**/release/**', '**/backups/**', '**/build/**'],
+      // *.tmpdir 是编辑器原子保存留下的临时目录，同样会 EBUSY
+      ignored: [
+        '**/electron/**', '**/server/**', '**/release/**', '**/backups/**', '**/build/**',
+        '**/*.tmpdir/**', '**/.review/**', '**/node_modules/**',
+      ],
     },
   },
   optimizeDeps: {

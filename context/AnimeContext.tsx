@@ -11,6 +11,7 @@ import { migrateLegacyDimensions, loadTemplates } from '../features/anime-data/t
 import { buildTransferWorkbook, parseTransferWorkbook, exportFileName, mergeImportedTemplates, SHEET_ANIME } from '../features/anime-data/excel-transfer';
 import { getVisibleCategories, DEFAULT_TEMPLATE_ID } from '../src/types';
 import { rankByDimension } from '../features/ranking/ranking-service';
+import type { ScoreRange, ScoreFocus } from '../features/ranking/score-distribution';
 import { searchCandidates, pickBestMatch, LOW_CONFIDENCE } from '../features/media-complete/media-service';
 
 /**
@@ -44,6 +45,11 @@ export interface AnimeState {
   activeDim: string;
   sortByDim: string | null;
   sortOrder: 'asc' | 'desc';
+  /**
+   * 侧栏分数分布图点选的分数区间。
+   * 网格据此把视图滑到该分数段；nonce 保证连点同一档也能再次触发滚动。
+   */
+  scoreFocus: ScoreFocus | null;
 
   // 模板筛选
   activeTemplateId: string;
@@ -92,6 +98,7 @@ export type AnimeAction =
   | { type: 'SET_ACTIVE_TAG'; payload: string | null }
   | { type: 'SET_SORT'; dimKey: string | null; order: 'asc' | 'desc' }
   | { type: 'SET_ACTIVE_DIM'; payload: string }
+  | { type: 'SET_SCORE_FOCUS'; payload: ScoreRange & { dimKey: string } }
   | { type: 'SET_ACTIVE_TEMPLATE'; payload: string }
   | { type: 'SET_DETAIL_EDIT_MODE'; payload: boolean }
   | { type: 'OPEN_MODAL'; modal: string; anime?: AnimeEntry }
@@ -121,6 +128,7 @@ const initialState: AnimeState = {
   // 初始视图按观看时间排序：最近看的在左上角，没有时间记录的排最底下
   sortByDim: 'watchDate',
   sortOrder: 'desc',
+  scoreFocus: null,
   activeTemplateId: localStorage.getItem('anime_diary_active_template') || 'default',
   detailOpen: false,
   selectedAnime: null,
@@ -197,6 +205,15 @@ function animeReducer(state: AnimeState, action: AnimeAction): AnimeState {
 
     case 'SET_ACTIVE_DIM':
       return { ...state, activeDim: action.payload };
+
+    case 'SET_SCORE_FOCUS':
+      return {
+        ...state,
+        scoreFocus: {
+          ...action.payload,
+          nonce: (state.scoreFocus?.nonce ?? 0) + 1,
+        },
+      };
 
     case 'SET_ACTIVE_TEMPLATE':
       localStorage.setItem('anime_diary_active_template', action.payload);

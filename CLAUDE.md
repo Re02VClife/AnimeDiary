@@ -48,7 +48,10 @@ features/
   anime-detail/      — ScoreSlider 评分滑块
   watch-calendar/    — 追番日历
   image-management/  — 海报/截图管理
-core/                — 纯工具函数（数学/颜色/文本/日期）
+  character-complete/ — 角色补全（Bangumi → 角色卡）
+  character-voice/   — 角色原声语音（B 站搜索 → 下载 → 切片拼接）
+core/                — 纯工具函数（数学/颜色/文本/日期/语音片段）
+server/              — 共用的 /api 处理器（dev 中间件与 Electron 生产同源）
 ```
 
 ## 关键数据流
@@ -142,6 +145,23 @@ localStorage ←→ template-service / ThemeContext / storage-service ←→ UI�
 - 左上角 60×60 浮动方块（`position: absolute`），悬停展开侧栏
 - TopBar 单独包裹 `<div marginLeft={60}>`，仅顶栏右移，网格不动
 
+## 维度排序：标签 + 分数分布（筹码峰）
+
+「维度排序」区块是左右两栏：左列标签竖排（`.dim-sort-tags`），右列是当前维度的分数分布图（`.score-dist`）。
+
+- **计算**：`features/ranking/score-distribution.ts` → `buildScoreDistribution(scores)`
+  - 自适应步长（0.02/0.05/0.1/0.2/0.25/0.5/1），目标 20 档；跨度窄的维度自动用细步长
+  - **不做 0-10 截断**：真实数据有超范围脏值（「制作」列出现过 15），截断会把它混进 10 分档，与排名列表的分数对不上号
+  - 0 分/非法值视为未评分丢弃
+- **渲染**：`src/components/ScoreDistribution.tsx` — 纯 div 实现（不引 ECharts），纵向分数轴，虚线标平均分
+- **点击定位**：点某一档 → 三件事同时发生
+  1. `findScoreRangeIndex()` 找该档在排名里的落点（空档退化为最接近档位中心的一条）
+  2. 排名列表（`.rank-list`，**内滚** max-height 300px）滚到该行并居中；目标行在前 20 名之外时自动 `showAllRanked`
+  3. dispatch `SET_SCORE_FOCUS` → AnimeGrid 读卡片上的 `data-score` 滚到同一分数段
+- **排序联动**：点分布图会顺带 `SET_CATEGORY('watched')` + `SET_SORT(activeDim, sortDir)`，
+  否则主界面还停在观看时间顺序上，滚到的位置和分数无关
+- **滚动偏移**：主界面只留 8px —— 顶栏包在高度受限的容器里，sticky 实际只在自身高度内生效，滚过就跟着内容走了
+
 ## 海报共享元素过渡（FLIP 动画）
 
 打开/关闭详情面板时，海报从网格位置飞入 Modal 位置：
@@ -193,3 +213,41 @@ ImageManager 工具栏"在线截图"按钮 → ScreenCapture 悬浮窗（840px �
 - `gifenc` — 纯 JS GIF 编码
 - `screenshot-desktop` — 跨平台原生截图
 - 类型声明：`src/types/gifenc.d.ts`
+
+## 角色语音（角色卡原声台词）
+
+角色卡详情面板（`templateId === 'character'`）的基本信息下方有一条语音栏：
+没生成过显示「生成角色语音」，生成过显示播放/进度/换源。
+
+**关键前提**：角色的原声语音**没有公开 API**。Bangumi / AniList 只有文字资料，
+所以只能从 B 站上别人剪好的语音/台词视频里取。
+
+链路（`server/character-voice.ts`）：
+
+```
+搜索(WBI签名) → 用户挑视频 → DASH 最低码率音轨 → ffmpeg silencedetect 找人声段
+→ 跳过开场音乐取人声密集处 → atrim+concat 拼够 35 秒 → audio/{角色名}/voice.mp3
+```
+
+**四条实测硬约束**（改这块之前务必知道）：
+
+1. 不带 `buvid3` cookie，搜索接口直接 **412** → 先打 `/x/frontend/finger/spi`
+2. 不带 `w_rid`（wbi 签名）→ **-403**；`img_key`/`sub_key` 来自 `/x/nav` 且会轮换，缓存 30 分钟
+3. 音频流缺 `Referer` → **403**（`bilivideo.com` 防盗链）
+4. YouTube 走不通：`yt-dlp` 报 `Sign in to confirm you're not a bot`，要登录 cookie，不内置
+
+**存储**：`{DATA_DIR}/audio/{角色名}/voice.mp3` + `voice.json`（来源/时长/片段）。
+**不进 Excel** —— 没语音或换过源的卡不该每次保存都多背一坨数据；存在性用文件系统判断，
+与 `images/{番剧名}/` 一致。
+
+**同名消歧**：搜索词自动拼上角色卡的「所属作品」（`char_source`）——
+实测只搜「蕾娜 语音」时前几条全是《魔女之旅》的伊蕾娜。打分见 `core/voice-search.ts`。
+
+**音频播放必须支持 Range**：`GET /api/character/voice/file` 返回 206 + `Content-Range`，
+否则 `<audio>` 进度条拖不动。
+
+**依赖 ffmpeg**（本机 PATH 或 `ANIMEDIARY_FFMPEG`）。没有时面板顶部红字提示并禁用生成。
+
+**纯逻辑在 `core/`**（被 tsc 检查、有单测）：`voice-clips.ts` 管
+「静音检测解析 + 片段挑选」，`voice-search.ts` 管「候选打分排序」。`server/` 只做网络与 ffmpeg。
+

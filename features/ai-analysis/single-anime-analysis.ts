@@ -1,15 +1,23 @@
 /**
  * features/ai-analysis/single-anime-analysis — Skill 4: 单番深度分析
+ *
+ * 回答的是"这部番对我意味着什么"：为什么电波高/低、和社区差在哪、
+ * 跟哪些番在评分结构上同构。
  */
 
 import type { AnimeEntry } from '../../src/types';
-import { getActiveDimensions } from '../../features/anime-data/template-service';
+import { getActiveDimensions } from '../anime-data/template-service';
 import { buildPercentileMap, getPercentileScores } from '../ranking/ranking-service';
-import { chat } from './llm-service';
-import { extractJSON } from '../../core/text';
+import { aiJSON } from './llm-service';
 import { cosineSimilarity } from '../../core/math';
 import { getScore, calcOverall, calcTasteDeviation, fmtDims, buildScoreVector } from './ai-helpers';
 import type { SingleAnimeAnalysisResult } from './ai-types';
+import { SINGLE_ANIME_SCHEMA } from './ai-types';
+
+export interface SingleAnimeOptions {
+  signal?: AbortSignal;
+  stream?: boolean;
+}
 
 /**
  * 对单部番剧做深度分析——为什么电波高/低，口味偏差的原因
@@ -19,74 +27,87 @@ import type { SingleAnimeAnalysisResult } from './ai-types';
 export async function singleAnimeAnalysis(
   anime: AnimeEntry,
   allAnime: AnimeEntry[],
+  opts: SingleAnimeOptions = {},
 ): Promise<SingleAnimeAnalysisResult> {
   const templateDims = getActiveDimensions(anime);
   const stats = buildPercentileMap(allAnime);
   const pcts = getPercentileScores(anime, stats, templateDims);
 
-  // 维度分数 + 百分位
   const dimLines = templateDims
     .filter((d) => d.key !== 'overall')
     .map((d) => {
       const s = getScore(anime, d.key);
       const p = pcts.find((pct) => pct.dimensionKey === d.key);
-      const pct = p ? `${p.percentile}%` : '-';
-      return `  ${d.label}: ${s.toFixed(d.key === 'vibe' ? 2 : 1)}（百分位${pct}）`;
+      return `  ${d.label}: ${s.toFixed(d.key === 'vibe' ? 2 : 1)}${p ? `（同类中排前 ${100 - p.percentile}%）` : ''}`;
     })
     .join('\n');
 
-  const overall = getScore(anime, 'overall') || calcOverall(anime);
+  const overall = getScore(anime, 'overall') || calcOverall(anime, templateDims);
   const vibe = getScore(anime, 'vibe');
   const deviation = calcTasteDeviation(anime);
   const devText = deviation !== null
     ? (deviation > 0
-        ? `+${deviation.toFixed(2)}（你远比社区更喜欢这部番）`
-        : `${deviation.toFixed(2)}（社区评分高于你的个人感受）`)
-    : '无 BGM 数据，无法计算偏差';
+      ? `+${deviation.toFixed(2)}（你比社区更喜欢它）`
+      : `${deviation.toFixed(2)}（社区比你更喜欢它）`)
+    : '无 BGM 数据';
 
-  const bgm = anime.bangumiScore ? `BGM ${anime.bangumiScore}` : '无';
-
-  // 余弦相似度 top-3
-  const targetVec = buildScoreVector(anime);
   const sims = allAnime
     .filter((a) => a.id !== anime.id && a.scores.some((s) => s.score > 0))
-    .map((a) => ({ anime: a, sim: cosineSimilarity(targetVec, buildScoreVector(a)) }))
+    .map((a) => ({ anime: a, sim: cosineSimilarity(buildScoreVector(anime, templateDims), buildScoreVector(a, templateDims)) }))
     .sort((a, b) => b.sim - a.sim)
     .slice(0, 3);
 
   const simLines = sims
-    .map((x) => `  ${x.anime.title}（余弦${(x.sim * 100).toFixed(0)}%）`)
+    .map((x) => `  ${x.anime.title}（评分结构相似度 ${(x.sim * 100).toFixed(0)}%，你的总评 ${calcOverall(x.anime, templateDims).toFixed(1)}）`)
     .join('\n');
 
-  const review = anime.review || '（无评价）';
-  const tags = anime.tags.map((t) => t.name).join('、');
+  const review = (anime.review || '').trim();
+  const notes = (anime.notes || '').trim();
+  const dimReviews = (anime.dimensionReviews || [])
+    .filter((r) => r.content?.trim())
+    .map((r) => `  ${templateDims.find((d) => d.key === r.dimensionKey)?.label || r.dimensionKey}：${r.content}`)
+    .join('\n');
 
-  const systemPrompt = `你是一个番剧分析专家。根据用户的评分数据，分析一部番剧为什么对用户有特别的意义（或为什么不来电）。
+  const systemPrompt = `你是一个懂番也懂人的分析者。给一部作品写"它为什么对这个人重要"的剖析。
+要求：
+- 结论必须能追溯到分数、评语或标签，不要泛泛而谈
+- 允许说出"可能你自己都没意识到"的东西，但要给出证据
+- 不剧透具体情节，只谈气质、结构、节奏、演出`;
 
-必须只输出一个 JSON 对象，不要有任何前缀或后缀：
-{"coreAppeal":[{"aspect":"打动用户的方面","evidence":"数据证据","confidence":0.9}],"vibePattern":"与其他高电波番共性的总结，或为什么电波低的模式","communityGap":"用户和社区口味差距的原因分析","similarAnime":[{"title":"相似的番剧名","why":"为什么相似"}]}
+  const userPrompt = `=== 作品 ===
+${anime.title}${anime.titleJa ? `（${anime.titleJa}）` : ''}${anime.releaseDate ? `｜${anime.releaseDate}` : ''}${anime.studio ? `｜${anime.studio}` : ''}
 
-coreAppeal 写2-4个方面，communityGap 如果无 BGM 数据写"无社区对比数据"。用中文。`;
+=== 你的评分 ===
+总评 ${overall.toFixed(2)}${vibe > 0 ? `，电波 ${vibe.toFixed(2)}` : ''}
+${dimLines}
 
-  const userPrompt = `番剧：${anime.title}
-维度分数：${fmtDims(anime)}
-百分位排名：${dimLines}
-口味偏差值：${devText}
-${bgm}
-标签：${tags || '无'}
+=== 与社区的关系 ===
+BGM ${anime.bangumiScore ?? '无'}，口味偏差 ${devText}
 
-用户评价：
-"${review.slice(0, 500)}"
+=== 标签 ===
+${anime.tags.map((t) => t.name).join('、') || '（无）'}
 
-相似番剧（余弦相似度 top-3）：
-${simLines || '无足够数据'}
+=== 你写的评语 ===
+${review ? `"${review.slice(0, 600)}"` : '（没写）'}
+${notes ? `备注：${notes.slice(0, 300)}` : ''}
+${dimReviews ? `\n=== 维度专项评语 ===\n${dimReviews}` : ''}
 
-请分析并输出 JSON。`;
+=== 评分结构最接近的作品 ===
+${simLines || '（数据不足）'}
 
-  const raw = await chat(systemPrompt, userPrompt, {
-    maxTokens: 800,
-    temperature: 0.4,
+请分析：打动你的核心是什么（coreAppeal）、这属于你哪一类电波（vibePattern）、和社区的差距从哪来（communityGap）、还有什么类似的作品（similarAnime）。`;
+
+  const { data } = await aiJSON<SingleAnimeAnalysisResult>({
+    schema: SINGLE_ANIME_SCHEMA,
+    system: systemPrompt,
+    user: userPrompt,
+    purpose: 'single',
+    temperature: 0.55,
+    maxTokens: 3000,
+    signal: opts.signal,
+    stream: opts.stream,
+    rules: `用简体中文。若没有 BGM 数据，communityGap 直接写"无社区对比数据"。similarAnime 只在确实相似时给，宁缺毋滥。`,
   });
 
-  return JSON.parse(extractJSON(raw)) as SingleAnimeAnalysisResult;
+  return data;
 }

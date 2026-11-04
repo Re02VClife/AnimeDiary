@@ -13,6 +13,7 @@ browser-migration.json
 anilist_cache.json
 bangumi_cache.json
 images/
+audio/
 
 # ── 本地配置 ──
 .env
@@ -27,3 +28,6 @@ CLAUDE.md
 .DS_Store
 Thumbs.db
 *.log
+
+ai-config.json
+ai-usage.jsonl

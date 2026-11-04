@@ -9,6 +9,8 @@ import { formatReleaseDateCn } from '../../core/date';
 import { formatScore } from '../../core/math';
 import { useCutoutIndex } from '../../features/image-management/use-cutout-index';
 import { applyCutout, fallbackPosterUrl } from '../../features/image-management/cutout-service';
+import type { ScoreFocus } from '../../features/ranking/score-distribution';
+import { findScoreRangeIndex } from '../../features/ranking/score-distribution';
 
 interface AnimeGridProps {
   animeList: AnimeEntry[];
@@ -20,12 +22,14 @@ interface AnimeGridProps {
   onBatchAnimeChange?: (ids: string[]) => void;
   /** 当前激活模板的维度列表（用于维度标签查找） */
   templateDims?: Dimension[];
+  /** 侧栏分布图点选的分数段：把网格滑到该分数段第一张卡 */
+  scoreFocus?: ScoreFocus | null;
 }
 
 const AnimeGrid: React.FC<AnimeGridProps> = ({
   animeList, onAnimeClick, activeDim, onDeleteFromWatching,
   batchMode, selectedBatchAnime, onBatchAnimeChange,
-  templateDims,
+  templateDims, scoreFocus,
 }) => {
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
   /** 已有去底立绘的目录集合；卡片据此决定用原图还是 cover-nobg.png */
@@ -40,6 +44,8 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
    */
   const [autoPosters, setAutoPosters] = useState<Record<string, string>>({});
   const gridRef = useRef<HTMLDivElement>(null);
+  /** 已处理过的分布图点选序号，避免数据刷新时重复滚动 */
+  const lastFocusNonceRef = useRef(0);
   const queueRef = useRef<{ id: string; alias: string; title: string }[]>([]);
   const runningRef = useRef(false);
   const queuedRef = useRef<Set<string>>(new Set());
@@ -47,6 +53,37 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
   useEffect(() => {
     setPositions(loadPosterPositions());
   }, [animeList]);
+
+  /**
+   * 侧栏分数分布图点选 → 把网格滑到该分数段。
+   *
+   * 用卡片上的 data-score 找第一张落在区间内的卡；一张都没有时（例如该分数段
+   * 被分类/标签过滤掉了）退化为分数最接近的卡，避免点了完全没反应。
+   */
+  useEffect(() => {
+    if (!scoreFocus || scoreFocus.dimKey !== activeDim) return;
+    if (lastFocusNonceRef.current === scoreFocus.nonce) return;
+    lastFocusNonceRef.current = scoreFocus.nonce;
+
+    const root = gridRef.current;
+    if (!root) return;
+    const cards = Array.from(root.querySelectorAll<HTMLElement>('.anime-card[data-score]'));
+    if (cards.length === 0) return;
+
+    const scoreOf = (el: HTMLElement) => Number(el.dataset.score ?? 0);
+    // 与侧栏排名列表共用同一套落点判定：区间内第一条，空档取最接近的一条
+    const idx = findScoreRangeIndex(cards.map(scoreOf), scoreFocus.lo, scoreFocus.hi);
+    if (idx < 0) return;
+    const target = cards[idx];
+
+    const scroller = root.closest('.main-content');
+    if (!(scroller instanceof HTMLElement)) return;
+    // 顶部只留 8px：顶栏包在高度受限的容器里，sticky 实际只在自身高度内生效
+    // （滚过就跟着内容走了），所以不必为它让位
+    const delta = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+      + scroller.scrollTop - 8;
+    scroller.scrollTo({ top: Math.max(0, delta), behavior: 'smooth' });
+  }, [scoreFocus, activeDim, animeList]);
 
   /** 动态计算条目的加权总评（根据条目自身模板的维度和权重） */
   const calcOverall = useCallback((entry: AnimeEntry): number => {
@@ -134,18 +171,40 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
   return (
     <div className="anime-grid" ref={gridRef}>
       {animeList.map((anime) => {
-        // 当前维度分数
+        // 当前维度分数（dimValue 挂到 data-score 上，供分布图点击后定位该分数段）
         let dimScore: string | null = null;
+        let dimValue: number | null = null;
         if (activeDim === 'overall') {
           const ov = calcOverall(anime);
-          if (ov > 0) dimScore = `总评 ${formatScore(ov)}`;
+          if (ov > 0) { dimScore = `总评 ${formatScore(ov)}`; dimValue = ov; }
         } else if (activeDim === 'bgm' && anime.bangumiScore) {
           dimScore = `BGM ${formatScore(anime.bangumiScore)}`;
+          dimValue = anime.bangumiScore;
         } else if (activeDim) {
           const s = anime.scores.find((sc) => sc.dimensionKey === activeDim);
           const label = (templateDims || []).find((d) => d.key === activeDim)?.label || activeDim;
-          if (s && s.score > 0) dimScore = `${label} ${formatScore(s.score)}`;
+          if (s && s.score > 0) { dimScore = `${label} ${formatScore(s.score)}`; dimValue = s.score; }
         }
+
+        /**
+         * 卡片右下角实际显示：维度分 → 总评 → BGM。
+         *
+         * 按观看时间 / 番名排序时 activeDim 不是分数维度，只显示 BGM 会让人误以为
+         * 那是总评；这条没有该维度分时同理，退回总评更有参考价值。
+         *
+         * 注意别回填 dimValue：data-score 必须始终是 activeDim 的分数，
+         * 否则分布图点选后会把这条误判进别的分数段。
+         */
+        let cardScore: string | null = dimScore;
+        if (!cardScore) {
+          const overall = calcOverall(anime);
+          cardScore = overall > 0
+            ? `总评 ${formatScore(overall)}`
+            : anime.bangumiScore ? `BGM ${formatScore(anime.bangumiScore)}` : null;
+        }
+
+        /** 观看时间（Excel 里是 YYYY-MM-DD）；没记录就留空，不占位 */
+        const watchLabel = anime.watchDate || '';
 
         const isSelected = batchMode && selectedBatchAnime?.includes(anime.id);
         const autoUrl = autoPosters[anime.id];
@@ -172,6 +231,7 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
           <div
             key={anime.id}
             className="anime-card"
+            data-score={dimValue ?? undefined}
             style={isSelected ? { borderColor: 'var(--brand-primary)', boxShadow: '0 0 12px rgba(251,114,153,0.3)' } : undefined}
             onClick={() => batchMode ? toggleAnimeSelect(anime.id) : onAnimeClick(anime)}
           >
@@ -246,11 +306,10 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
               <div className="card-title" title={anime.title}>{anime.title}</div>
               <div className="card-meta">
                 <span>{anime.releaseDate ? formatReleaseDateCn(anime.releaseDate) : '未知'}</span>
-                {dimScore ? (
-                  <span className="dim-score">{dimScore}</span>
-                ) : anime.bangumiScore ? (
-                  <span className="dim-score">BGM {anime.bangumiScore}</span>
+                {watchLabel ? (
+                  <span className="card-watch" title={`观看时间 ${watchLabel}`}>{watchLabel}</span>
                 ) : null}
+                {cardScore ? <span className="dim-score">{cardScore}</span> : null}
               </div>
             </div>
           </div>

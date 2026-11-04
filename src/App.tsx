@@ -21,6 +21,7 @@ import { getVisibleCategories } from './types';
 import KnowledgeGraphModal from '../features/knowledge-graph/KnowledgeGraphModal';
 import AppIcon from './theme/AppIcon';
 import AISettings from '../features/ai-analysis/AISettings';
+import { initAIConfig } from '../features/ai-analysis/ai-config';
 import TasteReportModal from '../features/ai-analysis/TasteReportModal';
 import PosterFlipOverlay from './components/PosterFlipOverlay';
 import TitleBar from './components/TitleBar';
@@ -116,6 +117,11 @@ const App: React.FC = () => {
     const t = templates.find((t) => t.id === activeTemplateId);
     return t?.dimensions;
   }, [activeTemplateId, templates]);
+
+  // 启动时同步一次 AI 配置（真配置在服务端，浏览器只留镜像）
+  useEffect(() => {
+    void initAIConfig();
+  }, []);
 
   // 切换模板时，若当前分类不在可见列表中，自动切到第一个可见分类
   useEffect(() => {
@@ -270,6 +276,7 @@ const App: React.FC = () => {
             selectedBatchAnime={selectedBatchAnime}
             onBatchAnimeChange={(ids) => dispatch({ type: 'SET_BATCH_ANIME', payload: ids })}
             templateDims={activeTemplateDims}
+            scoreFocus={state.scoreFocus}
           />
 
           {batchMode && (

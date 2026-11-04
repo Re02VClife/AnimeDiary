@@ -1,9 +1,11 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Segmented, Slider, Input, InputNumber, Button, Popconfirm, Switch, Modal, ColorPicker } from 'antd';
 import { PlusOutlined, EditOutlined, CloseOutlined } from '@ant-design/icons';
 import type { AnimeEntry, Dimension } from '../types';
 import { getTemplate } from '../../features/anime-data/template-service';
 import { rankByDimension } from '../../features/ranking/ranking-service';
+import type { ScoreRange } from '../../features/ranking/score-distribution';
+import { findScoreRangeIndex } from '../../features/ranking/score-distribution';
 import WatchTimeline from '../../features/watch-calendar/WatchCalendar';
 import { useAnimeContext } from '../../context/AnimeContext';
 import { formatScore } from '../../core/math';
@@ -12,6 +14,7 @@ import { useTheme } from '../theme/ThemeContext';
 import AppIcon from '../theme/AppIcon';
 import UpdatePanel from './UpdatePanel';
 import PosterFixModal from './PosterFixModal';
+import ScoreDistribution from './ScoreDistribution';
 import type { ThemeColors } from '../theme/types';
 
 interface SidebarProps {
@@ -68,6 +71,13 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
   const [tagEditMode, setTagEditMode] = useState(false); // Tag 编辑模式开关
   const [showGraph, setShowGraph] = useState(false); // 知识图谱折叠
   const [showAI, setShowAI] = useState(false); // AI 分析折叠
+
+  // ── 分数分布图 ──
+  /** 分布图上当前点选的档位；null = 未选 */
+  const [pickedRange, setPickedRange] = useState<ScoreRange | null>(null);
+  /** 待滚动到的排名行下标；渲染完成后由 effect 消费 */
+  const [pendingScrollIdx, setPendingScrollIdx] = useState<number | null>(null);
+  const rankListRef = useRef<HTMLDivElement>(null);
 
   // Tag 编辑状态
   const [editingTag, setEditingTag] = useState<string | null>(null);
@@ -204,8 +214,62 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
     [allRanked, sortDir],
   );
 
+  /** 当前可用的排序标签：维度 + 观看时间 / BGM / 番名 伪维度 */
+  const chipDims = useMemo(
+    () => [...activeDims, WATCH_DIM, ...(activeTemplateId === 'default' ? [BGM_DIM, NAME_DIM] : [])],
+    [activeDims, activeTemplateId],
+  );
+
   const dimLabel = (key: string) =>
-    activeDims.find((d) => d.key === key)?.label || key;
+    chipDims.find((d) => d.key === key)?.label || key;
+
+  /** 条目在当前排序维度上的分数（无分数 = 0） */
+  const dimScoreOf = useCallback((entry: AnimeEntry): number => {
+    if (activeDim === 'overall') return calcOverall(entry);
+    if (activeDim === 'bgm') return entry.bangumiScore ?? 0;
+    if (activeDim === 'namesort' || activeDim === 'watchDate') return 0;
+    return entry.scores.find((s) => s.dimensionKey === activeDim)?.score ?? 0;
+  }, [activeDim, calcOverall]);
+
+  /** 分布图的数据源：当前排名里该维度有分的条目 */
+  const dimScores = useMemo(
+    () => allRanked.map(dimScoreOf).filter((s) => s > 0),
+    [allRanked, dimScoreOf],
+  );
+
+  /** 点分布图的某一档：侧栏排名列表滑到该档，主界面同步滑到同一分数段 */
+  const handlePickScoreRange = useCallback((range: ScoreRange) => {
+    setPickedRange(range);
+
+    // 该档在排名里的落点（空档退化为最接近档位中心的一条）
+    const idx = findScoreRangeIndex(rankedList.map(dimScoreOf), range.lo, range.hi);
+    // 目标行在预览范围之外时先展开，否则 DOM 里根本没有这一行可滚
+    if (idx >= RANK_PREVIEW && !showAllRanked) setShowAllRanked(true);
+    setPendingScrollIdx(idx >= 0 ? idx : null);
+
+    // 主界面必须按当前维度排序才能"滑到分数段"——否则它仍按观看时间等顺序排，
+    // 滚到的位置和分数无关。分类同理：分数维度只在看过的番上有意义。
+    if (activeDim !== 'namesort' && activeDim !== 'watchDate') {
+      dispatch({ type: 'SET_CATEGORY', payload: 'watched' });
+    }
+    dispatch({ type: 'SET_SORT', dimKey: activeDim, order: sortDir });
+    dispatch({ type: 'SET_SCORE_FOCUS', payload: { dimKey: activeDim, ...range } });
+  }, [rankedList, dimScoreOf, activeDim, sortDir, showAllRanked, dispatch]);
+
+  // 排名列表滚到点选分数段对应那一行。列表是内滚容器，所以分布图不会被顶出视野。
+  useEffect(() => {
+    if (pendingScrollIdx === null) return;
+    const list = rankListRef.current;
+    if (!list) return;
+    const row = list.querySelector<HTMLElement>(`[data-rank-idx="${pendingScrollIdx}"]`);
+    if (!row) return; // 刚展开，等下一轮渲染
+    const delta = row.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop;
+    // 居中而不是贴顶：目标在列表末尾时顶不上去，居中能保证它稳定出现在视野里
+    const top = Math.max(0, delta - Math.max(0, (list.clientHeight - row.offsetHeight) / 2));
+    list.scrollTo({ top, behavior: 'smooth' });
+    setPendingScrollIdx(null);
+  }, [pendingScrollIdx, showAllRanked, rankedList]);
+
 
   // 收起状态：与顶部栏等高的方块，预留图标接口
   if (collapsed) {
@@ -247,21 +311,33 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
         </div>
         {showRanking && (
           <>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
-              {[...activeDims, WATCH_DIM, ...(activeTemplateId === 'default' ? [BGM_DIM, NAME_DIM] : [])].map((dim: Dimension) => (
-                <div
-                  key={dim.key}
-                  className={`dimension-chip${activeDim === dim.key ? ' active' : ''}`}
-                  onClick={() => {
-                    dispatch({ type: 'SET_ACTIVE_DIM', payload: dim.key });
-                    setSortDir('desc');
-                    handleDimensionRank(dim.key, 'desc');
-                  }}
-                  title={dim.description}
-                >
-                  {dim.label}
-                </div>
-              ))}
+            {/* 左：标签；右：所选标签的分数分布（筹码峰） */}
+            <div className="dim-sort-split">
+              <div className="dim-sort-tags">
+                {chipDims.map((dim) => (
+                  <div
+                    key={dim.key}
+                    className={`dimension-chip block${activeDim === dim.key ? ' active' : ''}`}
+                    onClick={() => {
+                      dispatch({ type: 'SET_ACTIVE_DIM', payload: dim.key });
+                      setSortDir('desc');
+                      // 换了维度就丢掉上一张分布图的选择
+                      setPickedRange(null);
+                      setPendingScrollIdx(null);
+                      handleDimensionRank(dim.key, 'desc');
+                    }}
+                    title={dim.description}
+                  >
+                    {dim.label}
+                  </div>
+                ))}
+              </div>
+              <ScoreDistribution
+                scores={dimScores}
+                pickedRange={pickedRange}
+                onPickRange={handlePickScoreRange}
+                dimLabel={dimLabel(activeDim)}
+              />
             </div>
 
             {/* 正倒序切换 */}
@@ -279,16 +355,19 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
               />
             </div>
 
-            {/* 排名列表（不设内层滚动：滚轮交给整个侧栏，理由同时间轴） */}
-            <div style={{
-              display: 'flex', flexDirection: 'column', gap: 2,
-            }}>
+            {/* 排名列表：设内层滚动，点分布图时只滑这一块，分布图不会被顶出视野 */}
+            <div
+              ref={rankListRef}
+              className="rank-list"
+              style={{ display: 'flex', flexDirection: 'column', gap: 2 }}
+            >
               {(showAllRanked ? rankedList : rankedList.slice(0, RANK_PREVIEW)).map((anime, idx) => {
                 const score = anime.scores.find((s) => s.dimensionKey === activeDim);
                 const rank = sortDir === 'desc' ? idx + 1 : allRanked.length - idx;
                 return (
                   <div
                     key={anime.id}
+                    data-rank-idx={idx}
                     onClick={() => handleAnimeClick(anime)}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 8,
@@ -608,7 +687,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
                 📊 品味分析
               </span>
               <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 'auto' }}>
-                ~¥0.002
+                AI 生成
               </span>
             </div>
             <div
@@ -618,7 +697,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
               <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>⚙️ AI 设置</span>
             </div>
             <div style={{ fontSize: 10, color: 'var(--text-muted)', padding: '2px 0' }}>
-              基于评分数据生成品味报告和偏好画像。需要配置 API Key。
+              基于评分数据生成品味报告和偏好画像。先在 AI 设置里选好服务商和模型。
             </div>
           </div>
         )}

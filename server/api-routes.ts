@@ -19,8 +19,11 @@ import AdmZip from 'adm-zip';
 import { createMediaClient, isAllowedCoverHost, isPublicHttpUrl, describeError } from './media-sources';
 import type { FetchLike, MediaSource } from './media-sources';
 import { createCharacterClient } from './character-sources';
+import { createVoiceClient } from './character-voice';
+import { sanitizeVoiceName } from '../core/voice-clips';
 import { createBgRemover } from './bg-removal';
 import { decodeImage, encodePng } from './image-codec';
+import { registerAIRoutes } from './ai-routes';
 
 /** 数据根目录 */
 export interface ApiContext {
@@ -90,6 +93,9 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
       routes.push({ prefix, handler });
     },
   };
+
+  // AI 分析：模型调用全部走本地网关（浏览器直连第三方会被 CORS 拦下）
+  registerAIRoutes(router, { DATA_DIR, fetchImpl });
 
   // ── 辅助函数（原 vite.config.ts 内） ──
   /** 列出快照文件（文件名带时间戳，排序即 旧 → 新） */
@@ -1621,6 +1627,13 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
         // 图床白名单已含 lain.bgm.tv / s4.anilist.co，不必再开一条写文件的路由。
         const character = createCharacterClient({ fetchImpl });
 
+        // 角色语音（抓 B 站上的角色原声台词，拼成 ≥30 秒）。
+        // 刻意不传 fetchImpl：这条链路要读 Set-Cookie 维持会话、要自定义 Referer
+        // 绕过 bilivideo 防盗链，而 fetchImpl 的最小契约里没有 headers.getSetCookie()。
+        // B 站是国内域名，Node 全局 fetch 直连即可，不需要走系统代理。
+        const voice = createVoiceClient({ DATA_DIR });
+        const AUDIO_DIR = path.join(DATA_DIR, 'audio');
+
         /**
          * GET /api/character/work?workTitle=&types=2,4
          * 只解析作品，不发角色请求。界面靠它把「找作品」与「抓角色」分步，
@@ -1833,6 +1846,174 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
               res.end(JSON.stringify({ error: describeError(e) }));
             }
           });
+        });
+
+        // ── 角色语音（抓角色原声台词，拼成 ≥30 秒） ──
+        //
+        // 链路：B 站搜索 → 用户挑一个视频 → 下载 DASH 音频 → ffmpeg 找人声段 →
+        //       跳到人声密集处拼够 35 秒 → 落盘到 audio/{角色名}/voice.mp3。
+        // 详见 server/character-voice.ts。这里只做参数校验与读写文件。
+        //
+        // 音频不进 Excel：一张角色卡可能没有语音、也可能换过源，塞进 TEMPLATE_JSON
+        // 只会让 222 张卡每次保存都多背一坨数据。约定「目录名 = 角色名」，
+        // 存在性用文件系统判断（与 images/{番剧名}/ 的做法一致）。
+        router.use('/api/character/voice/status', (_req, res) => {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(voice.ffmpegStatus()));
+        });
+
+        /**
+         * POST /api/character/voice/search  body: { character: string, keyword?: string }
+         * 只搜索，不下载。界面拿到候选后由用户挑，避免「猜错源」白等几十秒。
+         */
+        router.use('/api/character/voice/search', (req, res) => {
+          if (req.method !== 'POST') {
+            res.statusCode = 405;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+            return;
+          }
+          const chunks: Buffer[] = [];
+          req.on('data', (chunk: Buffer) => { chunks.push(chunk); });
+          req.on('end', async () => {
+            res.setHeader('Content-Type', 'application/json');
+            try {
+              const body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+              const characterName = String(body.character ?? '').trim();
+              if (!characterName) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: '缺少角色名' }));
+                return;
+              }
+              const candidates = await voice.search(
+                characterName,
+                typeof body.keyword === 'string' ? body.keyword : undefined,
+                Array.isArray(body.workTitles) ? body.workTitles.map((w: unknown) => String(w)) : [],
+              );
+              res.end(JSON.stringify({ character: characterName, candidates }));
+            } catch (e) {
+              res.statusCode = 502;
+              res.end(JSON.stringify({ error: describeError(e) }));
+            }
+          });
+        });
+
+        /**
+         * POST /api/character/voice/build  body: { bvid, character, targetSeconds? }
+         * 下载 + 切分 + 拼接。耗时以秒计（要解码整段视频找静音），前端超时给足。
+         */
+        router.use('/api/character/voice/build', (req, res) => {
+          if (req.method !== 'POST') {
+            res.statusCode = 405;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+            return;
+          }
+          const chunks: Buffer[] = [];
+          req.on('data', (chunk: Buffer) => { chunks.push(chunk); });
+          req.on('end', async () => {
+            res.setHeader('Content-Type', 'application/json');
+            try {
+              const body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+              const characterName = String(body.character ?? '').trim();
+              const target = Number(body.targetSeconds);
+              if (!characterName) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: '缺少角色名' }));
+                return;
+              }
+              const info = await voice.build({
+                bvid: String(body.bvid ?? '').trim(),
+                characterName,
+                targetSeconds: Number.isFinite(target) && target >= 10 && target <= 120 ? target : undefined,
+              });
+              res.end(JSON.stringify({ ok: true, info }));
+            } catch (e) {
+              res.statusCode = 502;
+              res.end(JSON.stringify({ error: describeError(e) }));
+            }
+          });
+        });
+
+        /** GET /api/character/voice/info?character=芙莉莲 — 有没有生成过、来源是什么 */
+        router.use('/api/character/voice/info', (req, res) => {
+          res.setHeader('Content-Type', 'application/json');
+          const url = new URL(req.url!, 'http://localhost');
+          const characterName = (url.searchParams.get('character') || '').trim();
+          if (!characterName) {
+            res.statusCode = 400;
+            res.end(JSON.stringify({ error: '缺少 character' }));
+            return;
+          }
+          res.end(JSON.stringify({ info: voice.read(characterName) }));
+        });
+
+        /**
+         * GET /api/character/voice/file?character=芙莉莲
+         * 支持 Range：浏览器 <audio> 拖动进度条需要 206，否则只能从头播。
+         */
+        router.use('/api/character/voice/file', (req, res) => {
+          try {
+            const url = new URL(req.url!, 'http://localhost');
+            const characterName = (url.searchParams.get('character') || '').trim();
+            if (!characterName) { res.statusCode = 400; res.end('缺少 character'); return; }
+            const safe = sanitizeVoiceName(characterName);
+            const filePath = resolveInside(AUDIO_DIR, safe, 'voice.mp3');
+            if (!filePath || !fs.existsSync(filePath)) { res.statusCode = 404; res.end('还没有这个角色的语音'); return; }
+
+            const size = fs.statSync(filePath).size;
+            res.setHeader('Content-Type', 'audio/mpeg');
+            res.setHeader('Accept-Ranges', 'bytes');
+            res.setHeader('Cache-Control', 'no-cache');
+
+            const range = req.headers.range;
+            if (range) {
+              const match = /bytes=(\d*)-(\d*)/.exec(String(range));
+              const start = match && match[1] ? Number(match[1]) : 0;
+              const end = match && match[2] ? Number(match[2]) : size - 1;
+              if (!match || start > end || start >= size) {
+                res.statusCode = 416;
+                res.setHeader('Content-Range', `bytes */${size}`);
+                res.end();
+                return;
+              }
+              const stop = Math.min(end, size - 1);
+              res.statusCode = 206;
+              res.setHeader('Content-Range', `bytes ${start}-${stop}/${size}`);
+              res.setHeader('Content-Length', stop - start + 1);
+              fs.createReadStream(filePath, { start, end: stop }).pipe(res);
+              return;
+            }
+
+            res.setHeader('Content-Length', size);
+            fs.createReadStream(filePath).pipe(res);
+          } catch (e) {
+            res.statusCode = 500;
+            res.end(describeError(e));
+          }
+        });
+
+        /** DELETE /api/character/voice/delete?character=芙莉莲 — 删掉生成过的语音 */
+        router.use('/api/character/voice/delete', (req, res) => {
+          res.setHeader('Content-Type', 'application/json');
+          if (req.method !== 'DELETE' && req.method !== 'POST') {
+            res.statusCode = 405;
+            res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+            return;
+          }
+          const url = new URL(req.url!, 'http://localhost');
+          const characterName = (url.searchParams.get('character') || '').trim();
+          if (!characterName) {
+            res.statusCode = 400;
+            res.end(JSON.stringify({ error: '缺少 character' }));
+            return;
+          }
+          try {
+            res.end(JSON.stringify({ ok: voice.remove(characterName) }));
+          } catch (e) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: describeError(e) }));
+          }
         });
 
         // ── 图片代理（解决外部 URL 跨域） ──
