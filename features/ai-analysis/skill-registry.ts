@@ -31,6 +31,8 @@ import { smartRecommend } from './smart-recommend';
 import { singleAnimeAnalysis } from './single-anime-analysis';
 import { graphOptimize } from './graph-optimize';
 import { autoTag } from './auto-tag';
+import { lookupAnime, fetchReviews } from './external-skills';
+import type { ExternalLookupResult, ExternalReviewsResult } from './external-skills';
 import type {
   TasteReport,
   PreferenceProfile,
@@ -220,11 +222,48 @@ const autoTagSkill: AISkill<{ title: string }, AutoTagResult> = {
   summarize: (out) => `${out.suggestedTags?.length ?? 0} 个建议标签`,
 };
 
+/**
+ * 联网检索：用户问的这部可能**根本不在本地库里**，所以按标题直接去查外部数据源，
+ * 同时把本地已有的那份评分带回来做对照（"社区 7.6、你 8.96"正是他最常用的视角）。
+ */
+const animeLookupSkill: AISkill<{ title: string }, ExternalLookupResult> = {
+  id: 'anime-lookup',
+  title: '检索番剧资料',
+  icon: '🌐',
+  description: '用户问某部番的客观资料时使用：放送年份、集数、制作公司、原作来源、简介、社区评分。'
+    + '会联网查 Bangumi（失败回落 AniList）。本地库里没有的番也能查。',
+  effect: 'read',
+  context: 'entry',
+  modelInputs: ['title'],
+  inputSchema: ENTRY_INPUT,
+  run: (input, ctx) => lookupAnime(String(input?.title || ''), ctx.list, ctx.signal),
+  summarize: (out) => {
+    if (out.candidates.length === 0) return out.note || '没有找到';
+    const first = out.candidates[0];
+    return `${first.title}${first.score ? ` · 社区 ${first.score}` : ''}${first.airDate ? ` · ${first.airDate}` : ''}`;
+  },
+};
+
+const animeReviewsSkill: AISkill<{ title: string }, ExternalReviewsResult> = {
+  id: 'anime-reviews',
+  title: '查社区评论',
+  icon: '💬',
+  description: '用户想知道某部番在社区里被怎么评价、值不值得看时使用。取 Bangumi 短评摘录。',
+  effect: 'read',
+  context: 'entry',
+  modelInputs: ['title'],
+  inputSchema: ENTRY_INPUT,
+  run: (input, ctx) => fetchReviews(String(input?.title || ''), ctx.signal),
+  summarize: (out) => (out.count > 0 ? `采集到 ${out.count} 条短评` : (out.note || '没有评论')),
+};
+
 /** 全部能力。顺序即 UI 里的展示顺序 */
 export const AI_SKILLS: readonly AnyAISkill[] = [
   tasteSkill,
   profileSkill,
   recommendSkill,
+  animeLookupSkill,
+  animeReviewsSkill,
   singleAnimeSkill,
   graphSkill,
   autoTagSkill,

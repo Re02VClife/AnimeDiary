@@ -28,8 +28,12 @@ import type { AISkill, AnyAISkill } from './skill-registry';
 
 /** 一条对话记录。除模型字段外，UI 需要的那点信息也放这里，便于整段持久化 */
 export interface ChatRecord extends AIMessage {
-  /** 这条消息触发了哪个能力（assistant 的 tool_calls 或 tool 结果） */
-  skill?: { id: string; title: string };
+  /**
+   * role='tool' 时记录这次执行的结果摘要。
+   * 刻意**不存 output 本体** —— 会话要落 localStorage，30 个会话每个都背一份完整
+   * 技能输出会很快撑爆配额。原始结果本来就序列化在 content 里，切回会话时再解析回来。
+   */
+  toolMeta?: { skillId: string; title: string; ok: boolean; summary: string; durationMs: number };
   /** 写入时间，UI 排序/显示用 */
   at?: number;
 }
@@ -287,7 +291,13 @@ export async function runChatAgent(opts: ChatAgentOptions): Promise<ChatAgentRes
         role: 'tool',
         content: payload,
         tool_call_id: call.id,
-        skill: { id: run.skillId, title: run.title },
+        toolMeta: {
+          skillId: run.skillId,
+          title: run.title,
+          ok: run.ok,
+          summary: run.summary,
+          durationMs: run.durationMs,
+        },
         at: Date.now(),
       });
     }

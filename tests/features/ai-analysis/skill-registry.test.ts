@@ -37,11 +37,24 @@ const LIST: AnimeEntry[] = [
 ];
 
 describe('能力清单的形状', () => {
-  it('六个能力都在，且 id 不重复', () => {
-    expect(AI_SKILLS).toHaveLength(6);
+  it('能力清单完整，且 id 不重复', () => {
+    expect(AI_SKILLS).toHaveLength(8);
     const ids = AI_SKILLS.map((s) => s.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).toEqual(['taste', 'profile', 'recommend', 'single-anime', 'graph', 'auto-tag']);
+    expect(ids).toEqual([
+      'taste', 'profile', 'recommend',
+      'anime-lookup', 'anime-reviews',
+      'single-anime', 'graph', 'auto-tag',
+    ]);
+  });
+
+  it('联网能力也在清单里（对话里能查本地没有的番）', () => {
+    const ids = AI_SKILLS.map((s) => s.id);
+    expect(ids).toContain('anime-lookup');
+    expect(ids).toContain('anime-reviews');
+    // 只读：联网检索不写数据，任何权限档都能用
+    expect(getSkill('anime-lookup')?.effect).toBe('read');
+    expect(getSkill('anime-reviews')?.effect).toBe('read');
   });
 
   it('每个能力都有能跑起来的必需字段', () => {
@@ -83,8 +96,9 @@ describe('getSkill / getSkillsFor', () => {
   });
 
   it('全是只读能力时，三档权限拿到的清单一样', () => {
+    const total = AI_SKILLS.length;
     for (const p of ['read', 'confirm', 'write'] as const) {
-      expect(getSkillsFor(p)).toHaveLength(6);
+      expect(getSkillsFor(p)).toHaveLength(total);
     }
   });
 });

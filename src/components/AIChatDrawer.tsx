@@ -9,8 +9,8 @@
  * 不能只留好看的那几条 —— 少一条 role:'tool' 模型就会重复调用同一个工具。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Tooltip } from 'antd';
-import { SendOutlined, PlusOutlined, CloseOutlined, StopOutlined } from '@ant-design/icons';
+import { Button, Tooltip, Select, Popconfirm } from 'antd';
+import { SendOutlined, PlusOutlined, CloseOutlined, StopOutlined, DeleteOutlined } from '@ant-design/icons';
 import { catgirlMessage } from '../theme';
 import Markdown from './Markdown';
 import { hasAIConfig, getAIPermission } from '../../features/ai-analysis';
@@ -18,7 +18,18 @@ import { AI_PERMISSION_INFO } from '../../core/ai-permission';
 import { createAIRun } from '../../features/ai-analysis/ai-runtime';
 import type { AIRun } from '../../features/ai-analysis/ai-runtime';
 import { runChatAgent } from '../../features/ai-analysis/chat-agent';
-import type { ChatRecord, ToolRun } from '../../features/ai-analysis/chat-agent';
+import type { ChatRecord } from '../../features/ai-analysis/chat-agent';
+import { recordsToItems, firstUserTitle } from '../../features/ai-analysis/chat-transcript';
+import type { ChatItem } from '../../features/ai-analysis/chat-transcript';
+import {
+  loadSessions,
+  saveSessions,
+  createSession,
+  upsertSession,
+  removeSession,
+  deriveSessionTitle,
+} from '../../features/ai-analysis/chat-sessions';
+import type { ChatSession } from '../../features/ai-analysis/chat-sessions';
 import type { AnimeEntry } from '../types';
 
 interface AIChatDrawerProps {
@@ -27,12 +38,6 @@ interface AIChatDrawerProps {
   animeList: AnimeEntry[];
   onOpenSettings: () => void;
 }
-
-type ChatItem =
-  | { id: string; kind: 'user'; text: string }
-  | { id: string; kind: 'assistant'; text: string }
-  | { id: string; kind: 'tool'; run: ToolRun; running: boolean }
-  | { id: string; kind: 'error'; text: string };
 
 const WIDTH_KEY = 'anime_diary_ai_chat_width';
 const MIN_WIDTH = 340;
@@ -70,6 +75,8 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
   const [streamText, setStreamText] = useState('');
   const [streamReasoning, setStreamReasoning] = useState('');
   const [width, setWidth] = useState(DEFAULT_WIDTH);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [activeId, setActiveId] = useState<string>('');
 
   /** 模型视角的对话记录（含工具往返），跨轮累积 */
   const historyRef = useRef<ChatRecord[]>([]);
@@ -85,6 +92,24 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
   useEffect(() => {
     if (open) setWidth(loadWidth());
   }, [open]);
+
+  // 首次打开时读会话列表；一个都没有就开一个新的
+  useEffect(() => {
+    if (!open || sessions.length > 0) return;
+    const stored = loadSessions();
+    if (stored.length > 0) {
+      setSessions(stored);
+      setActiveId(stored[0].id);
+      historyRef.current = stored[0].records;
+      setItems(recordsToItems(stored[0].records, nextId));
+    } else {
+      const fresh = createSession();
+      setSessions([fresh]);
+      setActiveId(fresh.id);
+      historyRef.current = [];
+      setItems([]);
+    }
+  }, [open, sessions.length]);
 
   /**
    * 把当前宽度广播成 CSS 变量。
@@ -141,17 +166,86 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
   const permission = getAIPermission();
   const configured = hasAIConfig();
 
-  const resetSession = useCallback(() => {
+  /**
+   * 外出 updater 的列表副本。
+   * React 的 setState updater 必须是纯函数 —— StrictMode 下会被调用两次，
+   * 在里面 saveSessions / setActiveId 就会双写、甚至在渲染期更新另一个组件。
+   * 所以所有会话变更都先用 ref 算出新列表，再一次性 setSessions。
+   */
+  const sessionsRef = useRef<ChatSession[]>([]);
+  useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
+
+  /** 切到某个会话：把它的记录还原成界面 */
+  const switchSession = useCallback((id: string) => {
+    const target = sessionsRef.current.find((s) => s.id === id);
+    if (!target) return;
+    historyRef.current = target.records;
+    setItems(recordsToItems(target.records, nextId));
+    setActiveId(id);
+    setStreamText('');
+    setStreamReasoning('');
+  }, []);
+
+  /** 新开一个会话（不删除旧的） */
+  const newSession = useCallback(() => {
     abortRef.current?.abort();
-    historyRef.current = [];
     runRef.current?.setListener(null);
     runRef.current = null;
+    pendingToolsRef.current = [];
+
+    const fresh = createSession();
+    const next = upsertSession(sessionsRef.current, fresh);
+    sessionsRef.current = next;
+    setSessions(next);
+    saveSessions(next);
+
+    setActiveId(fresh.id);
+    historyRef.current = [];
     setItems([]);
     setStreamText('');
     setStreamReasoning('');
     setBusy(false);
-    pendingToolsRef.current = [];
   }, []);
+
+  /** 删掉当前会话，并切到剩下的第一个 */
+  const deleteSession = useCallback(() => {
+    if (!activeId) return;
+    const remaining = removeSession(sessionsRef.current, activeId);
+    // 至少留一个：删光了界面就空了
+    const fallback = remaining[0] || createSession();
+    const next = remaining.length > 0 ? remaining : [fallback];
+    sessionsRef.current = next;
+    setSessions(next);
+    saveSessions(next);
+
+    setActiveId(fallback.id);
+    historyRef.current = fallback.records;
+    setItems(recordsToItems(fallback.records, nextId));
+    setStreamText('');
+    setStreamReasoning('');
+  }, [activeId]);
+
+  /** 一轮结束后把记录写回会话（同时补标题、更新时间） */
+  const persistSession = useCallback((records: ChatRecord[]) => {
+    const current = sessionsRef.current.find((s) => s.id === activeId);
+    if (!current) return;
+    const rawTitle = firstUserTitle(records);
+    const next: ChatSession = {
+      ...current,
+      records,
+      // 标题只在还是默认值时自动取；用户手动改过就不动它
+      title: current.title === '新对话' && rawTitle
+        ? deriveSessionTitle(rawTitle)
+        : current.title,
+      updatedAt: Date.now(),
+    };
+    const list = upsertSession(sessionsRef.current, next);
+    sessionsRef.current = list;
+    setSessions(list);
+    if (!saveSessions(list)) {
+      catgirlMessage.warning('会话保存失败（本地存储可能已满），这一轮记录没能存下来');
+    }
+  }, [activeId]);
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
@@ -240,6 +334,8 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
       });
 
       historyRef.current = result.messages;
+      // 落盘：切走再切回来能接着聊，关掉应用也还在
+      persistSession(result.messages);
       // 模型可能只调了工具没说话：补一条提示，避免界面看起来"卡住了"
       if (result.toolRuns.length > 0 && !result.text.trim()) {
         setItems((prev) => [...prev, {
@@ -257,7 +353,7 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
       setBusy(false);
       clearStream();
     }
-  }, [animeList, busy, permission]);
+  }, [animeList, busy, permission, persistSession]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -318,12 +414,42 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
             </span>
           </Tooltip>
           <div style={{ flex: 1 }} />
-          <Tooltip title="开始新对话">
-            <Button size="small" type="text" icon={<PlusOutlined />} onClick={resetSession} disabled={busy} />
+          <Tooltip title="新建对话">
+            <Button size="small" type="text" icon={<PlusOutlined />} onClick={newSession} disabled={busy} />
           </Tooltip>
           <Tooltip title="关闭">
             <Button size="small" type="text" icon={<CloseOutlined />} onClick={onClose} />
           </Tooltip>
+        </div>
+
+        {/* 会话栏：切会话 / 删会话 */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '6px 12px', borderBottom: '1px solid var(--border-primary)',
+        }}>
+          <Select
+            size="small"
+            value={activeId || undefined}
+            onChange={switchSession}
+            disabled={busy || sessions.length === 0}
+            placeholder="选择会话"
+            style={{ flex: 1, minWidth: 0 }}
+            options={sessions.map((s) => ({
+              value: s.id,
+              label: s.title,
+            }))}
+          />
+          <Popconfirm
+            title="删除这个会话？"
+            description="聊天记录会被永久删除，不能撤销。"
+            okText="删除"
+            cancelText="取消"
+            onConfirm={deleteSession}
+          >
+            <Tooltip title={sessions.length <= 1 ? '至少要保留一个会话' : '删除当前会话'}>
+              <Button size="small" type="text" danger icon={<DeleteOutlined />} disabled={busy || sessions.length <= 1} />
+            </Tooltip>
+          </Popconfirm>
         </div>
 
         {/* 消息区 */}

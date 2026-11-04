@@ -11,7 +11,7 @@
 ```
 ┌──────────────────────────────────────────────┐
 │ 浏览器  features/ai-analysis/                 │
-│  - 6 个 Skill：算统计 → 拼 prompt → 校验输出   │
+│  - 8 个 Skill：算统计 → 拼 prompt → 校验输出   │
 │  - llm-service.ts：/api/ai 客户端 + aiJSON 契约│
 │  - AISettings / TasteReportModal：UI          │
 └───────────────┬──────────────────────────────┘
@@ -78,7 +78,7 @@ describeSchema(schema) → 请求 → parseLooseJSON → sanitizeBySchema → va
 - **推理模型预算升级**：`finish_reason=length` 且正文为空（钱全花在思维链上）时，`max_tokens` 翻倍重来，最多 3 次、封顶 16000；不消耗重写轮次。
   —— 这是 DeepSeek v4.1 这类模型最容易踩的坑：给 500 token 会稳定返回空字符串。
 
-## 五、6 个 Skill
+## 五、AI 能力（Skill）
 
 | Skill | 文件 | 输出 Schema | 关键点 |
 |---|---|---|---|
@@ -88,12 +88,15 @@ describeSchema(schema) → 请求 → parseLooseJSON → sanitizeBySchema → va
 | 单番分析 | `single-anime-analysis.ts` | `SINGLE_ANIME_SCHEMA` | 维度百分位 + 余弦相似 + 评语，全部来自真实数据 |
 | 图谱优化 | `graph-optimize.ts` | `GRAPH_SCHEMA` | Jaccard 在本地算，模型只做"该不该合并"的判断 |
 | 自动打标签 | `auto-tag.ts` | `AUTO_TAG_SCHEMA` | 先取 Bangumi 社区标签做事实底座，再补本地体系缺口 |
+| 检索番剧资料 | `external-skills.ts` | 无（直接返回结构化对象） | 联网查 Bangumi，失败回落 AniList；**本地没有的番也能查**，顺手带回你自己的分数做对照 |
+| 查社区评论 | `external-skills.ts` | 无 | 走 `/api/bangumi/reviews`（接口自带 24h 缓存），单条限长 300 字、最多 12 条 |
 
 维度一律通过 `getDimensionsForList()` / `getActiveDimensions()` 取**当前模板**，不再写死默认维度（角色卡会被算成 0 分）。
 
 ### 能力清单（`skill-registry.ts`）
 
-6 个 skill 之上还有一张声明表 `AI_SKILLS`，UI 与将来的对话窗口都读它：
+6 个 skill 之上还有一张声明表 `AI_SKILLS`（现在共 8 个能力，含两个联网检索），
+UI 与对话窗口都读它：
 `id / title / description（给模型判断何时该用）/ effect / context / modelInputs / inputSchema / run / summarize`。
 
 - **参数只放客观事实**：`modelInputs` 只允许番剧名这类定位信息。统计数字（百分位、偏差、σ）
@@ -125,7 +128,6 @@ registry 是**薄包装**：底层 6 个函数的签名与实现没动，`live.t
 （预算太小时会截断成 `finish_reason: length` 并在尾巴上多带一个半截调用）。
 
 ## 六、AI 写操作权限（三档）
-
 `core/ai-permission.ts` 定义，存服务端 `ai-config.json` 的 `permission` 字段（不是 localStorage —— 它是安全边界）。
 
 | 档位 | AI 能做什么 | 落地行为 |
@@ -140,19 +142,39 @@ registry 是**薄包装**：底层 6 个函数的签名与实现没动，`live.t
   `before` 值（提议与落库之间用户可能自己改过，对不上就拒绝，不用过期提议覆盖新数据）。
 - AI 来源的写操作通过请求头 `X-Op-Source: ai` 打到 Excel 路由，落进 `operations.jsonl` 的来源字段。
 
-## 七、运行遥测与缓存
+## 七、对话窗口与会话
+
+抽屉（`src/components/AIChatDrawer.tsx`）是对话入口：右侧浮层、宽度可拖拽（340 ~ 730px），
+不挤压网格 —— 189 张卡片重排 + ECharts 重算的开销比遮挡更划不来。
+
+- **调度**：`chat-agent.ts` 的 `runChatAgent` 负责「模型说要调工具 → 本地执行 → 结果回传」的循环，
+  最多 4 轮。模型不可信的那几道闸见该文件顶部注释（工具名对不上、参数非法、越权字段、
+  循环止损、call id 缺失）。
+- **会话**：`chat-sessions.ts`，存 `localStorage.anime_diary_ai_sessions_v1`，上限 30 个。
+  存的是**模型视角的完整往返**（含 `tool_calls` / `role:'tool'`），切回来能接着聊 ——
+  少一条 `role:'tool'` 模型就会重复调用同一个工具。
+- **省配额**：工具记录只存摘要 `toolMeta`，原始结果从 `content` 解析还原（`chat-transcript.ts`）。
+  超过 8000 字符被截断过的内容解析失败，就不提供「查看原始结果」，而不是让整个会话打不开。
+- **流式**：SSE 片段按 `requestAnimationFrame` 合并刷新。逐片 `setState` 会把主线程刷爆。
+- **别在 setState 的 updater 里做副作用**：项目开着 StrictMode，updater 会跑两次，
+  `saveSessions` 会双写、`setActiveId` 会在渲染期更新别的组件。会话变更先用 `sessionsRef`
+  算好新列表，再一次性 `setSessions`。
+- **Markdown**：回答确实是 Markdown，用 `react-markdown` + `remark-gfm` 渲染（`Markdown.tsx`）。
+  链接一律 `target="_blank"` —— Electron 里普通 `<a href>` 会把窗口本身导航走。
+
+## 八、运行遥测与缓存
 
 - 一次运行 = 一个 `AIRun` 实例（`createAIRun()`）：`run.begin()` 清零 → 每个 Skill 内部自动记账 →
   结束前 `run.summary()` 拿总用量。一次深度画像可能是 20+ 次调用，UI 不必逐层传 usage。
 - **必须传 run 的场景**：并行会话、聊天 + 后台分析同时跑。`AICallOptions.run` 不传会落到
   `defaultAIRun`，也就是旧的全局行为；两个并发运行共用默认实例会**静默串账**
   （A 的 token 记到 B 头上、思考片段串到另一个画面），所以新代码一律显式传自己的实例。
-- 6 个 Skill 的 options 都有 `run?: AIRun` 并原样透传给 `aiJSON`。加新 Skill 别忘了这一步。
+- 8 个 Skill 的 options 都有 `run?: AIRun` 并原样透传给 `aiJSON`。加新 Skill 别忘了这一步。
 - 面板展示的是**真实 token / 推理 token / 耗时 / 重试次数**；OpenCode 网关会返回 `usage.cost`，直接显示美元，其余 provider 不显示金额（不猜价格）。
 - `run.setListener()` 把 SSE 的思维链片段喂给面板，长任务不再白屏；监听器是**每实例独立**的。
 - 缓存：`buildListFingerprint()` 对「条目/分数/标签/评语长度/模板/模型」做指纹，TTL 12h；数据或模型变了自动失效。
 
-## 八、测试
+## 九、测试
 
 ```bash
 npx vitest run tests/core/ai-json.test.ts tests/server/ai-gateway.test.ts   # 离线，假 fetch
@@ -166,8 +188,7 @@ $env:AI_LIVE='1'; npx vitest run tests/features/ai-analysis/live.test.ts     # �
 > 和 Node fetch(undici) 的 `AbortSignal` 不是同一个类，传 signal 会报
 > `Expected signal to be an instance of AbortSignal`。这是测试环境问题，浏览器里不存在。
 
-## 九、常见问题
-
+## 十、常见问题
 | 现象 | 原因 / 处理 |
 |---|---|
 | 空字符串 / 只返回思维链 | 推理模型 `max_tokens` 太小。`aiJSON` 会自动翻倍，仍失败就把设置里的「输出上限」调大 |
