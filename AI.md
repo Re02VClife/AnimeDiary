@@ -109,10 +109,14 @@ describeSchema(schema) → 请求 → parseLooseJSON → sanitizeBySchema → va
 
 ## 七、运行遥测与缓存
 
-- `beginAIRun()` 开一次运行 → 每个 Skill 内部自动记账 → `getAIRunSummary()` 拿总用量。
-  一次深度画像可能是 20+ 次调用，UI 不必逐层传 usage。
+- 一次运行 = 一个 `AIRun` 实例（`createAIRun()`）：`run.begin()` 清零 → 每个 Skill 内部自动记账 →
+  结束前 `run.summary()` 拿总用量。一次深度画像可能是 20+ 次调用，UI 不必逐层传 usage。
+- **必须传 run 的场景**：并行会话、聊天 + 后台分析同时跑。`AICallOptions.run` 不传会落到
+  `defaultAIRun`，也就是旧的全局行为；两个并发运行共用默认实例会**静默串账**
+  （A 的 token 记到 B 头上、思考片段串到另一个画面），所以新代码一律显式传自己的实例。
+- 6 个 Skill 的 options 都有 `run?: AIRun` 并原样透传给 `aiJSON`。加新 Skill 别忘了这一步。
 - 面板展示的是**真实 token / 推理 token / 耗时 / 重试次数**；OpenCode 网关会返回 `usage.cost`，直接显示美元，其余 provider 不显示金额（不猜价格）。
-- `setAIStreamListener()` 把 SSE 的思维链片段喂给面板，长任务不再白屏。
+- `run.setListener()` 把 SSE 的思维链片段喂给面板，长任务不再白屏；监听器是**每实例独立**的。
 - 缓存：`buildListFingerprint()` 对「条目/分数/标签/评语长度/模板/模型」做指纹，TTL 12h；数据或模型变了自动失效。
 
 ## 八、测试

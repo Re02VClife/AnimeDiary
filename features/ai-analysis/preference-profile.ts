@@ -12,10 +12,13 @@ import { extractKeywords } from '../../core/text';
 import { getScore, calcOverall, calcTasteDeviation, fmtDims, getDimensionsForList } from './ai-helpers';
 import type { DeviationData, PreferenceProfile, ProfileMode, AnimeReviewAnalysis } from './ai-types';
 import { PROFILE_SCHEMA, REVIEW_SCHEMA } from './ai-types';
+import type { AIRun } from './ai-runtime';
 
 export interface ProfileOptions {
   signal?: AbortSignal;
   stream?: boolean;
+  /** 用量/流式收集器；不传落到默认实例 */
+  run?: AIRun;
 }
 
 // ── 数据准备 ──
@@ -190,6 +193,7 @@ ${d.keywords.join('、') || '（无）'}
     maxTokens: 3500,
     signal: opts.signal,
     stream: opts.stream,
+    run: opts.run,
     rules: '用简体中文。likes 3-5 条，dislikes 2-3 条，confidence 是 0-1 的小数。',
   });
   return data;
@@ -224,6 +228,7 @@ async function deepStep1_PerAnime(
   deviationData: DeviationData,
   onProgress?: (current: number, total: number) => void,
   signal?: AbortSignal,
+  run?: AIRun,
 ): Promise<AnimeReviewAnalysis[]> {
   const posTitles = deviationData.topPos.map((d) => d.anime.title).filter((t) => reviewData[t]?.reviews?.length);
   const negTitles = deviationData.topNeg.map((d) => d.anime.title).filter((t) => reviewData[t]?.reviews?.length);
@@ -252,6 +257,7 @@ async function deepStep1_PerAnime(
           temperature: 0.3,
           maxTokens: 2000,
           signal,
+          run,
           rules: 'strengths 3 条、weaknesses 2 条，每条 2-6 个字，不要编号。',
         });
         return { title, strengths: parsed.strengths, weaknesses: parsed.weaknesses };
@@ -310,6 +316,7 @@ ${deviationData.keywords.join('、') || '（无）'}
     maxTokens: 3500,
     signal: opts.signal,
     stream: opts.stream,
+    run: opts.run,
     rules: 'likes 3-5 条，dislikes 2-3 条，evidence 要指出具体作品或评论里反复出现的词。',
   });
   return data;
@@ -348,7 +355,7 @@ export async function preferenceProfileDeep(
   }
 
   onPhase?.('analyzing');
-  const perAnimeResults = await deepStep1_PerAnime(reviewData, d, onProgress, opts.signal);
+  const perAnimeResults = await deepStep1_PerAnime(reviewData, d, onProgress, opts.signal, opts.run);
   if (perAnimeResults.length === 0) {
     return await preferenceProfile(animeList, 'metadata', opts);
   }

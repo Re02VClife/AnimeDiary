@@ -11,7 +11,8 @@
 
 import { describeSchema, parseLooseJSON, sanitizeBySchema, validateSchema } from '../../core/ai-json';
 import type { JSONSchema } from '../../core/ai-json';
-import { recordAICall, emitAIStream } from './ai-runtime';
+import { defaultAIRun } from './ai-runtime';
+import type { AIRun } from './ai-runtime';
 
 export interface AIUsage {
   promptTokens: number;
@@ -30,6 +31,12 @@ export interface AICallOptions {
   purpose?: string;
   /** 走 SSE，把思考/正文片段推给 UI（仅单次调用型 Skill 建议开） */
   stream?: boolean;
+  /**
+   * 本次调用的用量/流式收集器。
+   * 不传就落到默认实例（等价于旧行为）；需要隔离的场景（并行会话、后台任务）
+   * 必须传自己的 createAIRun()，否则两边的 token 与思考片段会串在一起。
+   */
+  run?: AIRun;
 }
 
 export interface AIResult {
@@ -161,7 +168,7 @@ async function callOnce(messages: AIMessage[], opts: AICallOptions): Promise<AIR
 }
 
 /** SSE 调用：把思考/正文片段实时推给 UI，结束后返回完整结果 */
-async function callStream(messages: AIMessage[], opts: AICallOptions): Promise<AIResult> {
+async function callStream(messages: AIMessage[], opts: AICallOptions, run: AIRun): Promise<AIResult> {
   const { signal, dispose } = withTimeout(opts.signal, 300000);
   try {
     const resp = await fetch('/api/ai/chat', {
@@ -179,7 +186,6 @@ async function callStream(messages: AIMessage[], opts: AICallOptions): Promise<A
     });
     if (!resp.ok) throw await errorFromResponse(resp);
     if (!resp.body) return await callOnce(messages, opts);
-
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -193,8 +199,8 @@ async function callStream(messages: AIMessage[], opts: AICallOptions): Promise<A
       if (!payload) return;
       let evt: any;
       try { evt = JSON.parse(payload); } catch { return; }
-      if (evt.type === 'reasoning') emitAIStream('reasoning', String(evt.text || ''));
-      else if (evt.type === 'delta') emitAIStream('text', String(evt.text || ''));
+      if (evt.type === 'reasoning') run.emit('reasoning', String(evt.text || ''));
+      else if (evt.type === 'delta') run.emit('text', String(evt.text || ''));
       else if (evt.type === 'done' && evt.result) final = toAIResult(evt.result);
       else if (evt.type === 'error') streamedError = String(evt.message || '流式调用失败');
     };
@@ -231,11 +237,13 @@ async function callStream(messages: AIMessage[], opts: AICallOptions): Promise<A
  * stream=true 且浏览器支持流时走 SSE，否则自动退回非流式。
  */
 export async function aiChat(messages: AIMessage[], opts: AICallOptions = {}): Promise<AIResult> {
+  // 本次调用记到哪个篮子里：调用方指定就用它，否则落到默认实例（旧行为）
+  const run = opts.run ?? defaultAIRun;
   const result = opts.stream && typeof TextDecoder !== 'undefined'
-    ? await callStream(messages, opts)
+    ? await callStream(messages, opts, run)
     : await callOnce(messages, opts);
 
-  recordAICall({
+  run.record({
     provider: result.provider,
     model: result.model,
     usage: result.usage || EMPTY_USAGE,

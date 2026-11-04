@@ -12,6 +12,7 @@
 import type { AnimeEntry } from '../../src/types';
 import { aiJSON } from './llm-service';
 import type { JSONSchema } from '../../core/ai-json';
+import type { AIRun } from './ai-runtime';
 import { getScore, calcOverall, getDimensionsForList } from './ai-helpers';
 import { buildDeviationData } from './preference-profile';
 import type { PreferenceProfile, RecommendResult, Recommendation, DiscoverItem } from './ai-types';
@@ -51,6 +52,9 @@ const LOOKUP_TIMEOUT_MS = 8000;
 
 export interface RecommendOptions {
   signal?: AbortSignal;
+  stream?: boolean;
+  /** 用量/流式收集器；不传落到默认实例 */
+  run?: AIRun;
 }
 
 /** 从 Bangumi 回查单个标题，补齐封面/评分/日期（超时 8 秒，失败返回 null） */
@@ -320,6 +324,7 @@ ${candidateLines}
     temperature: 0.45,
     maxTokens: 3000,
     signal: opts.signal,
+    run: opts.run,
     rules: 'title 必须逐字来自候选列表。',
   });
 

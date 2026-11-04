@@ -11,6 +11,7 @@ import { aiJSON } from './llm-service';
 import { getScore, calcOverall, getDimensionsForList } from './ai-helpers';
 import type { TasteStats, TasteReport } from './ai-types';
 import { TASTE_SCHEMA } from './ai-types';
+import type { AIRun } from './ai-runtime';
 
 /** 计算全体番剧的数据统计（独立导出，供 UI 展示中间过程） */
 export function buildTasteStats(animeList: AnimeEntry[], dimensions?: Dimension[]): TasteStats {
@@ -89,6 +90,8 @@ export interface TasteAnalysisOptions {
   signal?: AbortSignal;
   /** 把模型思考过程流式喂给 UI */
   stream?: boolean;
+  /** 用量/流式收集器；不传落到默认实例 */
+  run?: AIRun;
 }
 
 export async function tasteAnalysis(
@@ -168,6 +171,7 @@ ${yearLine || '（无数据）'}
     maxTokens: 3000,
     signal: opts.signal,
     stream: opts.stream,
+    run: opts.run,
     rules: '用简体中文。highlights 和 notes 每条独立成句，不要用编号或前缀。',
   });
 

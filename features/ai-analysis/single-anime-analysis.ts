@@ -13,10 +13,13 @@ import { cosineSimilarity } from '../../core/math';
 import { getScore, calcOverall, calcTasteDeviation, fmtDims, buildScoreVector } from './ai-helpers';
 import type { SingleAnimeAnalysisResult } from './ai-types';
 import { SINGLE_ANIME_SCHEMA } from './ai-types';
+import type { AIRun } from './ai-runtime';
 
 export interface SingleAnimeOptions {
   signal?: AbortSignal;
   stream?: boolean;
+  /** 用量/流式收集器；不传落到默认实例 */
+  run?: AIRun;
 }
 
 /**
@@ -106,6 +109,7 @@ ${simLines || '（数据不足）'}
     maxTokens: 3000,
     signal: opts.signal,
     stream: opts.stream,
+    run: opts.run,
     rules: `用简体中文。若没有 BGM 数据，communityGap 直接写"无社区对比数据"。similarAnime 只在确实相似时给，宁缺毋滥。`,
   });
 

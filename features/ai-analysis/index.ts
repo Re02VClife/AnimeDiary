@@ -38,8 +38,8 @@ export { aiChat, aiJSON, AIError } from './llm-service';
 export type { AIUsage, AIResult, AICallOptions, AIJSONOptions, AIJSONResult, AIMessage } from './llm-service';
 
 // ── 运行遥测 ──
-export { beginAIRun, getAIRunSummary, setAIStreamListener } from './ai-runtime';
-export type { AIRunSummary } from './ai-runtime';
+export { createAIRun, defaultAIRun, beginAIRun, getAIRunSummary, setAIStreamListener } from './ai-runtime';
+export type { AIRun, AIRunSummary, AIStreamListener, AICallMeta } from './ai-runtime';
 
 // ── 缓存 ──
 export {

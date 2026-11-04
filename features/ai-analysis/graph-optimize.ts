@@ -11,9 +11,12 @@ import { jaccardArrays } from '../../core/math';
 import { getScore, getDimensionsForList } from './ai-helpers';
 import type { GraphOptimizationResult } from './ai-types';
 import { GRAPH_SCHEMA } from './ai-types';
+import type { AIRun } from './ai-runtime';
 
 export interface GraphOptimizeOptions {
   signal?: AbortSignal;
+  /** 用量/流式收集器；不传落到默认实例 */
+  run?: AIRun;
 }
 
 export async function graphOptimize(
@@ -110,6 +113,7 @@ ${untaggedLines || '无'}
     temperature: 0.35,
     maxTokens: 2500,
     signal: opts.signal,
+    run: opts.run,
     rules: 'merges 最多 5 条，newTags 最多 5 条，issues 最多 3 条。',
   });
 

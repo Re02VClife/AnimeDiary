@@ -10,9 +10,12 @@ import { getActiveDimensions } from '../anime-data/template-service';
 import { getScore } from './ai-helpers';
 import type { AutoTagResult } from './ai-types';
 import { AUTO_TAG_SCHEMA } from './ai-types';
+import type { AIRun } from './ai-runtime';
 
 export interface AutoTagOptions {
   signal?: AbortSignal;
+  /** 用量/流式收集器；不传落到默认实例 */
+  run?: AIRun;
 }
 
 /** 调用 Bangumi 获取番剧标签，让 LLM 筛选建议标签 */
@@ -74,6 +77,7 @@ ${bangumiSummary ? bangumiSummary.slice(0, 400) : '（无）'}
     temperature: 0.3,
     maxTokens: 2000,
     signal: opts.signal,
+    run: opts.run,
     rules: '每个标签 2-4 个汉字，理由一句话。不要输出与已有标签重复的项。',
   });
 
