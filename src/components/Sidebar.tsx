@@ -692,6 +692,23 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
             </div>
             <div
               className="settings-item"
+              onClick={() => dispatch({ type: 'OPEN_MODAL', modal: 'batchTag' })}
+              style={{
+                background: 'linear-gradient(135deg, rgba(251,114,153,0.08), rgba(251,114,153,0.02))',
+                border: '1px solid rgba(251,114,153,0.15)',
+                borderRadius: 8,
+                padding: '10px 14px',
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--brand-primary)' }}>
+                🏷 批量打标签
+              </span>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                先预览再写
+              </span>
+            </div>
+            <div
+              className="settings-item"
               onClick={() => dispatch({ type: 'OPEN_MODAL', modal: 'tasteReport' })}
               style={{
                 background: 'linear-gradient(135deg, rgba(251,114,153,0.1), rgba(251,114,153,0.02))',

@@ -162,6 +162,27 @@ registry 是**薄包装**：底层 6 个函数的签名与实现没动，`live.t
 - **Markdown**：回答确实是 Markdown，用 `react-markdown` + `remark-gfm` 渲染（`Markdown.tsx`）。
   链接一律 `target="_blank"` —— Electron 里普通 `<a href>` 会把窗口本身导航走。
 
+### 批量操作为什么不走对话
+
+每个能力只处理**一部番**，所以「给所有番打标签」这类批量请求在对话里必然卡在
+`maxRounds` 止损上（默认 4 轮，每轮并行 2-3 次 ≈ 8 部就停）。就算放开轮数，
+189 部 × 13 秒 ≈ 40 分钟、189 次模型调用，用户体验和成本都不成立。
+
+所以批量是**独立流程**（`src/components/BatchTagModal.tsx`）：
+
+```
+选范围 → runBatchTag（并发 4，可取消，进度实时） → 逐条勾选 → updateAnimeEntries 一次写回
+```
+
+两个关键设计：
+
+1. **按 entry 处理，不按标题** —— 对话里的 `auto-tag` 要先 `resolveEntry(title)`，
+   匹配不上就报「找不到这部番」；批量直接拿 `AnimeEntry`，没有这个不确定性。
+2. **写回必须合成一次请求**。服务端每次 `/api/excel/write` 都是「读整表 → 改行 →
+   写整表 → 留一份写前快照」，快照只保留 10 份。逐条写 64 次会把**批处理开始前**
+   的状态挤出窗口，最该回退的那个点反而没了。`updateAnimeEntries` 把多行合并成一次
+   POST，只产生一份快照、一条操作日志。
+
 ## 八、运行遥测与缓存
 
 - 一次运行 = 一个 `AIRun` 实例（`createAIRun()`）：`run.begin()` 清零 → 每个 Skill 内部自动记账 →

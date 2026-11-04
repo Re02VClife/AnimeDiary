@@ -67,6 +67,8 @@ export interface AnimeState {
   aiChatOpen: boolean;
   /** 存档与回退（快照列表 + 写操作日志） */
   backupHistoryOpen: boolean;
+  /** 批量打标签（生成 → 预览 → 写回） */
+  batchTagOpen: boolean;
   /** 表格视图（应用内直接看/改列表原始数据） */
   excelOpen: boolean;
 
@@ -144,6 +146,7 @@ const initialState: AnimeState = {
   tasteReportOpen: false,
   aiChatOpen: false,
   backupHistoryOpen: false,
+  batchTagOpen: false,
   excelOpen: false,
   batchMode: false,
   detailEditMode: false,

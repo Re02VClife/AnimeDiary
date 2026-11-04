@@ -729,7 +729,30 @@ export async function appendAnimeEntry(entry: AnimeEntry): Promise<number> {
 export async function updateAnimeEntry(entry: AnimeEntry): Promise<void> {
   const updates = mapAnimeToUpdates(entry);
   if (updates.length === 0) return;
+  await postUpdates(updates);
+}
 
+/**
+ * 批量写回多条。**一次请求**，不是循环调 updateAnimeEntry。
+ *
+ * 为什么必须合成一次：
+ *   1. 服务端每次 /api/excel/write 都会「读整表 → 改行 → 写整表 → 留一份写前快照」。
+ *      写 64 次 = 读写了 64 遍 430KB 的表，而且会产生 64 份快照 —— 快照只保留 10 份，
+ *      批处理**开始前**的那份会被挤出窗口，等于把最该回退的状态丢了。
+ *   2. 一次写 = 一条操作日志，回退时能干净地退回批处理之前。
+ *
+ * 服务端本来就接受数组（写前身份校验也是逐行做的），所以这里只是把它们并成一批。
+ * 返回实际写入的条目数。
+ */
+export async function updateAnimeEntries(entries: AnimeEntry[]): Promise<number> {
+  const updates = entries.flatMap((e) => mapAnimeToUpdates(e));
+  if (updates.length === 0) return 0;
+  await postUpdates(updates);
+  return entries.length;
+}
+
+/** 发送更新批次并统一处理错误（409 冲突提示在这里，调用方不用各写一遍） */
+async function postUpdates(updates: ExcelUpdate[]): Promise<void> {
   const response = await fetch(`${API_BASE}/write`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

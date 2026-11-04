@@ -135,6 +135,10 @@ function buildSystemPrompt(list: AnimeEntry[], skills: readonly AnyAISkill[]): s
     '',
     '回答用简体中文。用 Markdown 组织（小标题、列表、必要时表格），但别堆砌——窄栏里长篇大论很难读。',
     '工具已经给过结论时不要再重复调用同一个工具。',
+    // 每个工具只能处理一部番；用户要「给所有番打标签」这类批量任务时，
+    // 逐部调用会白跑几十轮还做不完 —— 直接告诉他去用专门的批量入口
+    '如果用户要的是一批番剧（「所有」「每一部」「全部看完的」），不要逐部调用工具：'
+      + '说明这需要批量处理，请他用侧栏「AI 分析 → 🏷 批量打标签」。',
   ].join('\n');
 }
 
@@ -305,6 +309,9 @@ export async function runChatAgent(opts: ChatAgentOptions): Promise<ChatAgentRes
 
   throw new AIError(
     'bad_format',
-    `模型连续 ${maxRounds} 轮都在调用工具，已停止。可以换个说法再问，或直接说「用 X 分析」。`,
+    `模型连续 ${maxRounds} 轮都在调用工具，已停止。`
+    + '换个说法再问，或直接说「用 X 分析」。'
+    + '**批量操作**（例如给所有番剧打标签）不要在这里逐部跑，'
+    + '用侧栏「🤖 AI 分析 → 🏷 批量打标签」，它支持并发、进度和一次成批写回。',
   );
 }

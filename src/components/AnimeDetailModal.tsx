@@ -1630,7 +1630,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                   {anime.title} 🔗
                 </a>
               ) : (
-                <span style={{ fontSize: 23, fontWeight: 600 }}>
+                <span style={{ fontSize: 25, fontWeight: 600, letterSpacing: '-0.01em' }}>
                   {anime.title}
                 </span>
               )}
@@ -1688,6 +1688,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       open={open}
       onCancel={onClose}
       width={1050}
+      wrapClassName="anime-detail-modal"
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>

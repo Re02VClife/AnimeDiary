@@ -3,7 +3,7 @@
  *   状态管理已迁移到 AnimeContext，此处仅负责布局组合
  */
 import React, { useState, useMemo, useEffect } from 'react';
-import { Layout, Spin, Result, Button } from 'antd';
+import { Layout, Result, Button } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useAnimeContext } from '../context/AnimeContext';
 import Sidebar from './components/Sidebar';
@@ -22,6 +22,7 @@ import KnowledgeGraphModal from '../features/knowledge-graph/KnowledgeGraphModal
 import AppIcon from './theme/AppIcon';
 import AISettings from '../features/ai-analysis/AISettings';
 import AIChatDrawer from './components/AIChatDrawer';
+import BatchTagModal from './components/BatchTagModal';
 import BackupHistoryModal from './components/BackupHistoryModal';
 import { initAIConfig } from '../features/ai-analysis/ai-config';
 import TasteReportModal from '../features/ai-analysis/TasteReportModal';
@@ -97,6 +98,7 @@ const App: React.FC = () => {
     tasteReportOpen,
     aiChatOpen,
     backupHistoryOpen,
+    batchTagOpen,
     excelOpen,
     batchMode,
     selectedBatchTags,
@@ -170,8 +172,13 @@ const App: React.FC = () => {
 
   if (loading) {
     return (
-      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)' }}>
-        <Spin size="large" tip="正在读取番剧数据…"><div style={{ padding: 50 }} /></Spin>
+      <div className="app-boot">
+        <div className="app-boot-mark">
+          <AppIcon name="anime" size={34} />
+          <span className="app-boot-ring" />
+        </div>
+        <div className="app-boot-text">正在读取番剧数据…</div>
+        <div className="app-boot-bar"><span /></div>
       </div>
     );
   }
@@ -201,28 +208,10 @@ const App: React.FC = () => {
         <Sidebar collapsed={sidebarCollapsed} />
       </Sider>
 
-      <Layout className="main-layout">
-        {/* 收起状态方块：绝对定位覆盖在内容区左上角 */}
-        {sidebarCollapsed && (
-          <div
-            style={{
-              position: 'absolute', left: 0, top: 0, zIndex: 20,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              height: 60, width: 60,
-              background: 'var(--bg-secondary)',
-              borderBottom: '1px solid var(--border-primary)',
-              borderRight: '1px solid var(--border-primary)',
-              borderRadius: '0 0 8px 0',
-              cursor: 'pointer',
-            }}
-            onMouseEnter={() => setSidebarCollapsed(false)}
-          >
-            <AppIcon name="anime" size={22} style={{ opacity: 0.7 }} />
-          </div>
-        )}
+      <Layout className={`main-layout${sidebarCollapsed ? '' : ' with-sidebar'}`}>
         <Content className="main-content">
-          <div style={sidebarCollapsed ? { marginLeft: 60 } : undefined}>
           <TopBar
+            onExpandSidebar={() => setSidebarCollapsed(false)}
             activeCategory={activeCategory}
             onCategoryChange={(c) => dispatch({ type: 'SET_CATEGORY', payload: c })}
             searchText={searchText}
@@ -238,10 +227,9 @@ const App: React.FC = () => {
             onTemplateChange={(id: string) => dispatch({ type: 'SET_ACTIVE_TEMPLATE', payload: id })}
             categoryLabels={activeTemplateCategoryLabels}
           />
-          </div>
 
           {(sortByDim || activeTag) && (
-            <div style={{ padding: '4px 0', fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div className="filter-strip">
               {sortByDim && (
                 <>
                   <span>按 <span style={{ color: 'var(--brand-primary)' }}>{sortByDim === 'namesort' ? '番名' : sortByDim === 'bgm' ? 'BGM' : sortByDim === 'watchDate' ? '观看时间' : sortByDim}</span> 排序</span>
@@ -284,19 +272,10 @@ const App: React.FC = () => {
           />
 
           {batchMode && (
-            <div style={{
-              position: 'fixed', bottom: 20,
-              // 抽屉拉开时在「剩余可视区域」里居中，否则会被压在抽屉底下
-              left: 'calc((100vw - var(--ai-chat-width, 0px)) / 2)',
-              transform: 'translateX(-50%)',
-              background: 'var(--bg-tertiary)', border: '1px solid #30363d', borderRadius: 20,
-              padding: '8px 20px', display: 'flex', alignItems: 'center', gap: 16,
-              boxShadow: '0 4px 24px rgba(0,0,0,0.5)', zIndex: 100,
-              fontSize: 13, color: 'var(--text-primary)',
-            }}>
-              <span>🏷️ <b style={{ color: 'var(--brand-primary)' }}>{selectedBatchTags.length}</b> 个标签</span>
-              <span>→</span>
-              <span>🎬 <b style={{ color: 'var(--brand-primary)' }}>{selectedBatchAnime.length}</b> 部番剧</span>
+            <div className="batch-bar">
+              <span>🏷️ <b>{selectedBatchTags.length}</b> 个标签</span>
+              <span className="batch-bar-arrow">→</span>
+              <span>🎬 <b>{selectedBatchAnime.length}</b> 部番剧</span>
               <Button size="small" type="primary" onClick={handleBatchAddTags}
                 disabled={!selectedBatchTags.length || !selectedBatchAnime.length} style={{ borderRadius: 12 }}>确认添加</Button>
               <Button size="small" onClick={handleCancelBatch} style={{ borderRadius: 12 }}>取消</Button>
@@ -433,6 +412,13 @@ const App: React.FC = () => {
         onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'aiChat' })}
         animeList={state.animeList}
         onOpenSettings={() => dispatch({ type: 'OPEN_MODAL', modal: 'aiSettings' })}
+      />
+
+      <BatchTagModal
+        open={batchTagOpen}
+        onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'batchTag' })}
+        animeList={state.animeList}
+        onApplied={refreshAnimeList}
       />
 
       <input ref={fileInputRef} type="file" accept=".xlsx,.xls"

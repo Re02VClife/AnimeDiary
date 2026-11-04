@@ -45,8 +45,10 @@ const AppShell: React.FC = () => {
           colorBorder: colors.borderPrimary,
           colorText: colors.textPrimary,
           colorTextSecondary: colors.textSecondary,
-          borderRadius: 8,
-          fontFamily: `-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif`,
+          borderRadius: 10,
+          borderRadiusLG: 16,
+          borderRadiusSM: 8,
+          fontFamily: `var(--font-sans)`,
         },
       }}
     >

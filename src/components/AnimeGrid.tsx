@@ -158,19 +158,35 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
     onBatchAnimeChange(sel.includes(id) ? sel.filter((i) => i !== id) : [...sel, id]);
   }, [selectedBatchAnime, onBatchAnimeChange]);
 
+  /**
+   * 卡片跟随鼠标的高光：把指针坐标写成卡片上的 --mx / --my，
+   * 由 CSS 画一个很淡的 radial-gradient。直接在 DOM 上写变量，
+   * 不触发 React 重渲染，滑动网格时也不会掉帧。
+   */
+  const handlePointerMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const card = (e.target as HTMLElement).closest<HTMLElement>('.anime-card');
+    if (!card) return;
+    const rect = card.getBoundingClientRect();
+    card.style.setProperty('--mx', `${e.clientX - rect.left}px`);
+    card.style.setProperty('--my', `${e.clientY - rect.top}px`);
+  }, []);
+
   if (animeList.length === 0) {
     return (
       <div className="empty-state">
-        <div className="empty-icon" style={{ fontSize: 64, opacity: 0.5, marginBottom: 16 }}>🎬</div>
+        <div className="empty-orbit" aria-hidden>
+          <span className="empty-orbit-ring" />
+          <span className="empty-icon">🎬</span>
+        </div>
         <div className="empty-text">这里还没有番剧</div>
-        <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 8 }}>搜索添加你喜欢的番剧吧～</div>
+        <div className="empty-hint">用顶栏的「新增」搜索一部，或按 ⌘K / Ctrl K 开始检索</div>
       </div>
     );
   }
 
   return (
-    <div className="anime-grid" ref={gridRef}>
-      {animeList.map((anime) => {
+    <div className="anime-grid" ref={gridRef} onMouseMove={handlePointerMove}>
+      {animeList.map((anime, index) => {
         // 当前维度分数（dimValue 挂到 data-score 上，供分布图点击后定位该分数段）
         let dimScore: string | null = null;
         let dimValue: number | null = null;
@@ -230,24 +246,19 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
         return (
           <div
             key={anime.id}
-            className="anime-card"
+            className={`anime-card${isSelected ? ' is-selected' : ''}`}
             data-score={dimValue ?? undefined}
-            style={isSelected ? { borderColor: 'var(--brand-primary)', boxShadow: '0 0 12px rgba(251,114,153,0.3)' } : undefined}
+            style={{ '--i': Math.min(index, 22) } as React.CSSProperties}
             onClick={() => batchMode ? toggleAnimeSelect(anime.id) : onAnimeClick(anime)}
           >
             {/* 海报区 */}
             <div className="poster-wrap" style={posterAspect ? { aspectRatio: posterAspect } : undefined}>
+              {/* 跟随指针的柔光（纯装饰，无交互） */}
+              <span className="card-spotlight" aria-hidden />
+
               {/* 批量选择复选框 */}
               {batchMode && (
-                <div style={{
-                  position: 'absolute', top: 8, left: 8, zIndex: 5,
-                  width: 22, height: 22, borderRadius: 4,
-                  background: isSelected ? 'var(--brand-primary)' : 'rgba(0,0,0,0.4)',
-                  border: `2px solid ${isSelected ? 'var(--brand-primary)' : 'var(--text-muted)'}`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#fff', fontSize: 13, fontWeight: 700,
-                  transition: 'all 0.15s',
-                }}>
+                <div className={`card-check${isSelected ? ' is-on' : ''}`}>
                   {isSelected ? '✓' : ''}
                 </div>
               )}
@@ -283,6 +294,18 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
               {/* 自动搜到的图给个小角标，避免误以为是自己保存的 */}
               {isAuto && <div className="poster-auto-badge">自动</div>}
 
+              {/* 悬停时从海报底部滑出的标签 */}
+              {anime.tags.length > 0 && (
+                <div className="card-tags" aria-hidden>
+                  {anime.tags.slice(0, 3).map((t) => (
+                    <span key={t.name} className="card-tag">{t.name}</span>
+                  ))}
+                  {anime.tags.length > 3 && (
+                    <span className="card-tag card-tag-more">+{anime.tags.length - 3}</span>
+                  )}
+                </div>
+              )}
+
               {/* 在看删除按钮 */}
               {onDeleteFromWatching && (
                 <Popconfirm
@@ -292,7 +315,7 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
                   okText="移除" cancelText="取消"
                 >
                   <div className="card-delete-btn" onClick={(e) => e.stopPropagation()} title="从列表中移除">
-                    <DeleteOutlined style={{ fontSize: 14 }} />
+                    <DeleteOutlined style={{ fontSize: 13 }} />
                   </div>
                 </Popconfirm>
               )}
@@ -305,11 +328,16 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
             >
               <div className="card-title" title={anime.title}>{anime.title}</div>
               <div className="card-meta">
-                <span>{anime.releaseDate ? formatReleaseDateCn(anime.releaseDate) : '未知'}</span>
+                <span className="card-year">{anime.releaseDate ? formatReleaseDateCn(anime.releaseDate) : '未知'}</span>
                 {watchLabel ? (
                   <span className="card-watch" title={`观看时间 ${watchLabel}`}>{watchLabel}</span>
                 ) : null}
-                {cardScore ? <span className="dim-score">{cardScore}</span> : null}
+                {cardScore ? (
+                  <span className="dim-score" title={cardScore}>
+                    <span className="dim-score-label">{cardScore.split(' ')[0]}</span>
+                    <span className="dim-score-value">{cardScore.split(' ').slice(1).join(' ') || '—'}</span>
+                  </span>
+                ) : null}
               </div>
             </div>
           </div>

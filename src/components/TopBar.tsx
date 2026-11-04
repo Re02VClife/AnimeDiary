@@ -1,7 +1,14 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Input, Button, Segmented, Select, Dropdown } from 'antd';
-import type { MenuProps } from 'antd';
-import { SearchOutlined, PlusOutlined, CloudDownloadOutlined, UserAddOutlined, BgColorsOutlined, ToolOutlined } from '@ant-design/icons';
+import type { InputRef, MenuProps } from 'antd';
+import {
+  SearchOutlined,
+  PlusOutlined,
+  CloudDownloadOutlined,
+  UserAddOutlined,
+  BgColorsOutlined,
+  AppstoreOutlined,
+} from '@ant-design/icons';
 import type { AnimeCategory, ScoreTemplate, CategoryOverrides } from '../types';
 import { CATEGORY_CONFIG, getVisibleCategories } from '../types';
 
@@ -25,7 +32,28 @@ interface TopBarProps {
   onTemplateChange: (id: string) => void;
   /** 当前模板的分类标签覆盖（决定显示哪些分类 tab） */
   categoryLabels?: CategoryOverrides;
+  /** 悬停左上角品牌块时展开侧栏 */
+  onExpandSidebar?: () => void;
 }
+
+/**
+ * 顶栏内部分类配色。
+ *
+ * 数据层里五个分类共用品牌粉，一排 tab 全激活时看不出区别；
+ * 这里给每个状态一个语义色（在看=生机绿、想看=期待蓝、搁置=琥珀、看过=粉、抛弃=灰），
+ * 只作用于顶栏，不动 Excel 与知识图谱的颜色来源。
+ */
+const CATEGORY_TINT: Record<AnimeCategory, string> = {
+  watching: '#3ddc97',
+  wantToWatch: '#5eb1ff',
+  onHold: '#f5b84b',
+  watched: '#fb7299',
+  dropped: '#9aa4b2',
+};
+
+const isMac =
+  typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+const SHORTCUT_HINT = isMac ? '⌘K' : 'Ctrl K';
 
 const TopBar: React.FC<TopBarProps> = ({
   activeCategory,
@@ -42,7 +70,25 @@ const TopBar: React.FC<TopBarProps> = ({
   activeTemplateId,
   onTemplateChange,
   categoryLabels,
+  onExpandSidebar,
 }) => {
+  const searchRef = useRef<InputRef>(null);
+
+  /**
+   * ⌘K / Ctrl+K 聚焦搜索：这是和 Raycast / Linear 对齐的肌肉记忆，
+   * 也让「搜番」不必先把鼠标移到输入框。
+   */
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   // 计算可见分类：[]=隐藏全部(模板无分类覆盖)，[...]=只显示这些
   const visibleCategories = useMemo<AnimeCategory[]>(() => {
     return getVisibleCategories(categoryLabels);
@@ -54,14 +100,14 @@ const TopBar: React.FC<TopBarProps> = ({
   /**
    * 三个批量工具收进一个下拉。
    *
-   * 之前它们和「新增」平铺成一排四个按钮：那是低频的批量操作，却和日常的
-   * "新增一部"并排抢视线，顶栏右侧因此显得杂乱。说明文字放在菜单项里，
+   * 它们和「新增」平铺成一排四个按钮时：低频批量操作却和日常的
+   * "新增一部"并排抢视线，顶栏右侧显得杂乱。说明文字放在菜单项里，
    * 比原来的 title 悬浮提示更容易被发现。
    */
   const toolItems: MenuProps['items'] = [];
   const toolLabel = (title: string, desc: string) => (
     <div style={{ lineHeight: 1.35 }}>
-      <div>{title}</div>
+      <div style={{ fontWeight: 600 }}>{title}</div>
       <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{desc}</div>
     </div>
   );
@@ -93,58 +139,80 @@ const TopBar: React.FC<TopBarProps> = ({
   return (
     <div className="top-bar">
       <div className="top-bar-row">
-        {/* 搜索栏 + 模式切换 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {/*
+          品牌块兼侧栏入口：以前是浮在左上角的方块，和顶栏、网格都不对齐；
+          放进顶栏流里之后三者的左边缘终于在同一条线上。
+        */}
+        <button
+          type="button"
+          className="brand-trigger"
+          title="打开侧栏"
+          aria-label="打开侧栏"
+          onMouseEnter={onExpandSidebar}
+          onClick={onExpandSidebar}
+        >
+          <span className="brand-glyph">A</span>
+          <span className="brand-spark" aria-hidden />
+        </button>
+
+        {/* 搜索 + 模式切换：合并为一条「命令面板」风格的玻璃控件 */}
+        <div className={`search-cluster${searchText ? ' is-active' : ''}`}>
           <Input
+            ref={searchRef}
             className="search-input"
-            style={{ width: searchMode === 'tag' ? 200 : 280 }}
-            placeholder={searchMode === 'title' ? '搜索名称…' : '搜索标签…'}
-            prefix={<SearchOutlined style={{ color: 'var(--text-muted)' }} />}
+            variant="borderless"
+            placeholder={searchMode === 'title' ? '搜索番名…' : '搜索标签…'}
+            prefix={<SearchOutlined className="search-icon" />}
+            suffix={<kbd className="search-kbd">{SHORTCUT_HINT}</kbd>}
             value={searchText}
             onChange={(e) => onSearchChange(e.target.value)}
             allowClear
           />
+          <span className="search-divider" aria-hidden />
           <Segmented
             className="search-mode-seg"
             size="small"
             value={searchMode}
             onChange={(v) => onSearchModeChange(v as 'title' | 'tag')}
             options={[
-              { value: 'title', label: 'name' },
-              { value: 'tag', label: 'Tag' },
+              { value: 'title', label: '名称' },
+              { value: 'tag', label: '标签' },
             ]}
-            style={{ background: 'var(--bg-quaternary)' }}
           />
         </div>
 
         {/* 分类按钮（当模板有分类覆盖时仅显示非空分类，全部留空则隐藏） */}
         {displayCategories.length > 0 && (
-          <div className="category-tabs">
+          <nav className="category-tabs" aria-label="分类">
             {displayCategories.map((cat) => {
               const cfg = CATEGORY_CONFIG[cat];
               const label = categoryLabels?.[cat] || cfg.label;
+              const active = activeCategory === cat;
               return (
-                <div
+                <button
                   key={cat}
-                  className={`category-tab${activeCategory === cat ? ' active' : ''}`}
-                  style={activeCategory === cat ? { background: cfg.color, borderColor: cfg.color } : undefined}
+                  type="button"
+                  className={`category-tab${active ? ' active' : ''}`}
+                  style={{ '--cat-color': CATEGORY_TINT[cat] } as React.CSSProperties}
                   onClick={() => onCategoryChange(cat)}
                 >
+                  <span className="category-tab-dot" aria-hidden />
                   {label}
-                </div>
+                </button>
               );
             })}
-          </div>
+          </nav>
         )}
 
-        {/* 右侧：模板切换 + 新增按钮 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto' }}>
+        {/* 右侧：模板切换 + 批量工具 + 新增 */}
+        <div className="top-bar-actions">
           {templates.length > 1 && (
             <Select
               size="small"
+              className="template-select"
               value={activeTemplateId}
               onChange={(v) => onTemplateChange(v)}
-              style={{ width: 120 }}
+              popupMatchSelectWidth={false}
               options={templates.map((t) => ({
                 value: t.id,
                 label: `${t.isDefault ? '⭐ ' : ''}${t.name}`,
@@ -152,18 +220,23 @@ const TopBar: React.FC<TopBarProps> = ({
             />
           )}
           {toolItems.length > 0 && (
-            <Dropdown menu={{ items: toolItems }} trigger={['click']} placement="bottomRight">
-              <Button icon={<ToolOutlined />} style={{ borderRadius: 20 }}>
+            <Dropdown
+              menu={{ items: toolItems }}
+              trigger={['click']}
+              placement="bottomRight"
+              overlayClassName="tool-dropdown"
+            >
+              <Button className="ghost-action" icon={<AppstoreOutlined />}>
                 批量工具
               </Button>
             </Dropdown>
           )}
           {onAddAnime && (
             <Button
+              className="add-anime-btn"
               type="primary"
               icon={<PlusOutlined />}
               onClick={onAddAnime}
-              style={{ borderRadius: 20 }}
             >
               新增
             </Button>
