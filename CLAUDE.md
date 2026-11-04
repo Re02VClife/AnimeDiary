@@ -41,7 +41,7 @@ src/types/           — 核心类型定义（AnimeEntry / ScoreTemplate / Dimen
 src/App.tsx          — 薄编排器，组合布局 + 弹窗
 features/
   anime-data/        — Excel 读写（excel-service）+ 模板持久化（template-service）
-  ai-analysis/       — LLM 调用 + 6 个分析 Skill
+  ai-analysis/       — LLM 网关客户端 + 8 个能力（skill-registry）+ 对话调度（chat-agent）
   knowledge-graph/   — 力导向知识图谱
   ranking/           — 百分位排名计算
   search-add/        — Bangumi/AniList 搜索入库

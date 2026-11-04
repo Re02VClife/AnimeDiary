@@ -139,30 +139,35 @@ server/character-voice.ts 语音抓取：B 站搜索/下载 + ffmpeg 切片拼�
 
 ## 5. 改代码前必读的坑
 
-### 5.1 同名死副本（1.0.44 清理了 4 个，仍有走副本）
+### 5.1 同名死副本（1.1.0 已清干净）
 
-曾有 4 个**没有任何 import** 的历史副本，改到它们身上不会有任何效果，重新构建后**文件名 hash 都不会变**（就是这么踩进去的）。已在 1.0.44 删除：
+曾经有多份**没有任何 import** 的历史副本：改到它们身上不会有任何效果，重新构建后
+**文件名 hash 都不会变**（就是这么踩进去的）。
 
-| 已删除的死文件 | 真正生效的文件 |
+1.0.44 删了 4 个（`src/components/WatchCalendar.tsx`、`src/services/excelService.ts`、
+`excelMapping.ts`、`storageService.ts`）；1.1.0 又用「全仓库扫一遍 import 图」的方式
+查出并删掉 5 个：
+
+| 已删除的死文件 | 真正生效的 |
 |---|---|
-| `src/components/WatchCalendar.tsx` | `features/watch-calendar/WatchCalendar.tsx` |
-| `src/services/excelService.ts` | `features/anime-data/excel-service.ts` |
-| `src/services/excelMapping.ts` | `features/anime-data/excel-mapping.ts` |
-| `src/services/storageService.ts` | `features/anime-data/storage-service.ts` |
-
-**仍在的走副本**（1.0.47 实测确认，改它们不生效）：
-
-| 死文件 | 真正生效的文件 |
-|---|---|
+| `features/image-management/ImageManager.tsx` | `src/components/ImageManager.tsx` |
 | `src/components/KnowledgeGraphModal.tsx` | `features/knowledge-graph/KnowledgeGraphModal.tsx` |
-| `src/components/TasteReportModal.tsx` | `features/ai-analysis/TasteReportModal.tsx` |
-| `src/components/DimensionManager.tsx` | 已被 `src/components/TemplateManager.tsx` 取代 |
+| `src/components/SearchAddModal.tsx` | `features/search-add/SearchAddModal.tsx` |
+| `src/components/DimensionManager.tsx` | 早被 `src/components/TemplateManager.tsx` 取代 |
+| `src/components/EpisodeReview.tsx` | 无对应实现：分集评论 UI 从未挂载（数据层仍在，`storage-service` 的 `*EpisodeReview` 被 shift-refs 依赖） |
 
-⚠️ `src/services/` 剩下的 7 个文件**全是活的**（`aiCache` / `aiConfig` / `aiSkills` / `graphService` / `imageService` / `llmService` / `rankingService`），别再当副本删。
+另外 `src/components/TasteReportModal.tsx` 随 1.1.0 的 AI 重构一并删除
+（AI 分析已并入对话窗口）。
 
-⚠️ 另有两组**并存的两套实现**（不是副本，不同组件各用一套，别误合并）：
+⚠️ `src/services/` 现在只剩 3 个文件，**都是活的**：`graphService` / `imageService` / `rankingService`。
+（`aiCache` / `aiConfig` / `aiSkills` / `llmService` 已随 1.1.0 的 AI 重构删除。）
+
+⚠️ 仍有两组**并存的两套实现**（不是副本，不同组件各用一套，别误合并）：
 `src/services/rankingService.ts` ↔ `features/ranking/ranking-service.ts`；
 `src/services/graphService.ts` ↔ `features/knowledge-graph/`。
+
+**排查方法**（想再确认有没有新的死副本时用）：扫全仓库的相对 import，
+把「没有任何非测试文件引用」的源文件列出来即可。1.1.0 那次的结果就是上面 5 个。
 
 **判断改对了没**：构建后在产物里搜一个你新写的字符串，例如
 
@@ -446,7 +451,7 @@ atrim + concat 拼够 35 秒 → audio/{角色名}/voice.mp3
 2. **结构化输出契约**：`core/ai-json.ts` + `aiJSON()` ——
    去代码块/去废话/按括号配对截取 → 纠偏（数组包装、数字字符串、夹紧、删多余字段）→
    Schema 校验 → 带错误清单让模型重写（≤3 轮）；`finish_reason=length` 且正文为空时预算翻倍。
-3. **6 个 Skill 全部重写**：模板维度不再写死、支持 `AbortSignal`（老代码的"取消"只是不显示结果、
+3. **6 个 Skill 全部重写**（1.1.0 起共 8 个，新增两个联网检索能力）：模板维度不再写死、支持 `AbortSignal`（老代码的"取消"只是不显示结果、
    请求还在跑）、总结用真实 usage；推荐改成三源并行 + 15 秒硬超时（原来串行失败要等 5 分钟），
    Tier 4 纯模型推荐会回查 Bangumi 并标 `未校验`。
 4. **删掉死副本**：`src/services/ai{Skills,llmService,aiCache,aiConfig}.ts`、
@@ -461,6 +466,19 @@ atrim + concat 拼够 35 秒 → audio/{角色名}/voice.mp3
 ---
 
 ## 8. 待办
+
+### 已完成（1.1.0）
+
+- [x] **AI 对话窗口**：右侧可拖拽抽屉（`src/components/AIChatDrawer.tsx`），
+      模型用自然语言决定调哪个能力（`features/ai-analysis/chat-agent.ts`，最多 4 轮止损）
+- [x] **会话管理**：多会话切换/新建/删除，存 `localStorage.anime_diary_ai_sessions_v1`，
+      切回来能接着聊（存的是模型视角的完整往返，含 `tool_calls`）
+- [x] **联网检索**：新增两个只读能力 `anime-lookup` / `anime-reviews`（Bangumi 优先、回落 AniList）
+- [x] **存档与回退**：`operations.jsonl` 操作日志 + 快照列表/恢复；补上「回滚上次导入」
+- [x] **AI 写操作三档权限**：`core/ai-permission.ts`，默认 `confirm`
+- [x] **网关支持工具调用**：`tools` / `tool_calls`（含 SSE 增量拼接）
+- [x] **再删 5 个死副本**（见 5.1），用「扫全仓库 import 图」的方式确认没有任何非测试引用
+- [x] `ai-runtime` 从全局单例改为 `createAIRun()` 实例，为并发运行铺路
 
 ### 已完成（1.0.44）
 
