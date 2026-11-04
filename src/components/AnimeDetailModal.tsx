@@ -15,7 +15,8 @@ import { formatReleaseDateCn, parseReleaseDate } from '../../core/date';
 import { round2, formatScore, fmt2 } from '../../core/math';
 import { singleAnimeAnalysis, autoTag } from '../../features/ai-analysis';
 import type { SingleAnimeAnalysisResult, AutoTagResult } from '../../features/ai-analysis';
-import { hasAIConfig } from '../../features/ai-analysis';
+import { hasAIConfig, getAIPermission } from '../../features/ai-analysis';
+import { createTagProposal, proposalAdditions } from '../../core/ai-proposal';
 import RadarChart from './RadarChart';
 import ImageManager from './ImageManager';
 import ScoreSlider from '../../features/anime-detail/ScoreSlider';
@@ -452,6 +453,41 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
     });
     catgirlMessage.success(`已添加标签「${name}」`);
   };
+
+  /** 当前生效的 AI 写权限（三档）——决定「全部采纳」出不出现、要不要确认 */
+  const aiPermission = getAIPermission();
+
+  /** 把剩下的建议一次加完（write 档直接执行，confirm 档由 Popconfirm 兜住） */
+  const adoptAllTags = () => {
+    const pending = autoTagResult?.suggestedTags || [];
+    if (pending.length === 0) return;
+    const existing = new Set(tags.map((t) => t.name));
+    const additions = pending
+      .filter((t) => !existing.has(t.name))
+      .map((t) => ({ name: t.name, highlighted: true }));
+    if (additions.length === 0) {
+      catgirlMessage.warning('这些标签都已存在');
+      setAutoTagResult(null);
+      return;
+    }
+    setTags((prev) => [...prev, ...additions]);
+    setAutoTagResult(null);
+    catgirlMessage.success(`已采纳 ${additions.length} 个建议标签`);
+  };
+
+  /**
+   * confirm 档要展示的「提议」。用 core/ai-proposal 的同一个结构生成，
+   * 将来对话窗口里确认的也是它 —— 两处不该各写一套描述。
+   */
+  const tagProposal = useMemo(() => {
+    if (!anime || !autoTagResult || autoTagResult.suggestedTags.length === 0) return null;
+    return createTagProposal(
+      anime.id,
+      anime.title,
+      tags.map((t) => t.name),
+      autoTagResult.suggestedTags.map((t) => t.name),
+    );
+  }, [anime, autoTagResult, tags]);
 
   /** 重新检索：中文名 + 检索名各搜一遍，合并去重 */
   const handleReSearch = async (force = false) => {
@@ -2422,18 +2458,51 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                   🤖 智能打Tag
                 </Button>
                 {autoTagResult && autoTagResult.suggestedTags.length > 0 && (
-                  <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {autoTagResult.suggestedTags.map((t) => (
-                      <Tag
-                        key={t.name}
-                        color="blue"
-                        style={{ cursor: 'pointer', fontSize: 11 }}
-                        onClick={() => adoptTag(t.name)}
-                        title={t.reason}
-                      >
-                        + {t.name}
-                      </Tag>
-                    ))}
+                  <div style={{ marginTop: 6 }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {autoTagResult.suggestedTags.map((t) => (
+                        <Tag
+                          key={t.name}
+                          color="blue"
+                          style={{ cursor: 'pointer', fontSize: 11 }}
+                          onClick={() => adoptTag(t.name)}
+                          title={t.reason}
+                        >
+                          + {t.name}
+                        </Tag>
+                      ))}
+                    </div>
+                    {/* 三档权限：read 下不给批量入口；confirm 要过确认；write 直接执行 */}
+                    {aiPermission !== 'read' && (
+                      <div style={{ marginTop: 6 }}>
+                        {aiPermission === 'write' ? (
+                          <Button size="small" onClick={adoptAllTags} style={{ fontSize: 11 }}>
+                            全部采纳（{autoTagResult.suggestedTags.length}）
+                          </Button>
+                        ) : (
+                          <Popconfirm
+                            title="采纳全部建议标签？"
+                            description={
+                              <div style={{ maxWidth: 280, fontSize: 12 }}>
+                                将新增：{proposalAdditions(tagProposal).join('、') || '（无）'}
+                              </div>
+                            }
+                            okText="采纳"
+                            cancelText="取消"
+                            onConfirm={adoptAllTags}
+                          >
+                            <Button size="small" ghost type="primary" style={{ fontSize: 11 }}>
+                              全部采纳（{autoTagResult.suggestedTags.length}）
+                            </Button>
+                          </Popconfirm>
+                        )}
+                      </div>
+                    )}
+                    {aiPermission === 'read' && (
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                        当前为只读模式：可逐条点击采纳，AI 不会批量改动你的数据。
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

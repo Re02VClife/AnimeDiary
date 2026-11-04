@@ -31,3 +31,7 @@ Thumbs.db
 
 ai-config.json
 ai-usage.jsonl
+
+# 运行期数据（写操作日志，会随使用增长）
+operations.jsonl
+operations.1.jsonl

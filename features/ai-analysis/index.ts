@@ -18,8 +18,20 @@ export {
   testAIConnection,
   fetchAIModels,
   fetchAIUsage,
+  getAIPermission,
 } from './ai-config';
 export type { AIConfig, AIProviderInfo } from './ai-config';
+
+// ── 写操作权限（三档）与改动提议 ──
+export { AI_PERMISSION_VALUES, AI_PERMISSION_INFO, normalizeAIPermission, canAIPropose, canAIAutoApply } from '../../core/ai-permission';
+export type { AIPermission, AIPermissionInfo } from '../../core/ai-permission';
+export {
+  createProposal,
+  createTagProposal,
+  checkProposalStale,
+  describeProposal,
+} from '../../core/ai-proposal';
+export type { AIProposal, ProposedItemChange, ProposedFieldChange, ProposalStaleness } from '../../core/ai-proposal';
 
 // ── 调用与结构化输出 ──
 export { aiChat, aiJSON, AIError } from './llm-service';

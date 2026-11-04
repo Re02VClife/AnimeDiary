@@ -827,6 +827,9 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
           </div>
 
           <div className="settings-group">备份与恢复</div>
+          <div className="settings-item" onClick={() => dispatch({ type: 'OPEN_MODAL', modal: 'backupHistory' })}>
+            <span>🗄 存档与回退（快照 / 操作记录）</span>
+          </div>
           <div className="settings-item" onClick={handleExportUserData}>
             <span>💾 导出用户数据</span>
           </div>

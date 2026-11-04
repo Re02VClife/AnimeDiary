@@ -91,7 +91,23 @@ describeSchema(schema) → 请求 → parseLooseJSON → sanitizeBySchema → va
 
 维度一律通过 `getDimensionsForList()` / `getActiveDimensions()` 取**当前模板**，不再写死默认维度（角色卡会被算成 0 分）。
 
-## 六、运行遥测与缓存
+## 六、AI 写操作权限（三档）
+
+`core/ai-permission.ts` 定义，存服务端 `ai-config.json` 的 `permission` 字段（不是 localStorage —— 它是安全边界）。
+
+| 档位 | AI 能做什么 | 落地行为 |
+|---|---|---|
+| `read` | 只出分析结果 | 批量改动入口（全是「全部采纳」这类）直接隐藏，只能逐条手点 |
+| `confirm` | 可以提议，不能直接落库 | 弹出提议（带改动前后对比），点确认才执行 |
+| `write` | 可以直接改数据 | 跳过确认直接执行，但写审计日志、保留一次撤销 |
+
+- **默认 `confirm`**。`normalizeAIPermission()` 把任何非法值都收敛到 `confirm`：既不禁用功能，也不会让 AI 悄悄写数据。
+- 所有判断走 `getAIPermission()` / `canAIPropose()` / `canAIAutoApply()`，不要在组件里各自读 `config.permission`。
+- 改动提议的数据结构在 `core/ai-proposal.ts`：`createTagProposal` 生成、`checkProposalStale` 在落库前比对
+  `before` 值（提议与落库之间用户可能自己改过，对不上就拒绝，不用过期提议覆盖新数据）。
+- AI 来源的写操作通过请求头 `X-Op-Source: ai` 打到 Excel 路由，落进 `operations.jsonl` 的来源字段。
+
+## 七、运行遥测与缓存
 
 - `beginAIRun()` 开一次运行 → 每个 Skill 内部自动记账 → `getAIRunSummary()` 拿总用量。
   一次深度画像可能是 20+ 次调用，UI 不必逐层传 usage。
@@ -99,7 +115,7 @@ describeSchema(schema) → 请求 → parseLooseJSON → sanitizeBySchema → va
 - `setAIStreamListener()` 把 SSE 的思维链片段喂给面板，长任务不再白屏。
 - 缓存：`buildListFingerprint()` 对「条目/分数/标签/评语长度/模板/模型」做指纹，TTL 12h；数据或模型变了自动失效。
 
-## 七、测试
+## 八、测试
 
 ```bash
 npx vitest run tests/core/ai-json.test.ts tests/server/ai-gateway.test.ts   # 离线，假 fetch
@@ -113,7 +129,7 @@ $env:AI_LIVE='1'; npx vitest run tests/features/ai-analysis/live.test.ts     # �
 > 和 Node fetch(undici) 的 `AbortSignal` 不是同一个类，传 signal 会报
 > `Expected signal to be an instance of AbortSignal`。这是测试环境问题，浏览器里不存在。
 
-## 八、常见问题
+## 九、常见问题
 
 | 现象 | 原因 / 处理 |
 |---|---|

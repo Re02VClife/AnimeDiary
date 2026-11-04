@@ -510,3 +510,52 @@ export async function importUserData(zipFile: File): Promise<void> {
   // 重新加载海报缓存
   try { localStorage.removeItem('anilist_cache'); } catch { /* ignore */ }
 }
+
+/** 是否存在「导入前的本地数据快照」—— 决定回滚入口要不要出现 */
+export function hasPreImportSnapshot(): boolean {
+  try {
+    const raw = localStorage.getItem(PRE_IMPORT_SNAPSHOT_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    return !!parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 回滚上一次「导入用户数据」对本地设置的覆盖。
+ *
+ * importUserData 从第一版起就在覆盖前把 localStorage 存进 PRE_IMPORT_SNAPSHOT_KEY，
+ * 注释也写着「导错了还能手工回滚」—— 但全仓库没有任何地方读它，那句承诺是空的。
+ * 这里把它接上：把当时每个键的原始字符串原样写回，然后清掉快照。
+ *
+ * 注意只回滚**本地设置**（主题、模板、雷达图、AI 配置等）。Excel 和图片是服务端
+ * 文件，由「存档快照」那条链路负责 —— 两条线不混在一起，免得半套回滚更难查。
+ */
+export function rollbackLastImport(): { restored: number; removed: number; skipped: number } {
+  const raw = localStorage.getItem(PRE_IMPORT_SNAPSHOT_KEY);
+  if (!raw) throw new Error('没有可回滚的导入记录');
+  const snapshot = JSON.parse(raw) as Record<string, string | null>;
+  if (!snapshot || typeof snapshot !== 'object') throw new Error('导入快照已损坏');
+
+  let restored = 0;
+  let removed = 0;
+  let skipped = 0;
+  for (const [key, value] of Object.entries(snapshot)) {
+    try {
+      if (value === null) {
+        // 导入前这个键不存在 → 回滚就是把它删掉，否则会留下一份「凭空多出来」的设置
+        localStorage.removeItem(key);
+        removed += 1;
+      } else {
+        localStorage.setItem(key, value);
+        restored += 1;
+      }
+    } catch {
+      skipped += 1;
+    }
+  }
+  localStorage.removeItem(PRE_IMPORT_SNAPSHOT_KEY);
+  return { restored, removed, skipped };
+}

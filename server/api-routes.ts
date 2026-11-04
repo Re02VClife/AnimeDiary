@@ -24,6 +24,8 @@ import { sanitizeVoiceName } from '../core/voice-clips';
 import { createBgRemover } from './bg-removal';
 import { decodeImage, encodePng } from './image-codec';
 import { registerAIRoutes } from './ai-routes';
+import { createOperationLog } from './operations-log';
+import type { OperationSource } from './operations-log';
 
 /** 数据根目录 */
 export interface ApiContext {
@@ -57,6 +59,8 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
   const BACKUP_DIR = path.join(DATA_DIR, 'backups');
   /** 多代快照最多保留份数（原 vite.config.ts 的常量） */
   const BACKUP_KEEP = 10;
+  /** 写操作日志：每次写 Excel / 导入 / 恢复都追加一条，带写前快照文件名 */
+  const ops = createOperationLog(DATA_DIR);
   /**
    * 番剧元数据/封面获取客户端。
    * 传入宿主注入的 fetchImpl，使请求走上与页面一致（且遵守系统代理）的网络栈。
@@ -112,10 +116,14 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
    * 写入前留一份多代快照。
    * 只在「当前内容与最新快照不同」时才产生新文件（按内容 hash 去重），
    * 所以频繁保存不会堆出成百上千份；最多保留 BACKUP_KEEP 份，超出删最旧的。
+   *
+   * 返回**写前状态的快照文件名**（去重时返回已有的那份），
+   * 让它能一并写进操作日志 —— 否则日志只能记「改了什么」，没法记「改之前长什么样」，
+   * 那条记录也就不能直接用来回退。
    */
-  function snapshotExcel(): void {
+  function snapshotExcel(): { name: string; created: boolean } | null {
     try {
-      if (!fs.existsSync(EXCEL_PATH)) return;
+      if (!fs.existsSync(EXCEL_PATH)) return null;
       const current = fs.readFileSync(EXCEL_PATH);
       const hash = crypto.createHash('sha1').update(current).digest('hex').slice(0, 12);
       if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
@@ -125,21 +133,30 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
       if (latest) {
         const latestBuf = fs.readFileSync(path.join(BACKUP_DIR, latest));
         if (crypto.createHash('sha1').update(latestBuf).digest('hex').slice(0, 12) === hash) {
-          return; // 内容未变，不必再存一份
+          return { name: latest, created: false }; // 内容未变，不必再存一份
         }
       }
       const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      fs.writeFileSync(path.join(BACKUP_DIR, `番评分.${stamp}.${hash}.xlsx`), current);
+      const name = `番评分.${stamp}.${hash}.xlsx`;
+      fs.writeFileSync(path.join(BACKUP_DIR, name), current);
 
       const after = listExcelSnapshots();
       while (after.length > BACKUP_KEEP) {
         const oldest = after.shift()!;
         try { fs.unlinkSync(path.join(BACKUP_DIR, oldest)); } catch { /* ignore */ }
       }
+      return { name, created: true };
     } catch (e) {
       // 快照失败不阻塞写入，但必须可见 —— "以为有备份"比没有备份更危险
       console.warn('[excel] 多代快照失败:', e instanceof Error ? e.message : e);
+      return null;
     }
+  }
+
+  /** 从请求头取操作来源：AI 写操作必须能与手动操作区分（默认按用户操作算） */
+  function opSourceOf(req: any): OperationSource {
+    const raw = String(req?.headers?.['x-op-source'] || '').toLowerCase();
+    return raw === 'ai' || raw === 'system' ? (raw as OperationSource) : 'user';
   }
 
   // ── 安全与写入辅助 ──
@@ -147,10 +164,12 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
   /**
    * 原子写文件：先写临时文件再 rename，写入前留一份多代快照。
    * 原来直接 writeFileSync 覆盖，写一半崩溃会毁掉整个 Excel。
+   *
+   * 返回写前快照的文件名，供调用方写进操作日志。
    */
-  function writeFileAtomic(filePath: string, data: Buffer): void {
+  function writeFileAtomic(filePath: string, data: Buffer): { snapshot?: string } {
     // 写入前留多代快照（仅 Excel 主数据；快照自身失败不会阻塞写入，但会打印警告）
-    if (filePath === EXCEL_PATH) snapshotExcel();
+    const snap = filePath === EXCEL_PATH ? snapshotExcel() : null;
     const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
     try {
       fs.writeFileSync(tmpPath, data);
@@ -159,6 +178,22 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
       try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* ignore */ }
       throw e;
     }
+    return snap ? { snapshot: snap.name } : {};
+  }
+
+  /** 记一条写操作日志（source 缺省按 system：重置/修复这类非用户直接操作） */
+  function logOp(
+    op: string,
+    summary: string,
+    extra?: { source?: OperationSource; snapshot?: string; detail?: unknown },
+  ): void {
+    ops.append({
+      op,
+      summary,
+      source: extra?.source || 'system',
+      snapshot: extra?.snapshot,
+      detail: extra?.detail,
+    });
   }
 
   /**
@@ -316,7 +351,12 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
               snapshotExcel();
               deleteSheetRow(ws, targetRow);
               const formulasShifted = shiftAllFormulas(wb, targetRow);
-              writeFileAtomic(EXCEL_PATH, XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+              const delWritten = writeFileAtomic(EXCEL_PATH, XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+              logOp('excel.delete-row', `删除《${removedTitle || '未知条目'}》`, {
+                source: opSourceOf(req),
+                snapshot: delWritten.snapshot,
+                detail: { removedTitle, rowIndex: targetRow, formulasShifted },
+              });
 
               const rangeAfter = XLSX.utils.decode_range(ws['!ref'] || 'A1');
               res.end(JSON.stringify({
@@ -462,7 +502,19 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
                 }
               }
               const wbOut = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-              writeFileAtomic(EXCEL_PATH, wbOut);
+              const writeWritten = writeFileAtomic(EXCEL_PATH, wbOut);
+              const touchedTitles = Array.from(new Set(
+                (updates as { expectedTitle?: string }[])
+                  .map((u) => (typeof u.expectedTitle === 'string' ? u.expectedTitle.trim() : ''))
+                  .filter(Boolean),
+              ));
+              logOp('excel.write', touchedTitles.length > 0
+                ? `更新《${touchedTitles.slice(0, 3).join('》《')}》${touchedTitles.length > 3 ? ` 等 ${touchedTitles.length} 部` : ''}`
+                : `更新 ${updates.length} 个单元格`, {
+                source: opSourceOf(req),
+                snapshot: writeWritten.snapshot,
+                detail: { cells: updates.length, titles: touchedTitles },
+              });
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ success: true }));
             } catch (e) {
@@ -518,7 +570,17 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
                 XLSX.utils.sheet_add_aoa(ws, [[value]], { origin: cellAddr });
               }
               const wbOut = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-              writeFileAtomic(EXCEL_PATH, wbOut);
+              const appendWritten = writeFileAtomic(EXCEL_PATH, wbOut);
+              const appendedTitle = typeof (row as Record<string, unknown>)['1'] === 'string'
+                ? String((row as Record<string, unknown>)['1']).trim()
+                : '';
+              logOp('excel.append', appendedTitle
+                ? `新增《${appendedTitle}》`
+                : `新增一行（${sheetName} 第 ${newRowIdx + 1} 行）`, {
+                source: opSourceOf(req),
+                snapshot: appendWritten.snapshot,
+                detail: { sheetName, rowIndex: newRowIdx, title: appendedTitle || undefined },
+              });
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ success: true, rowIndex: newRowIdx }));
             } catch (e) {
@@ -543,7 +605,12 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
               if (!wb.SheetNames || wb.SheetNames.length === 0) {
                 res.statusCode = 400; res.end(JSON.stringify({ error: '不是有效的 Excel 文件' })); return;
               }
-              writeFileAtomic(EXCEL_PATH, buf); // 内部会先留一份多代快照，可回滚
+              const replaceWritten = writeFileAtomic(EXCEL_PATH, buf); // 内部会先留一份多代快照，可回滚
+              logOp('excel.replace', '导入并替换整个 Excel 数据源', {
+                source: opSourceOf(req),
+                snapshot: replaceWritten.snapshot,
+                detail: { sheets: wb.SheetNames, bytes: buf.length },
+              });
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ success: true, sheets: wb.SheetNames }));
             } catch (e) {
@@ -1096,7 +1163,12 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
           }
 
           if (fixed > 0) {
-            writeFileAtomic(EXCEL_PATH, XLSX.write(wb, { bookType: 'xlsx', type: 'buffer', bookSST: true }));
+            const fixWritten = writeFileAtomic(EXCEL_PATH, XLSX.write(wb, { bookType: 'xlsx', type: 'buffer', bookSST: true }));
+            logOp('excel.fix-posters', `批量修复 ${fixed} 条海报地址`, {
+              source: 'system',
+              snapshot: fixWritten.snapshot,
+              detail: { fixed, missing: missing.length },
+            });
           }
           res.write(`\n<span class="dim">────────────────────────</span>\n完成：${missing.length} 条缺海报，修复 ${fixed} 条，跳过 ${missing.length - fixed} 条\n`);
           res.end('</pre></body></html>');
@@ -2613,6 +2685,116 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
           }
         });
 
+        // ── 快照列表 / 恢复到指定快照 / 操作日志 ──
+        // 这一套构成「能回退」的闭环：backups/ 里一直有快照，但以前没有任何入口
+        // 能列出或恢复它，等于存了却取不出来；日志则回答「这份快照对应哪次改动」。
+        const SNAPSHOT_NAME_RE = /^番评分\.(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})\.[0-9a-f]+\.xlsx$/;
+
+        /** 从文件名还原 UTC 时间；解析不出来返回 null（手工拷进来的老文件） */
+        function snapshotTimeOf(name: string): string | null {
+          const m = SNAPSHOT_NAME_RE.exec(name);
+          if (!m) return null;
+          const t = new Date(`${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`);
+          return Number.isNaN(t.getTime()) ? null : t.toISOString();
+        }
+
+        function currentExcelHash(): string | null {
+          try {
+            if (!fs.existsSync(EXCEL_PATH)) return null;
+            return crypto.createHash('sha1').update(fs.readFileSync(EXCEL_PATH)).digest('hex').slice(0, 12);
+          } catch { return null; }
+        }
+
+        /** GET /api/backup/snapshots —— 列出 backups/ 里的多代快照（新的在前） */
+        router.use('/api/backup/snapshots', (_req, res) => {
+          try {
+            const current = currentExcelHash();
+            const snapshots = listExcelSnapshots().map((name) => {
+              let size = 0;
+              try { size = fs.statSync(path.join(BACKUP_DIR, name)).size; } catch { /* ignore */ }
+              const hashMatch = /\.([0-9a-f]+)\.xlsx$/.exec(name);
+              const hash = hashMatch ? hashMatch[1] : '';
+              return {
+                name,
+                at: snapshotTimeOf(name),
+                size,
+                hash,
+                // 与当前 Excel 内容一致 = 这份就是「现在」的状态，恢复它没有意义
+                isCurrent: !!current && hash === current,
+              };
+            }).reverse();
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify({ snapshots, keep: BACKUP_KEEP, dir: BACKUP_DIR }));
+          } catch (e) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: e instanceof Error ? e.message : '读取快照失败' }));
+          }
+        });
+
+        /** POST /api/backup/restore { name } —— 把 Excel 恢复到某份快照 */
+        router.use('/api/backup/restore', (req, res) => {
+          if (req.method !== 'POST') {
+            res.statusCode = 405;
+            res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+            return;
+          }
+          const chunks: Buffer[] = [];
+          req.on('data', (c: Buffer) => chunks.push(c));
+          req.on('end', () => {
+            res.setHeader('Content-Type', 'application/json');
+            try {
+              const body = JSON.parse(Buffer.concat(chunks).toString('utf-8') || '{}');
+              const name = String(body.name || '');
+              // 只接受「确实出现在 backups/ 列表里」的文件名 —— 比正则校验更可靠，
+              // 天然挡住 ../ 这类路径穿越
+              if (!listExcelSnapshots().includes(name)) {
+                res.statusCode = 404;
+                res.end(JSON.stringify({ error: '找不到该快照（可能已被清理，刷新列表再试）' }));
+                return;
+              }
+              const buf = fs.readFileSync(path.join(BACKUP_DIR, name));
+              // 先确认能解析，避免把损坏的快照写进去把数据毁掉
+              const wb = XLSX.read(buf, { type: 'buffer' });
+              if (!wb.SheetNames || wb.SheetNames.length === 0) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: '该快照不是有效的 Excel 文件' }));
+                return;
+              }
+              // writeFileAtomic 会先把「恢复前」的当前文件也存成快照，
+              // 于是恢复本身也可回退：万一恢复错了，再恢复回去就行
+              const written = writeFileAtomic(EXCEL_PATH, buf);
+              const at = snapshotTimeOf(name);
+              logOp('backup.restore', `恢复到 ${at ? new Date(at).toLocaleString('zh-CN', { hour12: false }) : name} 的快照`, {
+                source: opSourceOf(req),
+                snapshot: written.snapshot,
+                detail: { restoredFrom: name, revertTo: written.snapshot, sheets: wb.SheetNames },
+              });
+              res.end(JSON.stringify({
+                success: true,
+                restoredFrom: name,
+                revertTo: written.snapshot || null,
+                sheets: wb.SheetNames,
+              }));
+            } catch (e) {
+              res.statusCode = 500;
+              res.end(JSON.stringify({ error: e instanceof Error ? e.message : '恢复失败' }));
+            }
+          });
+        });
+
+        /** GET /api/operations?limit=100 —— 最近的写操作（新的在前） */
+        router.use('/api/operations', (req, res) => {
+          try {
+            const url = new URL(req.url!, 'http://localhost');
+            const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 100));
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify({ entries: ops.read(limit), logPath: ops.path }));
+          } catch (e) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: e instanceof Error ? e.message : '读取操作日志失败' }));
+          }
+        });
+
         // ── 一键备份导出（POST：前端发送 data JSON，后端打包 ZIP 返回）──
         router.use('/api/backup/export-full', (req, res) => {
           if (req.method !== 'POST') { res.statusCode = 405; res.end('Method Not Allowed'); return; }
@@ -2691,7 +2873,12 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
                     );
                     let excelRestored = false;
                     if (excelEntry) {
-                      writeFileAtomic(EXCEL_PATH, excelEntry.getData());
+                      const importWritten = writeFileAtomic(EXCEL_PATH, excelEntry.getData());
+                      logOp('backup.import', '导入备份并覆盖 Excel 数据源', {
+                        source: opSourceOf(req),
+                        snapshot: importWritten.snapshot,
+                        detail: { entry: excelEntry.entryName },
+                      });
                       excelRestored = true;
                     }
 

@@ -21,6 +21,7 @@ import { getVisibleCategories } from './types';
 import KnowledgeGraphModal from '../features/knowledge-graph/KnowledgeGraphModal';
 import AppIcon from './theme/AppIcon';
 import AISettings from '../features/ai-analysis/AISettings';
+import BackupHistoryModal from './components/BackupHistoryModal';
 import { initAIConfig } from '../features/ai-analysis/ai-config';
 import TasteReportModal from '../features/ai-analysis/TasteReportModal';
 import PosterFlipOverlay from './components/PosterFlipOverlay';
@@ -93,6 +94,7 @@ const App: React.FC = () => {
     knowledgeGraphOpen,
     aiSettingsOpen,
     tasteReportOpen,
+    backupHistoryOpen,
     excelOpen,
     batchMode,
     selectedBatchTags,
@@ -412,6 +414,12 @@ const App: React.FC = () => {
         open={tasteReportOpen}
         onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'tasteReport' })}
         animeList={state.animeList}
+      />
+
+      <BackupHistoryModal
+        open={backupHistoryOpen}
+        onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'backupHistory' })}
+        onRestored={refreshAnimeList}
       />
 
       <input ref={fileInputRef} type="file" accept=".xlsx,.xls"

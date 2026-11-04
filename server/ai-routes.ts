@@ -6,6 +6,7 @@
  */
 import { createAIClient, AIGatewayError } from './ai-gateway';
 import type { AIStoredConfig, ChatMessage } from './ai-gateway';
+import { normalizeAIPermission } from '../core/ai-permission';
 
 interface RouterLike {
   use(prefix: string, handler: (req: any, res: any) => void): void;
@@ -69,6 +70,10 @@ function pickConfigPatch(body: any): Partial<AIStoredConfig> {
   if (typeof body?.jsonMode === 'boolean') patch.jsonMode = body.jsonMode;
   if (body?.thinking === 'auto' || body?.thinking === 'off') patch.thinking = body.thinking;
   if (typeof body?.deepMode === 'boolean') patch.deepMode = body.deepMode;
+  // 三档权限：只接受三个合法值，其余忽略（非法值不等于"改成默认"，别让人猜）
+  if (typeof body?.permission === 'string') {
+    patch.permission = normalizeAIPermission(body.permission);
+  }
   if (body?.headers && typeof body.headers === 'object') {
     const headers: Record<string, string> = {};
     for (const [k, v] of Object.entries(body.headers)) {

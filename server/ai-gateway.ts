@@ -19,6 +19,9 @@ import type { FetchLike } from './media-sources';
 // Provider 预设
 // ─────────────────────────────────────────────────────────────
 
+import type { AIPermission } from '../core/ai-permission';
+import { normalizeAIPermission } from '../core/ai-permission';
+
 export interface AIProviderPreset {
   id: string;
   label: string;
@@ -110,6 +113,11 @@ export interface AIStoredConfig {
   thinking: 'auto' | 'off';
   /** UI 的深度模式开关（Bangumi 评论挖掘），存在这里一并管理 */
   deepMode: boolean;
+  /**
+   * AI 写操作权限：read 只读 / confirm 提议后确认 / write 直接写入。
+   * 存在服务端而不是 localStorage —— 它是安全边界，不该被页面脚本随手改。
+   */
+  permission: AIPermission;
 }
 
 const CONFIG_FILE = 'ai-config.json';
@@ -143,6 +151,7 @@ export function loadStoredConfig(dataDir: string): AIStoredConfig {
     jsonMode: saved.jsonMode !== false,
     thinking: saved.thinking === 'off' ? 'off' : 'auto',
     deepMode: saved.deepMode === true,
+    permission: normalizeAIPermission(saved.permission),
   };
 }
 
@@ -161,6 +170,7 @@ export function saveStoredConfig(dataDir: string, patch: Partial<AIStoredConfig>
   merged.timeoutMs = Math.max(5000, Math.min(600000, Math.round(merged.timeoutMs) || 120000));
   merged.temperature = Math.max(0, Math.min(2, Number(merged.temperature) || 0));
   if (merged.thinking !== 'off') merged.thinking = 'auto';
+  merged.permission = normalizeAIPermission(merged.permission);
 
   try {
     fs.mkdirSync(dataDir, { recursive: true });
@@ -182,6 +192,8 @@ export interface AIPublicConfig {
   jsonMode: boolean;
   thinking: 'auto' | 'off';
   deepMode: boolean;
+  /** AI 写操作权限（read / confirm / write） */
+  permission: AIPermission;
   hasKey: boolean;
   keyMask: string;
   providers: AIProviderPreset[];
@@ -199,6 +211,7 @@ export function toPublicConfig(cfg: AIStoredConfig): AIPublicConfig {
     jsonMode: cfg.jsonMode,
     thinking: cfg.thinking,
     deepMode: cfg.deepMode,
+    permission: cfg.permission,
     hasKey: cfg.apiKey.length > 0 || !preset.needsKey,
     keyMask: cfg.apiKey.length > 4
       ? `${cfg.apiKey.slice(0, 3)}…${cfg.apiKey.slice(-4)}`

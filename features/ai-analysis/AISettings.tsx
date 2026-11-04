@@ -7,7 +7,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Modal, Input, Button, Switch, message, Select, InputNumber, Alert, Spin, Tag } from 'antd';
+import { Modal, Input, Button, Switch, message, Select, InputNumber, Alert, Spin, Tag, Segmented } from 'antd';
 import {
   loadAIConfig,
   initAIConfig,
@@ -17,6 +17,8 @@ import {
   fetchAIUsage,
 } from './ai-config';
 import type { AIConfig } from './ai-config';
+import { AI_PERMISSION_INFO, AI_PERMISSION_VALUES, normalizeAIPermission } from '../../core/ai-permission';
+import type { AIPermission } from '../../core/ai-permission';
 
 interface AISettingsProps {
   open: boolean;
@@ -41,6 +43,8 @@ interface FormState {
   maxTokens: number;
   temperature: number;
   apiKey: string;
+  /** 三档写权限 */
+  permission: AIPermission;
 }
 
 function toForm(config: AIConfig): FormState {
@@ -53,6 +57,7 @@ function toForm(config: AIConfig): FormState {
     maxTokens: config.maxTokens,
     temperature: config.temperature,
     apiKey: '',
+    permission: normalizeAIPermission(config.permission),
   };
 }
 
@@ -133,6 +138,7 @@ const AISettings: React.FC<AISettingsProps> = ({ open, onClose }) => {
     thinking: form.thinking,
     maxTokens: form.maxTokens,
     temperature: form.temperature,
+    permission: form.permission,
     ...(form.apiKey ? { apiKey: form.apiKey } : {}),
   });
 
@@ -353,6 +359,40 @@ const AISettings: React.FC<AISettingsProps> = ({ open, onClose }) => {
             </div>
           </div>
           <Switch checked={form.deepMode} onChange={(v) => setForm((f) => ({ ...f, deepMode: v }))} />
+        </div>
+
+        {/* 三档写权限：AI 会不会替你改数据，是这一整套功能里最需要说清楚的一件事 */}
+        <div style={{ borderTop: '1px solid var(--border-primary)', paddingTop: 12 }}>
+          <div style={{ fontSize: 13, color: 'var(--text-primary)', marginBottom: 2 }}>
+            🛡 AI 写操作权限
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.6 }}>
+            {AI_PERMISSION_INFO[form.permission].description}
+          </div>
+          <Segmented
+            block
+            size="small"
+            value={form.permission}
+            onChange={(v) => setForm((f) => ({ ...f, permission: normalizeAIPermission(v) }))}
+            options={AI_PERMISSION_VALUES.map((p) => ({
+              value: p,
+              label: AI_PERMISSION_INFO[p].label,
+            }))}
+          />
+          {form.permission === 'write' && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginTop: 8 }}
+              message="直接写入会跳过确认"
+              description="AI 判断后立即改动数据。每次写入都会记进「存档与回退」的操作日志，可以按快照退回；但建议先确认这套流程符合你的预期。"
+            />
+          )}
+          {form.permission === 'read' && (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>
+              当前为只读：AI 照常出分析结果，但「全部采纳」这类批量改动入口会被隐藏。
+            </div>
+          )}
         </div>
 
         {testing && <Spin size="small" />}

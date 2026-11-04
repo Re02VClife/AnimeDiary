@@ -11,6 +11,9 @@
  *   - 修改配置用 `saveAIConfig(patch)` 提交到服务端。
  */
 
+import type { AIPermission } from '../../core/ai-permission';
+import { normalizeAIPermission } from '../../core/ai-permission';
+
 export interface AIProviderInfo {
   id: string;
   label: string;
@@ -33,6 +36,8 @@ export interface AIConfig {
   thinking: 'auto' | 'off';
   /** 深度模式（Bangumi 评论挖掘）开关 */
   deepMode: boolean;
+  /** AI 写操作权限（read 只读 / confirm 提议后确认 / write 直接写入） */
+  permission: AIPermission;
   hasKey: boolean;
   keyMask: string;
   providers: AIProviderInfo[];
@@ -52,6 +57,8 @@ const FALLBACK: AIConfig = {
   jsonMode: true,
   thinking: 'auto',
   deepMode: false,
+  // 兜底取 confirm：既不改变现有「建议 → 你点采纳」的行为，也不会让 AI 悄悄改数据
+  permission: 'confirm',
   hasKey: false,
   keyMask: '',
   providers: [
@@ -89,6 +96,15 @@ export function loadAIConfig(): AIConfig {
 export function hasAIConfig(): boolean {
   const c = loadAIConfig();
   return c.hasKey && c.baseUrl.length > 0 && c.model.length > 0;
+}
+
+/**
+ * 当前生效的 AI 写操作权限。
+ * 所有「AI 要不要改动数据」的判断都必须走这里，不要在组件里各自读 config.permission ——
+ * 配置可能来自旧版本文件或手改的 JSON，统一在这里收敛成合法档位。
+ */
+export function getAIPermission(): AIPermission {
+  return normalizeAIPermission(loadAIConfig().permission);
 }
 
 interface ServerConfigResponse {
