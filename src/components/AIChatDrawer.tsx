@@ -374,7 +374,8 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
         onMouseDown={startDrag}
         title="拖拽调整宽度"
         style={{
-          position: 'fixed', top: 0, bottom: 0, right: width - 3, width: 10,
+          position: 'fixed', top: 'var(--app-titlebar-height, 0px)', bottom: 0,
+          right: width - 3, width: 10,
           cursor: 'col-resize', zIndex: 1001,
           background: 'transparent',
         }}
@@ -388,7 +389,11 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
       <aside
         style={{
           ...widthStyle,
-          position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 1000,
+          position: 'fixed',
+          // 桌面版窗口内容延伸到顶部，系统的最小化/最大化/关闭按钮压在右上角；
+          // 从标题栏高度开始，否则抽屉头部的按钮会被它们盖住
+          top: 'var(--app-titlebar-height, 0px)',
+          right: 0, bottom: 0, zIndex: 1000,
           display: 'flex', flexDirection: 'column',
           background: 'var(--bg-secondary)',
           borderLeft: '1px solid var(--border-primary)',
