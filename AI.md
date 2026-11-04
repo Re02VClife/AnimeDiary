@@ -91,6 +91,20 @@ describeSchema(schema) → 请求 → parseLooseJSON → sanitizeBySchema → va
 
 维度一律通过 `getDimensionsForList()` / `getActiveDimensions()` 取**当前模板**，不再写死默认维度（角色卡会被算成 0 分）。
 
+### 能力清单（`skill-registry.ts`）
+
+6 个 skill 之上还有一张声明表 `AI_SKILLS`，UI 与将来的对话窗口都读它：
+`id / title / description（给模型判断何时该用）/ effect / context / modelInputs / inputSchema / run / summarize`。
+
+- **参数只放客观事实**：`modelInputs` 只允许番剧名这类定位信息。统计数字（百分位、偏差、σ）
+  必须由 `run()` 内部用真实数据重算 —— 让模型传就等于允许它编。
+- **`resolveEntry()` 是保守的**：精确 → 忽略大小写 → 唯一包含匹配，命中多处直接返回 null。
+  宁可让用户重选，也不猜错一部番。
+- **`effect` 目前全是 `read`**。将来加写能力必须标 `write`，`getSkillsFor(permission)` 会按三档权限过滤。
+- `toToolSpecs()` 把清单翻译成 OpenAI 风格的 tools（id 里的 `-` 换成 `_`），对话窗口接工具调用时直接用。
+
+registry 是**薄包装**：底层 6 个函数的签名与实现没动，`live.test.ts` 与详情面板照旧直接用它们。
+
 ## 六、AI 写操作权限（三档）
 
 `core/ai-permission.ts` 定义，存服务端 `ai-config.json` 的 `permission` 字段（不是 localStorage —— 它是安全边界）。

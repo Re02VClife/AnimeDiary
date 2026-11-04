@@ -87,3 +87,7 @@ export { autoTag } from './auto-tag';
 
 // ── 内部辅助（可供外部组件使用）──
 export { getScore, calcOverall, calcTasteDeviation, fmtDims, getDimensionsForList, summarizeTaste } from './ai-helpers';
+
+// ── 能力清单（UI 与将来的对话窗口共用）──
+export { AI_SKILLS, getSkill, getSkillsFor, resolveEntry, toToolSpecs } from './skill-registry';
+export type { AISkill, AnyAISkill, AISkillEffect, AISkillContextKind, AISkillRunContext } from './skill-registry';
