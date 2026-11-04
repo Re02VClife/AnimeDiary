@@ -224,11 +224,24 @@ export function toPublicConfig(cfg: AIStoredConfig): AIPublicConfig {
 // 请求 / 响应
 // ─────────────────────────────────────────────────────────────
 
-export type ChatRole = 'system' | 'user' | 'assistant';
+export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
+
+/**
+ * 一条工具调用（模型发起的）。
+ * arguments 保留**原始 JSON 字符串**，不在这里解析 ——
+ * 模型给的东西一律当不可信输入，解析与校验交给调用方（浏览器侧）。
+ * 类型定义在 core/ai-tools.ts，与浏览器共用同一套形状。
+ */
+export type { AIToolCall, AIToolSpec, AIToolChoice } from '../core/ai-tools';
+import type { AIToolCall, AIToolSpec, AIToolChoice } from '../core/ai-tools';
 
 export interface ChatMessage {
   role: ChatRole;
   content: string;
+  /** assistant 消息里的工具调用：回传给模型时必须原样带上，否则它会重复调用 */
+  tool_calls?: { id: string; type: 'function'; function: { name: string; arguments: string } }[];
+  /** role='tool' 时说明这是对哪一次调用的结果 */
+  tool_call_id?: string;
 }
 
 export interface AIUsage {
@@ -251,6 +264,9 @@ export interface ChatRequest {
   timeoutMs?: number;
   /** 用于用量记账，例如 "taste" / "recommend" */
   purpose?: string;
+  /** 可用的工具；有工具时不会再请求 response_format=json_object（两者互斥） */
+  tools?: AIToolSpec[];
+  toolChoice?: AIToolChoice;
 }
 
 export interface ChatResult {
@@ -260,6 +276,11 @@ export interface ChatResult {
   finishReason: string;
   /** 因 max_tokens 被截断 —— 上层应加大预算重试 */
   truncated: boolean;
+  /**
+   * 模型请求的工具调用。
+   * 有工具调用时 content 通常是空的 —— 这是正常情况，不能当成「模型没说话」报错。
+   */
+  toolCalls?: AIToolCall[];
   usage: AIUsage;
   model: string;
   provider: string;
@@ -330,8 +351,27 @@ function normalizeUsage(raw: any): AIUsage {
   return { promptTokens: prompt, completionTokens: completion, totalTokens: total, reasoningTokens: reasoning, cost };
 }
 
-function describeHttpError(status: number, bodyText: string): { code: AIErrorCode; message: string } {
-  let detail = '';
+/**
+ * 把网关返回的 tool_calls 归一化。
+ * arguments 一律转成**字符串**交出去（有的网关给对象而不是 JSON 字符串），
+ * 解析放在调用方 —— 服务端不替模型「修好」它的参数。
+ */
+function normalizeToolCalls(raw: any): AIToolCall[] {
+  if (!Array.isArray(raw)) return [];
+  const out: AIToolCall[] = [];
+  for (const tc of raw) {
+    const name = String(tc?.function?.name || '').trim();
+    if (!name) continue; // 没有函数名的调用没法执行，直接丢掉
+    const rawArgs = tc?.function?.arguments;
+    const args = typeof rawArgs === 'string'
+      ? rawArgs
+      : (rawArgs == null ? '' : JSON.stringify(rawArgs));
+    out.push({ id: String(tc?.id || ''), name, arguments: args });
+  }
+  return out;
+}
+
+function describeHttpError(status: number, bodyText: string): { code: AIErrorCode; message: string } {  let detail = '';
   try {
     const j = JSON.parse(bodyText);
     detail = j?.error?.message || j?.message || j?.error?.type || '';
@@ -406,7 +446,12 @@ export function createAIClient({ DATA_DIR, fetchImpl }: AIClientOptions): AIClie
       body.thinking = { type: 'disabled' };
     }
     const wantJson = req.jsonMode ?? cfg.jsonMode;
-    if (wantJson && !opts.dropJsonMode) {
+    if (req.tools && req.tools.length > 0) {
+      // tools 与 response_format=json_object 互斥：同时带上多数网关直接 400，
+      // 而且语义上也没必要 —— 走工具调用的对话不该再要求整块 JSON 输出
+      body.tools = req.tools;
+      body.tool_choice = req.toolChoice ?? 'auto';
+    } else if (wantJson && !opts.dropJsonMode) {
       body.response_format = { type: 'json_object' };
     }
     if (opts.stream) {
@@ -453,8 +498,11 @@ export function createAIClient({ DATA_DIR, fetchImpl }: AIClientOptions): AIClie
         ? message.reasoning_content
         : (typeof message.reasoning === 'string' ? message.reasoning : '');
       const finishReason = String(choice?.finish_reason || '');
+      const toolCalls = normalizeToolCalls(message.tool_calls);
 
-      if (!content.trim()) {
+      // 注意：带工具调用的回复 content 通常是空的，这是正常的 ——
+      // 不能当成「模型没说话」去报 empty 错，否则第一条工具请求就永远过不去
+      if (!content.trim() && toolCalls.length === 0) {
         if (finishReason === 'length') {
           // 推理模型把预算全花在思维链上：把空内容 + truncated 交回上层加预算
           return {
@@ -471,6 +519,7 @@ export function createAIClient({ DATA_DIR, fetchImpl }: AIClientOptions): AIClie
         reasoning,
         finishReason,
         truncated: finishReason === 'length',
+        ...(toolCalls.length > 0 ? { toolCalls } : {}),
         usage: normalizeUsage(json?.usage),
         model: String(json?.model || cfg.model),
         provider: cfg.provider,
@@ -556,6 +605,12 @@ export function createAIClient({ DATA_DIR, fetchImpl }: AIClientOptions): AIClie
     let reasoning = '';
     let finishReason = '';
     let usage: AIUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, reasoningTokens: 0 };
+    /**
+     * 流式下 tool_calls 是**增量**到达的：按 index 分槽，id 只在首块给，
+     * arguments 是一段段拼起来的 JSON 文本。不放这里累积的话，
+     * 拿到的永远是半截 JSON（这是工具调用最容易踩的坑）。
+     */
+    const toolCallSlots = new Map<number, { id: string; name: string; arguments: string }>();
 
     try {
       const openStream = async (withUsageOption: boolean) => {
@@ -617,6 +672,22 @@ export function createAIClient({ DATA_DIR, fetchImpl }: AIClientOptions): AIClie
           content += delta.content;
           onEvent({ type: 'delta', text: delta.content });
         }
+        // 工具调用增量：按 index 拼，id 与 name 只认第一次出现的值
+        if (Array.isArray(delta.tool_calls)) {
+          for (const tc of delta.tool_calls) {
+            const idx = typeof tc?.index === 'number' ? tc.index : 0;
+            const slot = toolCallSlots.get(idx) || { id: '', name: '', arguments: '' };
+            if (typeof tc?.id === 'string' && tc.id && !slot.id) slot.id = tc.id;
+            // name 不拼接：它只在首块出现一次，拼了会得到 "get_weatherget_weather"
+            if (typeof tc?.function?.name === 'string' && tc.function.name && !slot.name) {
+              slot.name = tc.function.name;
+            }
+            if (typeof tc?.function?.arguments === 'string' && tc.function.arguments) {
+              slot.arguments += tc.function.arguments;
+            }
+            toolCallSlots.set(idx, slot);
+          }
+        }
         if (choice.finish_reason) finishReason = String(choice.finish_reason);
       };
 
@@ -633,11 +704,19 @@ export function createAIClient({ DATA_DIR, fetchImpl }: AIClientOptions): AIClie
       }
       if (buffer) handleLine(buffer);
 
+      const streamedToolCalls: AIToolCall[] = [...toolCallSlots.entries()]
+        // index 决定顺序：模型可以并行请求多个工具，顺序不能靠 Map 的插入序
+        .sort((a, b) => a[0] - b[0])
+        .map(([, v]) => v)
+        .filter((v) => v.name)
+        .map((v) => ({ id: v.id, name: v.name, arguments: v.arguments }));
+
       const result: ChatResult = {
         content,
         reasoning,
         finishReason,
         truncated: finishReason === 'length',
+        ...(streamedToolCalls.length > 0 ? { toolCalls: streamedToolCalls } : {}),
         usage,
         model: cfg.model,
         provider: cfg.provider,

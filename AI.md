@@ -105,6 +105,25 @@ describeSchema(schema) → 请求 → parseLooseJSON → sanitizeBySchema → va
 
 registry 是**薄包装**：底层 6 个函数的签名与实现没动，`live.test.ts` 与详情面板照旧直接用它们。
 
+### 工具调用通道（`/api/ai/chat`）
+
+网关已支持 OpenAI 风格的 tools，对话窗口可以直接用自然语言指挥 skill。
+
+- 请求体：`tools: AIToolSpec[]` + `toolChoice`。**tools 与 `response_format=json_object` 互斥** ——
+  同时带多数网关直接 400，所以 `buildBody` 里有 tools 时不再加 `response_format`。
+- 响应：`ChatResult.toolCalls`，`arguments` 保留**原始 JSON 字符串**，解析交给浏览器
+  （`core/ai-tools.ts` 的 `parseToolArguments`，宽容空串 / ```json 包裹 / 前后废话）。
+- **坑：带工具调用的回复 `content` 是空的，这是正常现象。** 早先的
+  `if (!content.trim()) throw '模型返回了空内容'` 会把每一次工具请求都打死，
+  现在改成「content 空且没有 toolCalls」才算 empty。
+- **流式下 tool_calls 是增量的**：按 `index` 分槽，`id` 只在首块给，`arguments` 是一段段
+  JSON 文本必须拼接；`name` 只认第一次出现的值（拼接会得到 `get_weatherget_weather`）。
+  这几条都有单测（`tests/server/ai-gateway-tools.test.ts`）。
+
+实测（OpenCode Go + `deepseek-v4.1-flash`）：非流式与流式都能正确返回 `finishReason: tool_calls`，
+把 `assistant.tool_calls` + `role:'tool'` 结果回传后模型能正常收尾。注意**要留足 `maxTokens`**
+（预算太小时会截断成 `finish_reason: length` 并在尾巴上多带一个半截调用）。
+
 ## 六、AI 写操作权限（三档）
 
 `core/ai-permission.ts` 定义，存服务端 `ai-config.json` 的 `permission` 字段（不是 localStorage —— 它是安全边界）。
@@ -152,6 +171,8 @@ $env:AI_LIVE='1'; npx vitest run tests/features/ai-analysis/live.test.ts     # �
 | 现象 | 原因 / 处理 |
 |---|---|
 | 空字符串 / 只返回思维链 | 推理模型 `max_tokens` 太小。`aiJSON` 会自动翻倍，仍失败就把设置里的「输出上限」调大 |
+| 带工具调用时 `content` 是空的 | **这是正常的**，不是错误。工具调用的回复本来就没有正文，看 `toolCalls` 字段 |
+| 模型反复调用同一个工具 | 回传时必须把 `assistant.tool_calls` 与 `role:'tool'` 消息原样带上，且 `tool_call_id` 要对得上，否则模型以为上次没发生过 |
 | `400 MissingSessionID` | 请求没带 `x-opencode-session`，检查 provider 是否为 `opencode-go` |
 | `404` + 提示检查 Base URL | 少了 `/v1`，或网关路径不同 |
 | 模型列表拉不到 | `/models` 不可用会回落到预设列表，不影响调用 |

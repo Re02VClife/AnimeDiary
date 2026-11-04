@@ -5,7 +5,7 @@
  * 挂载方式与其它路由一致：registerAIRoutes(router, { DATA_DIR, fetchImpl })。
  */
 import { createAIClient, AIGatewayError } from './ai-gateway';
-import type { AIStoredConfig, ChatMessage } from './ai-gateway';
+import type { AIStoredConfig, ChatMessage, AIToolSpec, AIToolChoice } from './ai-gateway';
 import { normalizeAIPermission } from '../core/ai-permission';
 
 interface RouterLike {
@@ -141,10 +141,26 @@ export function registerAIRoutes(router: RouterLike, opts: AIRoutesOptions): voi
       return;
     }
 
+    // 只保留四种角色；content 允许 null（带工具调用的 assistant 消息常常没有正文）
+    const VALID_ROLES = new Set(['system', 'user', 'assistant', 'tool']);
     const messages: ChatMessage[] = Array.isArray(body?.messages)
       ? body.messages
-          .filter((m: any) => m && typeof m.content === 'string')
-          .map((m: any) => ({ role: m.role, content: m.content }))
+          .filter((m: any) => m && VALID_ROLES.has(m.role) && (typeof m.content === 'string' || m.content == null))
+          .map((m: any) => {
+            const msg: ChatMessage = {
+              role: m.role,
+              content: typeof m.content === 'string' ? m.content : '',
+            };
+            /**
+             * 工具调用的往返必须完整：assistant 的 tool_calls 与 tool 消息的
+             * tool_call_id 若被剥掉，模型会以为上次调用没发生过，于是一遍遍重复调用。
+             */
+            if (Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+              msg.tool_calls = m.tool_calls;
+            }
+            if (typeof m.tool_call_id === 'string') msg.tool_call_id = m.tool_call_id;
+            return msg;
+          })
       : [];
     if (messages.length === 0) {
       sendJson(res, 400, { ok: false, error: 'messages 不能为空' });
@@ -157,6 +173,10 @@ export function registerAIRoutes(router: RouterLike, opts: AIRoutesOptions): voi
       if (!closed) controller.abort();
     });
 
+    const tools: AIToolSpec[] = Array.isArray(body?.tools)
+      ? body.tools.filter((t: any) => t?.type === 'function' && t?.function && typeof t.function.name === 'string')
+      : [];
+
     const common = {
       messages,
       maxTokens: typeof body?.maxTokens === 'number' ? body.maxTokens : undefined,
@@ -164,6 +184,8 @@ export function registerAIRoutes(router: RouterLike, opts: AIRoutesOptions): voi
       jsonMode: typeof body?.jsonMode === 'boolean' ? body.jsonMode : undefined,
       purpose: typeof body?.purpose === 'string' ? body.purpose : '',
       signal: controller.signal,
+      ...(tools.length > 0 ? { tools } : {}),
+      ...(body?.toolChoice ? { toolChoice: body.toolChoice as AIToolChoice } : {}),
     };
 
     if (body?.stream === true) {

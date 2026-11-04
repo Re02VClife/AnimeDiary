@@ -13,6 +13,7 @@ import { describeSchema, parseLooseJSON, sanitizeBySchema, validateSchema } from
 import type { JSONSchema } from '../../core/ai-json';
 import { defaultAIRun } from './ai-runtime';
 import type { AIRun } from './ai-runtime';
+import type { AIToolCall, AIToolSpec, AIToolChoice } from '../../core/ai-tools';
 
 export interface AIUsage {
   promptTokens: number;
@@ -37,11 +38,16 @@ export interface AICallOptions {
    * 必须传自己的 createAIRun()，否则两边的 token 与思考片段会串在一起。
    */
   run?: AIRun;
+  /** 本轮可用的工具（走工具调用时不要同时开 jsonMode，网关侧会互斥） */
+  tools?: AIToolSpec[];
+  toolChoice?: AIToolChoice;
 }
 
 export interface AIResult {
   text: string;
   reasoning: string;
+  /** 模型请求的工具调用（有它时 text 通常是空的，这是正常的） */
+  toolCalls?: AIToolCall[];
   usage: AIUsage;
   model: string;
   provider: string;
@@ -77,8 +83,12 @@ export class AIError extends Error {
 }
 
 export interface AIMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  /** assistant 消息里的工具调用：回传时必须原样带上，否则模型会重复调用 */
+  tool_calls?: { id: string; type: 'function'; function: { name: string; arguments: string } }[];
+  /** role='tool' 时对应哪一次调用 */
+  tool_call_id?: string;
 }
 
 const EMPTY_USAGE: AIUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, reasoningTokens: 0 };
@@ -123,6 +133,15 @@ function toAIResult(raw: any): AIResult {
   return {
     text: typeof raw.content === 'string' ? raw.content : (typeof raw.text === 'string' ? raw.text : ''),
     reasoning: typeof raw.reasoning === 'string' ? raw.reasoning : '',
+    ...(Array.isArray(raw.toolCalls) && raw.toolCalls.length > 0
+      ? {
+          toolCalls: raw.toolCalls.map((tc: any) => ({
+            id: String(tc?.id || ''),
+            name: String(tc?.name || ''),
+            arguments: typeof tc?.arguments === 'string' ? tc.arguments : '',
+          })).filter((tc: AIToolCall) => tc.name),
+        }
+      : {}),
     usage: raw.usage || EMPTY_USAGE,
     model: String(raw.model || ''),
     provider: String(raw.provider || ''),
@@ -146,6 +165,8 @@ async function callOnce(messages: AIMessage[], opts: AICallOptions): Promise<AIR
         temperature: opts.temperature,
         jsonMode: opts.jsonMode,
         purpose: opts.purpose,
+        ...(opts.tools && opts.tools.length > 0 ? { tools: opts.tools } : {}),
+        ...(opts.toolChoice ? { toolChoice: opts.toolChoice } : {}),
       }),
       signal,
     });
@@ -181,6 +202,8 @@ async function callStream(messages: AIMessage[], opts: AICallOptions, run: AIRun
         jsonMode: opts.jsonMode,
         purpose: opts.purpose,
         stream: true,
+        ...(opts.tools && opts.tools.length > 0 ? { tools: opts.tools } : {}),
+        ...(opts.toolChoice ? { toolChoice: opts.toolChoice } : {}),
       }),
       signal,
     });
