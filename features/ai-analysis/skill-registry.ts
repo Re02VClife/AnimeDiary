@@ -21,6 +21,7 @@
 
 import type { AnimeEntry } from '../../src/types';
 import type { JSONSchema } from '../../core/ai-json';
+import type { AIToolSpec } from '../../core/ai-tools';
 import type { AIPermission } from '../../core/ai-permission';
 import { canAIPropose } from '../../core/ai-permission';
 import type { AIRun } from './ai-runtime';
@@ -242,15 +243,15 @@ export function getSkillsFor(permission: AIPermission): AnyAISkill[] {
   return AI_SKILLS.filter((s) => s.effect === 'read' || canAIPropose(permission));
 }
 
-/** 把能力清单翻译成工具定义（给将来的对话窗口用） */
-export function toToolSpecs(skills: readonly AnyAISkill[]): {
-  name: string;
-  description: string;
-  parameters: JSONSchema;
-}[] {
+/** 把能力清单翻译成网关能直接吃的工具定义 */
+export function toToolSpecs(skills: readonly AnyAISkill[]): AIToolSpec[] {
   return skills.map((s) => ({
-    name: s.id.replace(/-/g, '_'),
-    description: s.description,
-    parameters: s.inputSchema,
+    type: 'function',
+    function: {
+      // 多数网关的工具名只接受字母数字下划线
+      name: s.id.replace(/-/g, '_'),
+      description: s.description,
+      parameters: s.inputSchema as unknown as Record<string, unknown>,
+    },
   }));
 }

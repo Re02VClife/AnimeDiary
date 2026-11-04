@@ -119,16 +119,27 @@ describe('resolveEntry 的保守策略', () => {
 });
 
 describe('toToolSpecs', () => {
-  it('把 id 里的短横线换成下划线（多数网关的工具名只接受字母数字下划线）', () => {
+  it('产出 OpenAI 线格式：type=function + function.{name,description,parameters}', () => {
     const specs = toToolSpecs(AI_SKILLS);
-    expect(specs.map((s) => s.name)).toContain('single_anime');
-    expect(specs.map((s) => s.name)).toContain('auto_tag');
-    expect(specs.some((s) => s.name.includes('-'))).toBe(false);
+    for (const s of specs) {
+      expect(s.type).toBe('function');
+      expect(typeof s.function.name).toBe('string');
+      expect(typeof s.function.description).toBe('string');
+      expect(s.function.parameters).toBeTruthy();
+    }
+  });
+
+  it('把 id 里的短横线换成下划线（多数网关的工具名只接受字母数字下划线）', () => {
+    const names = toToolSpecs(AI_SKILLS).map((s) => s.function.name);
+    expect(names).toContain('single_anime');
+    expect(names).toContain('auto_tag');
+    expect(names.some((n) => n.includes('-'))).toBe(false);
   });
 
   it('原样带上 description 与 parameters', () => {
-    const specs = toToolSpecs([getSkill('taste')!]);
-    expect(specs[0].description).toBe(getSkill('taste')!.description);
-    expect(specs[0].parameters).toBe(getSkill('taste')!.inputSchema);
+    const taste = getSkill('taste')!;
+    const spec = toToolSpecs([taste])[0];
+    expect(spec.function.description).toBe(taste.description);
+    expect(spec.function.parameters).toBe(taste.inputSchema);
   });
 });
