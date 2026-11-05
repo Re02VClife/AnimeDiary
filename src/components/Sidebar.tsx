@@ -94,29 +94,48 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
   const [themeEditorOpen, setThemeEditorOpen] = useState(false);
   const [editingColors, setEditingColors] = useState<Partial<ThemeColors>>({});
 
-  // ── Tag 统计：收集全部标签（含预设），按使用次数排序 ──
-  // 归一化后聚合：模型造标签时会吐出 `科幻` / `科幻 `（尾空格）、`３D动画` / `3D动画`
-  // 这种「看着一样其实两个」的变体，不合并的话计数会被劈成两半，筛选也筛不全。
+  // 按当前模板筛选后的条目列表（未选模板=全部，已选=仅该模板）
+  const templateFiltered = useMemo(() => {
+    if (!activeTemplateId) return animeList;
+    return animeList.filter((a) =>
+      activeTemplateId === 'default'
+        ? (!a.templateId || a.templateId === 'default')
+        : a.templateId === activeTemplateId,
+    );
+  }, [animeList, activeTemplateId]);
+
+  // ── Tag 统计：只统计**当前模板**下的条目 ──
+  //
+  // 番剧和角色卡是两种对象（番剧 198 条 / 角色 222 条，标签池交集只有 119 个），
+  // 之前把两者混在一起统计，同一个「校园」在不同对象上含义也不一样，
+  // 而且点一个角色专属标签（「母亲」「星星眼」）在番剧视图里什么也筛不出来。
+  // 网格本来就按模板过滤了（filteredAnime 的 matchTemplate），标签墙必须跟着走。
+  //
+  // 归一化聚合保留：模型造标签时会吐出 `科幻` / `科幻 `、`３D动画` / `3D动画`
+  // 这种「看着一样其实两个」的变体，不合并的话计数会被劈成两半。
   const tagStats = useMemo(() => {
     const names: string[] = [];
-    for (const a of animeList) {
+    for (const a of templateFiltered) {
       for (const t of a.tags) names.push(t.name);
     }
     const groups = groupTagNames(names);
 
-    // 预设里没被任何番剧用到的，补一条计数 0（这些就是「有标签但没有对应番剧」）
-    const known = new Set(groups.map((g) => g.key));
-    for (const preset of tagPresets) {
-      const key = normalizeTagName(preset);
-      if (key && !known.has(key)) {
-        known.add(key);
-        groups.push({ key, label: preset, count: 0, variants: [preset] });
+    // 预设只在编辑模式下补 0 计数：正常模式不该出现「有标签但没有对应条目」的幽灵，
+    // 但编辑模式得能看到并删掉它们，否则永远清不掉。
+    if (tagEditMode) {
+      const known = new Set(groups.map((g) => g.key));
+      for (const preset of tagPresets) {
+        const key = normalizeTagName(preset);
+        if (key && !known.has(key)) {
+          known.add(key);
+          groups.push({ key, label: preset, count: 0, variants: [preset] });
+        }
       }
     }
 
     groups.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'zh'));
     return groups;
-  }, [animeList, tagPresets]);
+  }, [templateFiltered, tagPresets, tagEditMode]);
 
   /** 用得少的标签默认收起（批量打标签之后标签墙会长到没法看） */
   const [showAllTags, setShowAllTags] = useState(false);
@@ -207,16 +226,6 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
     setNewTagName('');
     catgirlMessage.success(`已添加标签「${name}」`);
   }, [newTagName, tagPresets]);
-
-  // 按当前模板筛选后的条目列表（未选模板=全部，已选=仅该模板）
-  const templateFiltered = useMemo(() => {
-    if (!activeTemplateId) return animeList;
-    return animeList.filter((a) =>
-      activeTemplateId === 'default'
-        ? (!a.templateId || a.templateId === 'default')
-        : a.templateId === activeTemplateId,
-    );
-  }, [animeList, activeTemplateId]);
 
   /** 动态计算条目的加权总评（根据条目自身模板的维度和权重） */
   const calcOverall = useCallback((entry: AnimeEntry): number => {
@@ -494,6 +503,10 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
         >
           <span>
             {showTags ? '▼' : '▶'} 🏷️ Tag 管理
+            {/* 标签墙只统计当前模板，把范围写在标题上，免得以为标签丢了 */}
+            <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 4 }}>
+              {getTemplate(activeTemplateId || 'default').name}
+            </span>
             {activeTag && (
               <span
                 style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 400, marginLeft: 4 }}

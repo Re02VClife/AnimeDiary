@@ -101,10 +101,23 @@ export interface RunBatchTagOptions {
   concurrency?: number;
   signal?: AbortSignal;
   run?: AIRun;
-  /** 已有标签库；不传则从 targets + 其它条目里现算一个 */
+  /** 显式指定词库（测试用）；不传则按模板从 library 里分别统计 */
   vocabulary?: string[];
+  /**
+   * 统计词库用的完整库（通常传全部条目）。
+   *
+   * 关键：词库要**按模板分组**。番剧和角色卡是两种对象（实测 351 / 473 个标签，
+   * 交集只有 119 个），把番剧的 `漫改` `剧场版` 喂给角色卡，模型就会给角色打上
+   * 只有番剧才有的标签 —— 这正是标签池混在一起的源头。
+   */
+  library?: AnimeEntry[];
   /** 每部开始 / 结束时回调，UI 靠它实时更新 */
   onItemChange?: (item: BatchTagItem) => void;
+}
+
+/** 条目的"种类"：默认模板算番剧，其余按模板 ID 区分 */
+function kindOf(entry: AnimeEntry): string {
+  return entry.templateId || 'default';
 }
 
 /**
@@ -116,8 +129,18 @@ export interface RunBatchTagOptions {
 export async function runBatchTag(opts: RunBatchTagOptions): Promise<BatchTagItem[]> {
   const { targets, onItemChange } = opts;
   const limit = Math.max(1, opts.concurrency ?? BATCH_TAG_CONCURRENCY);
-  // 一次算好，别在每部里重复统计
-  const vocabulary = opts.vocabulary ?? buildTagVocabulary(targets);
+
+  // 词库按种类缓存：同一模板的条目共用一份，不同模板之间不串味
+  const library = opts.library ?? targets;
+  const vocabCache = new Map<string, string[]>();
+  const vocabFor = (entry: AnimeEntry): string[] => {
+    if (opts.vocabulary) return opts.vocabulary;
+    const kind = kindOf(entry);
+    if (!vocabCache.has(kind)) {
+      vocabCache.set(kind, buildTagVocabulary(library.filter((a) => kindOf(a) === kind)));
+    }
+    return vocabCache.get(kind)!;
+  };
 
   const items: BatchTagItem[] = targets.map((a) => ({
     animeId: a.id,
@@ -139,7 +162,7 @@ export async function runBatchTag(opts: RunBatchTagOptions): Promise<BatchTagIte
       onItemChange?.(items[index]);
 
       try {
-        const result = await autoTag(target, { signal: opts.signal, run: opts.run, vocabulary });
+        const result = await autoTag(target, { signal: opts.signal, run: opts.run, vocabulary: vocabFor(target) });
         const fresh = diffSuggested(items[index].existingTags, result.suggestedTags || []);
         items[index] = { ...items[index], status: 'done', suggested: fresh };
       } catch (e) {

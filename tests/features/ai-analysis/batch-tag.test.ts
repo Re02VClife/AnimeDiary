@@ -214,6 +214,32 @@ describe('buildTagVocabulary', () => {
     const passed = autoTagMock.mock.calls[0][1] as { vocabulary?: string[] };
     expect(passed.vocabulary).toEqual(['漫改', '治愈']);
   });
+
+  it('词库按模板分组：给角色卡打标签时看不到番剧的标签', async () => {
+    const asAnime = { ...anime('1', '某番', [], 1), templateId: 'default' };
+    const asRole = { ...anime('2', '某角色', [], 2), templateId: 'character' };
+    const library = [
+      asAnime,
+      { ...anime('3', '另一番', ['漫改', '剧场版'], 3), templateId: 'default' },
+      asRole,
+      { ...anime('4', '另一角色', ['母亲', '星星眼'], 4), templateId: 'character' },
+    ];
+
+    await runBatchTag({ targets: [asAnime, asRole], library });
+
+    const calls = autoTagMock.mock.calls.map((c) => ({
+      title: (c[0] as { title: string }).title,
+      vocabulary: (c[1] as { vocabulary?: string[] }).vocabulary ?? [],
+    }));
+    const forAnime = calls.find((c) => c.title === '某番')!;
+    const forRole = calls.find((c) => c.title === '某角色')!;
+
+    expect(forAnime.vocabulary.sort()).toEqual(['剧场版', '漫改']);
+    expect(forRole.vocabulary.sort()).toEqual(['星星眼', '母亲']);
+    // 两边的词库不能互相串
+    expect(forRole.vocabulary).not.toContain('漫改');
+    expect(forAnime.vocabulary).not.toContain('母亲');
+  });
 });
 
 describe('常量', () => {

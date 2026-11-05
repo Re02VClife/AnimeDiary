@@ -31,6 +31,7 @@ import { smartRecommend } from './smart-recommend';
 import { singleAnimeAnalysis } from './single-anime-analysis';
 import { graphOptimize } from './graph-optimize';
 import { autoTag } from './auto-tag';
+import { buildTagVocabulary } from './batch-tag';
 import { lookupAnime, fetchReviews } from './external-skills';
 import type { ExternalLookupResult, ExternalReviewsResult } from './external-skills';
 import type {
@@ -217,7 +218,12 @@ const autoTagSkill: AISkill<{ title: string }, AutoTagResult> = {
   run: (input, ctx) => {
     const target = ctx.entry || resolveEntry(ctx.list, String(input?.title || ''));
     if (!target) throw new Error(`找不到这部番：${input?.title ?? '(未指定)'}`);
-    return autoTag(target, { signal: ctx.signal, run: ctx.run });
+    // 词库只取同一类对象：番剧用番剧的标签，角色卡用角色的，别互相污染
+    const kind = target.templateId || 'default';
+    const vocabulary = buildTagVocabulary(
+      ctx.list.filter((a) => (a.templateId || 'default') === kind),
+    );
+    return autoTag(target, { signal: ctx.signal, run: ctx.run, vocabulary });
   },
   summarize: (out) => `${out.suggestedTags?.length ?? 0} 个建议标签`,
 };

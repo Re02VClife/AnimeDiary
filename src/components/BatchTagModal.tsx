@@ -13,7 +13,7 @@ import { Modal, Button, Segmented, Progress, Checkbox, Tag as AntTag, Alert, Emp
 import { catgirlMessage } from '../theme';
 import { getAIPermission } from '../../features/ai-analysis';
 import { canAIPropose, AI_PERMISSION_INFO } from '../../core/ai-permission';
-import { planBatchTagTargets, runBatchTag, buildTaggedEntry, summarizeBatchTag, buildTagVocabulary } from '../../features/ai-analysis/batch-tag';
+import { planBatchTagTargets, runBatchTag, buildTaggedEntry, summarizeBatchTag } from '../../features/ai-analysis/batch-tag';
 import type { BatchTagItem, BatchTagScope } from '../../features/ai-analysis/batch-tag';
 import { updateAnimeEntries } from '../../features/anime-data/excel-service';
 import type { AnimeEntry } from '../types';
@@ -22,13 +22,15 @@ interface BatchTagModalProps {
   open: boolean;
   onClose: () => void;
   animeList: AnimeEntry[];
+  /** 当前模板：批量只处理这一类对象（番剧 / 角色卡分开打标签） */
+  templateId?: string | null;
   /** 写回成功后让外层刷新列表 */
   onApplied: () => void;
 }
 
 type Phase = 'idle' | 'running' | 'preview';
 
-const BatchTagModal: React.FC<BatchTagModalProps> = ({ open, onClose, animeList, onApplied }) => {
+const BatchTagModal: React.FC<BatchTagModalProps> = ({ open, onClose, animeList, templateId, onApplied }) => {
   const [scope, setScope] = useState<BatchTagScope>('untagged');
   const [phase, setPhase] = useState<Phase>('idle');
   const [items, setItems] = useState<BatchTagItem[]>([]);
@@ -42,14 +44,26 @@ const BatchTagModal: React.FC<BatchTagModalProps> = ({ open, onClose, animeList,
   const permInfo = AI_PERMISSION_INFO[permission];
   const allowed = canAIPropose(permission);
 
-  const targets = useMemo(() => planBatchTagTargets(animeList, scope), [animeList, scope]);
+  /**
+   * 只处理当前模板下的条目。
+   * 番剧和角色卡是两种对象，混在一起打标签会让标签池互相污染
+   * （实测两边标签交集只有 119 / 724）。
+   */
+  const scoped = useMemo(() => {
+    if (!templateId) return animeList;
+    return animeList.filter((a) => (templateId === 'default'
+      ? !a.templateId || a.templateId === 'default'
+      : a.templateId === templateId));
+  }, [animeList, templateId]);
+
+  const targets = useMemo(() => planBatchTagTargets(scoped, scope), [scoped, scope]);
   const untaggedCount = useMemo(
-    () => planBatchTagTargets(animeList, 'untagged').length,
-    [animeList],
+    () => planBatchTagTargets(scoped, 'untagged').length,
+    [scoped],
   );
   const writableCount = useMemo(
-    () => planBatchTagTargets(animeList, 'all').length,
-    [animeList],
+    () => planBatchTagTargets(scoped, 'all').length,
+    [scoped],
   );
 
   // 关掉时把状态清干净，下次打开是全新一轮
@@ -91,8 +105,8 @@ const BatchTagModal: React.FC<BatchTagModalProps> = ({ open, onClose, animeList,
     const result = await runBatchTag({
       targets,
       signal: controller.signal,
-      // 用整库做词库（不是只用于本批），这样新标签会尽量落在已有体系里
-      vocabulary: buildTagVocabulary(animeList),
+      // 词库按模板分组统计（传整库，让它自己按 templateId 分开，不串味）
+      library: animeList,
       onItemChange: (item) => {
         setItems((prev) => prev.map((it) => (it.animeId === item.animeId ? item : it)));
       },

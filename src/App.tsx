@@ -418,6 +418,7 @@ const App: React.FC = () => {
         open={batchTagOpen}
         onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'batchTag' })}
         animeList={state.animeList}
+        templateId={activeTemplateId}
         onApplied={refreshAnimeList}
       />
 
