@@ -30,6 +30,8 @@ import PosterFlipOverlay from './components/PosterFlipOverlay';
 import TitleBar from './components/TitleBar';
 import UpdateToast from './components/UpdateToast';
 import SettingsModal from './components/SettingsModal';
+import ScreenCapture from './components/ScreenCapture';
+import type { QuickActionId } from './features/quick-actions/quick-actions';
 import './App.css';
 
 const { Sider, Content } = Layout;
@@ -43,6 +45,54 @@ const App: React.FC = () => {
   const [characterCutoutOpen, setCharacterCutoutOpen] = useState(false);
   /** 「设置」面板开关（外观 / 数据 / 工具 / 关于） */
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** 顶栏快捷栏「录制 GIF」：独立打开录制面板，保存到 images/快捷截图/ */
+  const [gifRecorderOpen, setGifRecorderOpen] = useState(false);
+
+  /**
+   * 顶栏快捷动作分发。
+   *
+   * 快捷栏的配置在 quick-actions 模块里（localStorage + 事件同步），
+   * 这里只负责把动作映射到已有的打开逻辑，避免 TopBar 反过来依赖 AnimeContext。
+   */
+  const handleQuickAction = (id: QuickActionId) => {
+    switch (id) {
+      case 'gif':
+        setGifRecorderOpen(true);
+        break;
+      case 'ai-chat':
+        dispatch({ type: 'OPEN_MODAL', modal: 'aiChat' });
+        break;
+      case 'taste-report':
+        dispatch({ type: 'OPEN_MODAL', modal: 'tasteReport' });
+        break;
+      case 'complete-data':
+        setMediaCompleteOpen(true);
+        break;
+      case 'complete-characters':
+        setCharacterCompleteOpen(true);
+        break;
+      case 'cutout':
+        setCharacterCutoutOpen(true);
+        break;
+      case 'knowledge-graph':
+        dispatch({ type: 'OPEN_MODAL', modal: 'knowledgeGraph' });
+        break;
+      case 'excel':
+        dispatch({ type: 'OPEN_MODAL', modal: 'excel' });
+        break;
+      case 'backup':
+        dispatch({ type: 'OPEN_MODAL', modal: 'backupHistory' });
+        break;
+      case 'template-manager':
+        dispatch({ type: 'OPEN_MODAL', modal: 'templateManager' });
+        break;
+      case 'ai-settings':
+        dispatch({ type: 'OPEN_MODAL', modal: 'aiSettings' });
+        break;
+      default:
+        break;
+    }
+  };
 
   // ── FLIP 海报过渡状态 ──
   const [flipState, setFlipState] = useState<{
@@ -270,6 +320,8 @@ const App: React.FC = () => {
         <Content className={`main-content${batchMode ? ' with-batch-bar' : ''}`}>
           <TopBar
             onExpandSidebar={() => setSidebarCollapsed(false)}
+            onQuickAction={handleQuickAction}
+            onOpenSettings={() => setSettingsOpen(true)}
             activeCategory={activeCategory}
             onCategoryChange={(c) => dispatch({ type: 'SET_CATEGORY', payload: c })}
             searchText={searchText}
@@ -432,6 +484,15 @@ const App: React.FC = () => {
 
       {/* 全应用设置：以前铺在侧栏底部（滚 3 屏才够得着），现在收进分页弹窗 */}
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
+      {/* 快捷栏「录制 GIF」：独立打开录制面板，不依赖某部番的图片管理 */}
+      {gifRecorderOpen && (
+        <ScreenCapture
+          animeTitle="快捷截图"
+          initialMode="record"
+          onClose={() => setGifRecorderOpen(false)}
+        />
+      )}
 
       {/* 表格视图：应用内直接看 / 改列表原始数据 */}
       <ExcelEditor

@@ -31,6 +31,8 @@ interface ScreenCaptureProps {
   animeTitle: string;
   onImageSaved?: (entry: ImageEntry) => void;
   onClose: () => void;
+  /** 打开时落在哪个标签页：顶栏「录制 GIF」直接进录制 */
+  initialMode?: CaptureMode;
 }
 
 // ── 工具 ──
@@ -104,8 +106,8 @@ async function cropDataUrl(dataUrl: string, crop: CropEdges): Promise<string> {
 }
 
 // ── 组件 ──
-const ScreenCapture: React.FC<ScreenCaptureProps> = ({ animeTitle, onImageSaved, onClose }) => {
-  const [mode, setMode] = useState<CaptureMode>('screenshot');
+const ScreenCapture: React.FC<ScreenCaptureProps> = ({ animeTitle, onImageSaved, onClose, initialMode = 'screenshot' }) => {
+  const [mode, setMode] = useState<CaptureMode>(initialMode);
 
   // 窗口尺寸 & 拖拽
   const [winSize, setWinSize] = useState({ w: 840, h: 520 });

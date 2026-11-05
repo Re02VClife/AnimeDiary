@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { Input, Button, Segmented, Select, Dropdown } from 'antd';
+import { Input, Button, Segmented, Select, Dropdown, Tooltip } from 'antd';
 import type { InputRef, MenuProps } from 'antd';
 import {
   SearchOutlined,
@@ -8,9 +8,15 @@ import {
   UserAddOutlined,
   BgColorsOutlined,
   AppstoreOutlined,
+  SettingOutlined,
 } from '@ant-design/icons';
 import type { AnimeCategory, ScoreTemplate, CategoryOverrides } from '../types';
 import { CATEGORY_CONFIG, getVisibleCategories } from '../types';
+import {
+  QUICK_ACTION_MAP,
+  useQuickActionIds,
+  type QuickActionId,
+} from '../features/quick-actions/quick-actions';
 
 interface TopBarProps {
   activeCategory: AnimeCategory;
@@ -34,6 +40,10 @@ interface TopBarProps {
   categoryLabels?: CategoryOverrides;
   /** 悬停左上角品牌块时展开侧栏 */
   onExpandSidebar?: () => void;
+  /** 执行顶栏快捷动作（录制 GIF / AI 对话 / 数据补全…） */
+  onQuickAction?: (id: QuickActionId) => void;
+  /** 打开设置面板（快捷栏为空时留一个入口） */
+  onOpenSettings?: () => void;
 }
 
 /**
@@ -71,9 +81,13 @@ const TopBar: React.FC<TopBarProps> = ({
   onTemplateChange,
   categoryLabels,
   onExpandSidebar,
+  onQuickAction,
+  onOpenSettings,
 }) => {
   const searchRef = useRef<InputRef>(null);
   const barRef = useRef<HTMLDivElement>(null);
+  /** 快捷栏配置与设置面板共享（localStorage + 自定义事件同步） */
+  const { ids: quickActionIds } = useQuickActionIds();
 
   /**
    * 把顶栏实际高度写进 CSS 变量 `--topbar-height`。
@@ -228,17 +242,57 @@ const TopBar: React.FC<TopBarProps> = ({
                   className={`category-tab${active ? ' active' : ''}`}
                   style={{ '--cat-color': CATEGORY_TINT[cat] } as React.CSSProperties}
                   onClick={() => onCategoryChange(cat)}
+                  // 默认只显示当前分类的文字，其余只剩彩色圆点：
+                  // 圆点本身没有语义，title / aria-label 负责可读性与可访问性。
+                  title={label}
+                  aria-label={label}
+                  aria-pressed={active}
                 >
                   <span className="category-tab-dot" aria-hidden />
-                  {label}
+                  {/* 内层 span 配合 grid-template-columns: 0fr→1fr 做宽度动画，
+                      比 max-width 更均匀：宽度按内容比例展开，不会前 100ms 就弹完 */}
+                  <span className="category-tab-label"><span>{label}</span></span>
                 </button>
               );
             })}
           </nav>
         )}
 
-        {/* 右侧：模板切换 + 批量工具 + 新增 */}
+        {/* 右侧：快捷动作 + 设置 + 模板切换 + 批量工具 + 新增
+            快捷栏放在右侧操作组里而不是紧跟分类栏：分类栏展开会把自己撑宽 130px，
+            快捷按钮若在它后面就会被推着走，鼠标从分类移过去时得追按钮。 */}
         <div className="top-bar-actions">
+          {quickActionIds.length > 0 && (
+            <div className="quick-actions" role="group" aria-label="快捷操作">
+              {quickActionIds.map((id) => {
+                const def = QUICK_ACTION_MAP[id];
+                if (!def) return null;
+                return (
+                  <Tooltip key={id} title={def.label} placement="bottom">
+                    <button
+                      type="button"
+                      className="quick-action-btn"
+                      aria-label={def.label}
+                      onClick={() => onQuickAction?.(id)}
+                    >
+                      <span className="quick-action-icon" aria-hidden>{def.icon}</span>
+                    </button>
+                  </Tooltip>
+                );
+              })}
+              <span className="quick-actions-divider" aria-hidden />
+            </div>
+          )}
+          {onOpenSettings && (
+            <Tooltip title="设置" placement="bottom">
+              <Button
+                className="ghost-action settings-btn"
+                icon={<SettingOutlined />}
+                aria-label="设置"
+                onClick={onOpenSettings}
+              />
+            </Tooltip>
+          )}
           {templates.length > 1 && (
             <Select
               size="small"

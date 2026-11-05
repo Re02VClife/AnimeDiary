@@ -426,8 +426,8 @@
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 6px 14px;
+  gap: 0;
+  padding: 6px 11px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -454,6 +454,58 @@
   opacity: 0.45;
   transition: opacity var(--duration-base) ease, box-shadow var(--duration-base) ease;
   flex: 0 0 auto;
+}
+
+/*
+ * 分类文字默认只显示「当前分类」那一个，其余收成彩色圆点。
+ * 鼠标移进分类栏（或键盘 focus）时整栏展开 —— 整栏一起动比单项各自伸缩更稳，
+ * 也不会因为指针扫过就把某项顶开再弹回。
+ *
+ * 宽度动画用 grid-template-columns: 0fr → 1fr，而不是 max-width：
+ * max-width 的目标值远大于文字宽度时，前 1/3 时间就弹完了，后半段是空转；
+ * 1fr 会按内容宽度等比例展开，340ms 全程都有变化，看起来才顺。
+ * 右侧按钮由 margin-left:auto 固定，分类变宽不会把它推走。
+ */
+.category-tab-label {
+  display: inline-grid;
+  grid-template-columns: 0fr;
+  margin-left: 0;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition:
+    grid-template-columns 360ms var(--ease-out),
+    margin-left 360ms var(--ease-out),
+    opacity 220ms ease,
+    transform 360ms var(--ease-out);
+}
+
+.category-tab-label > span {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.category-tab.active .category-tab-label {
+  grid-template-columns: 1fr;
+  margin-left: 7px;
+  opacity: 1;
+  transform: none;
+}
+
+.category-tabs:hover .category-tab-label,
+.category-tabs:focus-within .category-tab-label {
+  grid-template-columns: 1fr;
+  margin-left: 7px;
+  opacity: 1;
+  transform: none;
+}
+
+/* 展开时非当前项也给一点文字亮度，方便扫读 */
+.category-tabs:hover .category-tab .category-tab-label {
+  color: var(--text-secondary);
+}
+
+.category-tabs:hover .category-tab.active .category-tab-label {
+  color: var(--text-primary);
 }
 
 .category-tab:hover {
@@ -490,6 +542,72 @@
   gap: 10px;
   margin-left: auto;
   flex: 0 0 auto;
+}
+
+/* ── 顶栏快捷栏（右侧操作组的第一组） ── */
+.quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-right: 9px;
+  border-right: 1px solid var(--glass-border);
+}
+
+.quick-actions-divider {
+  display: none;
+}
+
+.quick-action-btn {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-gradient);
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    transform 240ms var(--ease-spring),
+    background 200ms ease,
+    border-color 200ms ease,
+    box-shadow 240ms var(--ease-out);
+}
+
+.quick-action-btn:hover {
+  transform: translateY(-2px);
+  border-color: var(--brand-line);
+  background: color-mix(in srgb, var(--brand-primary) 10%, var(--bg-secondary));
+  box-shadow:
+    0 8px 20px -12px var(--brand-glow),
+    inset 0 1px 0 var(--glass-highlight);
+}
+
+.quick-action-btn:active {
+  transform: translateY(0) scale(0.94);
+  transition-duration: 80ms;
+}
+
+.quick-action-icon {
+  display: block;
+  font-size: 16.5px;
+  line-height: 1;
+  transform: translateY(-0.5px);
+  filter: saturate(1.12);
+}
+
+/* 设置按钮：图标按钮，和快捷栏视觉同源 */
+.settings-btn.ant-btn {
+  width: 34px;
+  padding-inline: 0;
+}
+
+.settings-btn.ant-btn .anticon {
+  font-size: 15px;
 }
 
 .template-select.ant-select .ant-select-selector {
@@ -976,22 +1094,42 @@
   }
 
   .category-tab {
-    padding: 6px 10px;
+    padding: 6px 9px;
   }
 
   .category-tabs {
     padding: 3px;
   }
+
+  .quick-actions {
+    gap: 4px;
+    padding-right: 8px;
+  }
+
+  .quick-action-btn {
+    width: 30px;
+    height: 30px;
+    font-size: 14px;
+  }
 }
 
 @media (max-width: 1040px) {
-  /* 分类 tab 的圆点只是装饰，窄屏让位给文字 */
-  .category-tab-dot {
-    display: none;
+  /* 圆点是折叠态下唯一的分类标识，绝不能隐藏（之前这里藏过，折叠后会变成空按钮） */
+  .category-tab {
+    padding: 6px 7px;
   }
 
   .search-cluster {
-    min-width: 180px;
+    min-width: 170px;
+  }
+
+  .quick-action-btn {
+    width: 28px;
+    height: 28px;
+  }
+
+  .settings-btn.ant-btn {
+    width: 30px;
   }
 }
 
@@ -2026,4 +2164,110 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+}
+
+/* ── 设置面板：顶栏快捷栏选择 ── */
+.quick-action-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.quick-action-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-gradient);
+  cursor: pointer;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease,
+    transform 180ms var(--ease-out);
+}
+
+.quick-action-option:hover {
+  border-color: var(--brand-line);
+  transform: translateY(-1px);
+}
+
+.quick-action-option.is-on {
+  border-color: var(--brand-line);
+  background: color-mix(in srgb, var(--brand-primary) 9%, var(--bg-secondary));
+}
+
+.quick-action-option.is-disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.quick-action-option-icon {
+  flex: 0 0 auto;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.quick-action-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.quick-action-option-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.quick-action-option-hint {
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+[data-theme='light'] .quick-action-option {
+  background: #ffffff;
+  border-color: rgba(31, 35, 40, 0.1);
+}
+
+[data-theme='light'] .quick-action-option.is-on {
+  background: color-mix(in srgb, var(--brand-primary) 7%, #ffffff);
+}
+
+/* ── 设置面板：滚动时把页签固定在顶部 ── */
+.settings-modal .ant-tabs-nav {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  margin-bottom: 12px;
+  padding: 2px 0 6px;
+  /* 不透明：滚动时内容从页签下面穿过，半透明底会透出一截残影 */
+  background: var(--bg-secondary);
+}
+
+.settings-modal .ant-tabs-nav::before {
+  border-bottom-color: var(--glass-border) !important;
+}
+
+[data-theme='light'] .settings-modal .ant-tabs-nav {
+  background: #ffffff;
+}
+
+/* 页签贴住 body 顶部，避免滚动内容从 sticky 页签上方的内边距里露出来 */
+.settings-modal .ant-modal-body {
+  padding-top: 0;
+}
+
+.settings-modal .ant-tabs-nav {
+  padding-top: 4px;
 }

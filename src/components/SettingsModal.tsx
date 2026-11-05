@@ -13,12 +13,19 @@
  * 侧栏只留「浏览与筛选」，长度砍掉一大半。
  */
 import React, { useState } from 'react';
-import { Modal, Tabs, Segmented, Switch, Button, Slider, InputNumber, ColorPicker, Typography } from 'antd';
+import { Modal, Tabs, Segmented, Switch, Button, Slider, InputNumber, ColorPicker, Typography, Checkbox } from 'antd';
 import { useAnimeContext } from '../../context/AnimeContext';
 import { useTheme } from '../theme/ThemeContext';
 import type { ThemeColors } from '../theme/types';
 import UpdatePanel from './UpdatePanel';
 import PosterFixModal from './PosterFixModal';
+import { catgirlMessage } from '../theme';
+import {
+  QUICK_ACTIONS,
+  MAX_QUICK_ACTIONS,
+  useQuickActionIds,
+  type QuickActionId,
+} from '../features/quick-actions/quick-actions';
 
 interface SettingsModalProps {
   open: boolean;
@@ -62,6 +69,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose }) => {
   const [editingColors, setEditingColors] = useState<Partial<ThemeColors>>({});
   /** 批量补全海报（搜索后人工确认，不自动写入） */
   const [posterFixOpen, setPosterFixOpen] = useState(false);
+
+  // 顶栏快捷栏配置（与 TopBar 通过 localStorage + 事件同步）
+  const { ids: quickActionIds, toggle: toggleQuickAction } = useQuickActionIds();
+  const handleToggleQuickAction = (id: QuickActionId) => {
+    const result = toggleQuickAction(id);
+    if (!result.ok) catgirlMessage.warning(`顶栏最多放 ${MAX_QUICK_ACTIONS} 个快捷按钮`);
+  };
 
   const hasCustomColors = Object.keys(themeState.customColors).length > 0;
 
@@ -131,6 +145,38 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose }) => {
             style={{ width: 70 }}
           />
         </Row>
+      </Group>
+
+      <Group title="顶栏快捷栏">
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: '0 0 10px' }}>
+          勾选要放在顶栏右侧的按钮，最多 {MAX_QUICK_ACTIONS} 个。分类栏收起文字后空出的位置正好用上。
+        </Typography.Paragraph>
+        <div className="quick-action-picker">
+          {QUICK_ACTIONS.map((action) => {
+            const checked = quickActionIds.includes(action.id);
+            const disabled = !checked && quickActionIds.length >= MAX_QUICK_ACTIONS;
+            return (
+              <div
+                key={action.id}
+                className={`quick-action-option${checked ? ' is-on' : ''}${disabled ? ' is-disabled' : ''}`}
+                onClick={() => { if (!disabled) handleToggleQuickAction(action.id); }}
+              >
+                <Checkbox
+                  checked={checked}
+                  disabled={disabled}
+                  onChange={() => handleToggleQuickAction(action.id)}
+                  // 点击复选框本身只触发 onChange，不要再冒泡到整行的 onClick
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <span className="quick-action-option-icon" aria-hidden>{action.icon}</span>
+                <span className="quick-action-option-text">
+                  <span className="quick-action-option-label">{action.label}</span>
+                  <span className="quick-action-option-hint">{action.hint}</span>
+                </span>
+              </div>
+            );
+          })}
+        </div>
       </Group>
     </>
   );
