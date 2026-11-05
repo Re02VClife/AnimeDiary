@@ -28,6 +28,8 @@ import { initAIConfig } from '../features/ai-analysis/ai-config';
 import TasteReportModal from '../features/ai-analysis/TasteReportModal';
 import PosterFlipOverlay from './components/PosterFlipOverlay';
 import TitleBar from './components/TitleBar';
+import UpdateToast from './components/UpdateToast';
+import SettingsModal from './components/SettingsModal';
 import './App.css';
 
 const { Sider, Content } = Layout;
@@ -39,6 +41,8 @@ const App: React.FC = () => {
   /** 「角色补全」面板开关（搜索角色资料并生成角色卡） */
   const [characterCompleteOpen, setCharacterCompleteOpen] = useState(false);
   const [characterCutoutOpen, setCharacterCutoutOpen] = useState(false);
+  /** 「设置」面板开关（外观 / 数据 / 工具 / 关于） */
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // ── FLIP 海报过渡状态 ──
   const [flipState, setFlipState] = useState<{
@@ -124,6 +128,28 @@ const App: React.FC = () => {
     return t?.dimensions;
   }, [activeTemplateId, templates]);
 
+  /**
+   * 侧栏「鼠标离开就收起」。
+   *
+   * 只靠 Sider 自己的 onMouseLeave 不够：侧栏是 hover 展开的，如果用户从品牌块
+   * 移开后**从没进入过 Sider**，onMouseLeave 永远不会触发 —— 侧栏就卡在展开态，
+   * 盖着左边一列卡片还关不掉（实测很别扭）。
+   * 这里按「鼠标是否还在侧栏矩形内」判断，鼠标一移出去就收起。
+   */
+  useEffect(() => {
+    if (sidebarCollapsed) return undefined;
+    const onMove = (e: MouseEvent) => {
+      const sider = document.querySelector('.app-sidebar');
+      if (!sider) return;
+      const r = sider.getBoundingClientRect();
+      const inside = e.clientX >= r.left && e.clientX <= r.right
+        && e.clientY >= r.top && e.clientY <= r.bottom;
+      if (!inside) setSidebarCollapsed(true);
+    };
+    window.addEventListener('mousemove', onMove);
+    return () => window.removeEventListener('mousemove', onMove);
+  }, [sidebarCollapsed]);
+
   // 启动时同步一次 AI 配置（真配置在服务端，浏览器只留镜像）
   useEffect(() => {
     void initAIConfig();
@@ -170,6 +196,34 @@ const App: React.FC = () => {
     return () => { clearTimeout(timer); clearTimeout(safety); };
   }, [flipState, detailOpen]);
 
+  /**
+   * 详情面板的键盘导航：← / → 切上一部 / 下一部。
+   *
+   * 面板右上角本来就有 ‹ › 按钮，但只能点。连续评十几部番的时候，
+   * 手在鼠标和键盘之间来回切很断节奏 —— 这对「一本正经地刷番评分」是高频动作。
+   * 顺序跟随网格（filteredAnime），和 ‹ › 按钮完全一致。
+   *
+   * 输入框/文本域里按方向键是移动光标，必须让路。
+   */
+  useEffect(() => {
+    if (!detailOpen || !selectedAnime) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return;
+      const idx = filteredAnime.findIndex((a) => a.id === selectedAnime.id);
+      if (idx < 0) return;
+      const next = filteredAnime[idx + (e.key === 'ArrowRight' ? 1 : -1)];
+      if (!next) return; // 到头了就安静地什么都不做，别把网格滚走
+      e.preventDefault();
+      dispatch({ type: 'OPEN_MODAL', modal: 'detail', anime: next });
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [detailOpen, selectedAnime, filteredAnime, dispatch]);
+
   if (loading) {
     return (
       <div className="app-boot">
@@ -196,6 +250,8 @@ const App: React.FC = () => {
     <>
       {/* 桌面版自定义标题栏；浏览器里 TitleBar 自身不渲染 */}
       <TitleBar />
+      {/* 热更新下载完成后的全局提示（浏览器里不渲染任何东西） */}
+      <UpdateToast />
       <Layout className="app-layout">
       <Sider
         width={300}
@@ -205,11 +261,13 @@ const App: React.FC = () => {
         onMouseLeave={() => setSidebarCollapsed(true)}
         className="app-sidebar"
       >
-        <Sidebar collapsed={sidebarCollapsed} />
+        <Sidebar collapsed={sidebarCollapsed} onOpenSettings={() => setSettingsOpen(true)} />
       </Sider>
 
-      <Layout className={`main-layout${sidebarCollapsed ? '' : ' with-sidebar'}`}>
-        <Content className="main-content">
+      {/* 侧栏已改成绝对定位浮层（App.css .app-sidebar），展开时不再挤压网格，
+          所以这里不再需要 with-sidebar 标记去收缩顶栏 */}
+      <Layout className="main-layout">
+        <Content className={`main-content${batchMode ? ' with-batch-bar' : ''}`}>
           <TopBar
             onExpandSidebar={() => setSidebarCollapsed(false)}
             activeCategory={activeCategory}
@@ -371,6 +429,9 @@ const App: React.FC = () => {
         open={templateManagerOpen}
         onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'templateManager' })}
       />
+
+      {/* 全应用设置：以前铺在侧栏底部（滚 3 屏才够得着），现在收进分页弹窗 */}
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       {/* 表格视图：应用内直接看 / 改列表原始数据 */}
       <ExcelEditor

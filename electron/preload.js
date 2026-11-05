@@ -24,6 +24,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getDataDir: () => ipcRenderer.invoke('data:getDir'),
   openDataDir: () => ipcRenderer.invoke('data:openDir'),
 
+  /**
+   * 同步标题栏右上角系统按钮的配色。
+   * 那块区域由 Electron 独立绘制，CSS 变量影响不到它 —— 不主动同步的话，
+   * 切到浅色主题后右上角会留一块深色（#161b22）补丁。
+   * @param {'dark'|'light'} mode
+   * @param {{background?: string, symbol?: string}} colors #RRGGBB，非法值主进程会回退默认
+   */
+  setTitleBarOverlay: (mode, colors) =>
+    ipcRenderer.send('window:set-titlebar-overlay', { mode, colors }),
+
   // 热更新
   getUpdateStatus: () => ipcRenderer.invoke('update:getStatus'),
   checkUpdate: () => ipcRenderer.invoke('update:check'),

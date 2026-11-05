@@ -120,6 +120,23 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     document.documentElement.setAttribute('data-theme', state.themeMode);
   }, [colors, state.themeMode]);
 
+  /**
+   * 桌面端：右上角那几个系统窗口按钮（minimize/maximize/close）由 Electron 的
+   * titleBarOverlay 独立绘制，**不在这张页面的绘制树里**，CSS 变量影响不到。
+   * 不在这里同步的话，切到浅色主题后右上角会留一块深色（#161b22）补丁。
+   *
+   * 深色沿用原来的 #161b22（= bgSecondary），浅色用纯白（= bgPrimary）；
+   * 用户自定义配色时也跟着走，保证和标题栏本体同色。
+   */
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api || typeof api.setTitleBarOverlay !== 'function') return;
+    api.setTitleBarOverlay(state.themeMode, {
+      background: state.themeMode === 'light' ? colors.bgPrimary : colors.bgSecondary,
+      symbol: colors.textPrimary,
+    });
+  }, [state.themeMode, colors]);
+
   // 状态变更时持久化
   useEffect(() => {
     saveState(state);

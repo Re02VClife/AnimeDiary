@@ -3,25 +3,44 @@
  * 浏览器里 window.electronAPI 不存在，此时组件不渲染任何内容。
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { Button, Progress, Tooltip } from 'antd';
+import { Button, Input, Progress, Tooltip } from 'antd';
 import { catgirlMessage } from '../theme';
 
 const UpdatePanel: React.FC = () => {
   const api = window.electronAPI;
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [dataDir, setDataDir] = useState('');
+  const [updateUrl, setUpdateUrl] = useState('');
+  /** 更新源地址改成输入框（低频操作，但 IPC 一直有，只是以前没界面） */
+  const [editingUrl, setEditingUrl] = useState(false);
 
   useEffect(() => {
     if (!api) return undefined;
     let alive = true;
     api.getUpdateStatus().then((s) => { if (alive) setStatus(s); }).catch(() => {});
     api.getDataDir().then((d) => { if (alive) setDataDir(d); }).catch(() => {});
+    // 更新源可能还没配（IPC 偶尔失败），失败就留空
+    api.getUpdateConfig()
+      .then((c) => { if (alive) setUpdateUrl(c?.updateUrl || ''); })
+      .catch(() => {});
     const off = api.onUpdateStatus((s) => { if (alive) setStatus(s); });
     return () => {
       alive = false;
       if (typeof off === 'function') off();
     };
   }, [api]);
+
+  const saveUpdateUrl = useCallback(async () => {
+    if (!api) return;
+    try {
+      const next = await api.setUpdateUrl(updateUrl.trim());
+      setUpdateUrl(next?.updateUrl || '');
+      setEditingUrl(false);
+      catgirlMessage.success('更新源已保存，下次检查生效');
+    } catch (e) {
+      catgirlMessage.error('保存失败：' + (e instanceof Error ? e.message : '未知错误'));
+    }
+  }, [api, updateUrl]);
 
   const handleCheck = useCallback(async () => {
     if (!api) return;
@@ -94,6 +113,32 @@ const UpdatePanel: React.FC = () => {
         >
           检查更新
         </Button>
+
+        {/* 更新源：低频配置，点一下才能改，避免误碰 */}
+        {editingUrl ? (
+          <Input
+            size="small"
+            autoFocus
+            value={updateUrl}
+            onChange={(e) => setUpdateUrl(e.target.value)}
+            onPressEnter={() => { void saveUpdateUrl(); }}
+            onBlur={() => { void saveUpdateUrl(); }}
+            placeholder="本地文件夹或 HTTP 目录"
+            style={{ fontSize: 12 }}
+          />
+        ) : (
+          <Tooltip title={updateUrl ? `更新源：${updateUrl}` : '未配置更新源'}>
+            <Button
+              size="small"
+              block
+              type="text"
+              style={{ borderRadius: 6, fontSize: 12, color: 'var(--text-secondary)' }}
+              onClick={() => setEditingUrl(true)}
+            >
+              更新源：{updateUrl ? (updateUrl.length > 26 ? '…' + updateUrl.slice(-24) : updateUrl) : '未配置'}
+            </Button>
+          </Tooltip>
+        )}
 
         {dataDir && (
           <Tooltip title={dataDir}>

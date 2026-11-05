@@ -274,7 +274,7 @@ const ExcelEditor: React.FC<ExcelEditorProps> = ({ open, onClose }) => {
       open={open}
       onCancel={handleClose}
       width="96vw"
-      style={{ top: 16, maxWidth: 1700 }}
+      style={{ top: 'calc(var(--app-titlebar-height, 0px) + 12px)', maxWidth: 1700 }}
       footer={null}
       destroyOnHidden
     >
@@ -352,7 +352,10 @@ const ExcelEditor: React.FC<ExcelEditorProps> = ({ open, onClose }) => {
             setPage(pag.current ?? 1);
             setPageSize(pag.pageSize ?? 100);
           }}
-          scroll={{ x: 'max-content', y: 'calc(100vh - 360px)' }}
+          /* 表格自己滚，分页留出来。
+             原来算 100vh-360 时，弹窗被统一限高后 body 只剩 540px，
+             提示条 + 工具栏 + 表格就把分页挤到滚动区外了（实测 720 高窗口看不到「共 176 条」）。 */
+          scroll={{ x: 'max-content', y: 'calc(100vh - 470px)' }}
           bordered
         />
       </Spin>

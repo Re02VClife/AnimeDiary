@@ -13,6 +13,25 @@
       /* JS 与 CSS 加载前的底色，避免打开瞬间白屏闪烁 */
       html { background: #0d1117; }
     </style>
+    <script>
+      /*
+       * 首帧之前定主题。
+       * 以前这里写死深色底：浅色主题的用户每次启动都会先闪一下黑，再变白。
+       * 这段在 CSS/React 之前执行，直接把底色和 data-theme 定好，首帧就是对的。
+       * 键名与 src/theme/types.ts 的 THEME_STORAGE_KEY 保持一致。
+       */
+      (function () {
+        try {
+          var raw = localStorage.getItem('anime_diary_theme');
+          var saved = raw ? JSON.parse(raw) : null;
+          var light = !!saved && saved.themeMode === 'light';
+          document.documentElement.setAttribute('data-theme', light ? 'light' : 'dark');
+          document.documentElement.style.background = light ? '#ffffff' : '#0d1117';
+        } catch (e) {
+          /* 读不到（首次启动/被禁用 localStorage）就用深色默认 */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -5,7 +5,7 @@
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Button, InputNumber, Select, Slider, message, Spin } from 'antd';
+import { Button, InputNumber, Select, Slider, message, notification, Spin } from 'antd';
 import {
   CameraOutlined, VideoCameraOutlined, FolderOpenOutlined,
   CloseOutlined, PauseCircleOutlined, PlayCircleOutlined,
@@ -176,55 +176,105 @@ const ScreenCapture: React.FC<ScreenCaptureProps> = ({ animeTitle, onImageSaved,
   }, []);
 
   // ── OS 原生截图 ──
+  /**
+   * 失败时的提示走 notification 而不是 message：
+   * message 不换行，长错误会把整条顶栏撑满（实测截图失败时那行红字横穿 1400px，
+   * 正好盖住标题栏和窗口按钮）。这里再兜一层人话文案 —— 主进程已经把
+   * cmd.exe 的原始报错吞掉了，真出意外时也只显示这一句。
+   */
+  const notifyShotFailed = useCallback((err: unknown) => {
+    const detail = err instanceof Error ? err.message : '';
+    notification.error({
+      message: '截图失败',
+      description: detail && detail.length < 120
+        ? detail
+        : '系统没能在这次截图里拿到画面。重试一次通常就好了；连续失败可以用「框选区域」从上一张截图里裁。',
+      placement: 'topRight',
+      duration: 6,
+    });
+  }, []);
+
   const takeScreenshot = useCallback(async (): Promise<string | null> => {
     try {
       const result = await window.electronAPI!.takeScreenshot();
       return result.dataUrl;
-    } catch (err: any) {
-      message.error(`截图失败: ${err?.message || '未知错误'}`);
+    } catch (err) {
+      notifyShotFailed(err);
       return null;
     }
-  }, []);
+  }, [notifyShotFailed]);
 
-  // ── 自动截图：打开截图 Tab 时立即截全屏 ──
-  const doCapture = useCallback(async (): Promise<string | null> => {
+  /** 最近一次截到的**原图**（未裁剪）。裁剪只作用于它，绝不重新截屏 */
+  const rawShotRef = useRef<string | null>(null);
+
+  /** 截一张新的原图，记录分辨率 */
+  const captureRaw = useCallback(async (): Promise<string | null> => {
     const dataUrl = await takeScreenshot();
     if (!dataUrl) return null;
-    // 记录屏幕分辨率
     const img = await loadImage(dataUrl);
     setScreenRes({ w: img.width, h: img.height });
-    if (crop.top || crop.bottom || crop.left || crop.right) return cropDataUrl(dataUrl, crop);
+    rawShotRef.current = dataUrl;
     return dataUrl;
-  }, [takeScreenshot, crop]);
+  }, [takeScreenshot]);
 
+  /** 按当前 crop 裁原图（纯本地裁剪，不碰屏幕） */
+  const renderCrop = useCallback(async (raw: string, c: CropEdges): Promise<string> => {
+    const has = c.top || c.bottom || c.left || c.right;
+    return has ? cropDataUrl(raw, c) : raw;
+  }, []);
+
+  /**
+   * 自动截图：打开截图 Tab 时截一次全屏。
+   *
+   * 守卫用 ref 而不是 state —— React 18 StrictMode 下 effect 会连跑两遍，
+   * 两次并发调主进程截图，Windows 上 screenshot-desktop 共用同一个临时 bat，
+   * 必有一个失败（实测打开面板就红字报错，屏幕还会闪两下）。
+   */
+  const autoShotRef = useRef(false);
   useEffect(() => {
-    if (isElectron && mode === 'screenshot' && !capturedDataUrl && !capturing) {
-      doCapture().then((url) => { if (url) setCapturedDataUrl(url); });
-    }
+    if (!isElectron || mode !== 'screenshot') return;
+    if (autoShotRef.current) return;
+    autoShotRef.current = true;
+    void (async () => {
+      const raw = await captureRaw();
+      if (raw) setCapturedDataUrl(await renderCrop(raw, crop));
+    })();
+    // 只在进入截图 Tab 时跑一次；crop 由下面那个 effect 负责
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isElectron, mode]);
 
-  // ── 裁剪值变化后重新截取 ──
+  /**
+   * 裁剪值变化 → **只对已截下来的原图重新裁剪**。
+   *
+   * 以前这里的写法是先 takeScreenshot() 丢掉、再进 doCapture() 又截一次：
+   * 改一个数字闪两下屏，而且用户此刻可能已经切到别的窗口，会裁到完全不同的画面。
+   */
   const prevCropRef = useRef(crop);
   useEffect(() => {
     if (!isElectron || mode !== 'screenshot') return;
-    if (prevCropRef.current.top !== crop.top || prevCropRef.current.bottom !== crop.bottom
-      || prevCropRef.current.left !== crop.left || prevCropRef.current.right !== crop.right) {
-      prevCropRef.current = crop;
-      takeScreenshot().then((dataUrl) => {
-        if (dataUrl) doCapture().then((url) => { if (url) setCapturedDataUrl(url); });
-      });
-    }
-  }, [crop]);
+    const p = prevCropRef.current;
+    if (p.top === crop.top && p.bottom === crop.bottom
+      && p.left === crop.left && p.right === crop.right) return;
+    prevCropRef.current = crop;
+    const raw = rawShotRef.current;
+    if (!raw) return; // 还没截到图就等自动截图按最新 crop 渲染
+    // 连续点输入框微调时别每一档都重绘一次 canvas
+    const timer = setTimeout(() => {
+      void renderCrop(raw, crop).then(setCapturedDataUrl);
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [crop, isElectron, mode, renderCrop]);
 
-  // ── 单张截图 ──
-  const handleScreenshot = async () => {
+  /** 重新截一张（「重拍」「截取全屏」都走这里） */
+  const handleScreenshot = useCallback(async () => {
     setCapturing(true);
-    const dataUrl = await takeScreenshot();
-    if (!dataUrl) { setCapturing(false); return; }
-    const hasCrop = crop.top || crop.bottom || crop.left || crop.right;
-    setCapturedDataUrl(hasCrop ? await cropDataUrl(dataUrl, crop) : dataUrl);
-    setCapturing(false);
-  };
+    try {
+      const raw = await captureRaw();
+      if (raw) setCapturedDataUrl(await renderCrop(raw, crop));
+    } finally {
+      setCapturing(false);
+    }
+  }, [captureRaw, crop, renderCrop]);
 
   const handleSaveScreenshot = async () => {
     if (!capturedDataUrl) return;
@@ -667,7 +717,8 @@ const ScreenCapture: React.FC<ScreenCaptureProps> = ({ animeTitle, onImageSaved,
                         {(dataUrlSize(capturedDataUrl) / 1024).toFixed(0)}KB
                       </span>
                       <Button size="small" type="primary" loading={saving} onClick={handleSaveScreenshot}>保存</Button>
-                      <Button size="small" onClick={() => setCapturedDataUrl(null)}>重拍</Button>
+                      {/* 以前这里只是 setCapturedDataUrl(null)：清空预览但不会重截，点了像没反应 */}
+                      <Button size="small" loading={capturing} onClick={() => { void handleScreenshot(); }}>重拍</Button>
                     </div>
                   </div>
                 ) : capturing ? (

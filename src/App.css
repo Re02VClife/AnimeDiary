@@ -10,6 +10,8 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+  /* 侧栏是绝对定位的浮层，定位基准就是这里 */
+  position: relative;
 }
 
 /* ── 自定义标题栏（仅桌面版渲染） ── */
@@ -48,7 +50,21 @@
   flex: 0 0 138px;
 }
 
+/*
+ * 侧栏 = 浮层，不占内容宽度。
+ *
+ * 以前它是 flex 里的真实 Sider：展开时从主区域「切走」300px，网格当场从 5 列
+ * 变 4 列，鼠标只是划过品牌块就整屏重排一次。改成绝对定位后，展开/收起完全不
+ * 影响内容布局，只盖在上面（z-index 低于 antd Modal 的 1000）。
+ */
 .app-sidebar {
+  position: absolute !important;
+  left: 0;
+  /* 从顶栏下沿开始，否则会盖住搜索框（高度由 TopBar 实测写入 --topbar-height） */
+  top: var(--topbar-height, 68px);
+  bottom: 0;
+  z-index: 200;
+  height: auto !important;
   background: var(--glass-bg-strong) !important;
   backdrop-filter: blur(20px) saturate(1.25);
   border-right: 1px solid var(--glass-border);
@@ -85,6 +101,11 @@
   overflow-x: hidden;
   padding: 0 clamp(18px, 2.1vw, 40px) 40px;
   scroll-behavior: smooth;
+}
+
+/* 批量模式底部有一条 fixed 的浮条：给它留出高度，否则最后一行卡片永远被压住 */
+.main-content.with-batch-bar {
+  padding-bottom: 104px;
 }
 
 /* ── 左上角品牌块（兼侧栏入口） ── */
@@ -182,6 +203,10 @@
 /* ── 搜索栏（命令面板式：输入 + 分隔线 + 模式切换合为一体） ── */
 .search-cluster {
   display: flex;
+  /* 保底宽度：窗口缩到 900 时，以前这里会被压到约 75px，只剩图标和 Ctrl K，
+     等于搜索功能不可用（.search-input 的 min-width:0 允许无限压缩） */
+  min-width: 200px;
+  flex: 0 1 auto;
   align-items: center;
   gap: 4px;
   height: 38px;
@@ -938,25 +963,35 @@
 }
 
 /*
- * 侧栏展开会吃掉主区域 300px 宽，中等窗口下顶栏放不下全部控件：
- * 这时候优先保搜索和分类，模板下拉（低频）先让位。
+ * 顶栏控件在中等宽度窗口里放不下。
+ *
+ * 以前这里是按「侧栏是否展开」收缩（.main-layout.with-sidebar），因为侧栏会吃掉
+ * 300px 内容宽。侧栏改成浮层后不再挤压内容，于是改成按视口宽度收缩：
+ * 先收起低频的快捷键提示，再把分类 tab 压紧，模板下拉**始终保留**
+ * （它是全局状态，藏起来用户会以为切不了模板）。
  */
-@media (max-width: 1440px) {
-  .main-layout.with-sidebar .search-cluster {
-    width: 250px;
-    min-width: 210px;
-  }
-
-  .main-layout.with-sidebar .search-kbd {
+@media (max-width: 1180px) {
+  .search-kbd {
     display: none;
   }
 
-  .main-layout.with-sidebar .template-select {
-    display: none;
-  }
-
-  .main-layout.with-sidebar .category-tab {
+  .category-tab {
     padding: 6px 10px;
+  }
+
+  .category-tabs {
+    padding: 3px;
+  }
+}
+
+@media (max-width: 1040px) {
+  /* 分类 tab 的圆点只是装饰，窄屏让位给文字 */
+  .category-tab-dot {
+    display: none;
+  }
+
+  .search-cluster {
+    min-width: 180px;
   }
 }
 
@@ -1225,6 +1260,133 @@
   background: var(--glass-highlight);
   color: var(--text-primary);
   padding-left: 13px;
+}
+
+/* ══════════ 侧栏底部的「设置」入口 ══════════
+   以前这里是三个板块（主题 / 桌面应用 / 设置）铺了 900 多像素，
+   现在整块内容搬进 SettingsModal，侧栏只留一个双行入口。 */
+.sidebar-settings-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--glass-border);
+  background: var(--surface-gradient);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color var(--duration-fast) ease,
+    transform var(--duration-base) var(--ease-spring),
+    box-shadow var(--duration-base) ease;
+}
+
+.sidebar-settings-entry:hover {
+  border-color: var(--brand-line);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px -18px var(--brand-glow);
+}
+
+.sidebar-settings-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.sidebar-settings-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sidebar-settings-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sidebar-settings-sub {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+/* ══════════ 设置弹窗（SettingsModal） ══════════ */
+.settings-group-block + .settings-group-block {
+  margin-top: 18px;
+}
+
+.settings-group-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 0 2px 6px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  transition: background var(--duration-fast) ease, padding-left var(--duration-base) var(--ease-out);
+}
+
+.settings-row.clickable {
+  cursor: pointer;
+}
+
+.settings-row.clickable:hover {
+  background: var(--glass-highlight);
+  padding-left: 13px;
+}
+
+.settings-row-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-row-label > span:first-child {
+  color: var(--text-primary);
+}
+
+.settings-row-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.settings-row-control {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 「关于」页里把 UpdatePanel 原来的侧栏样式抹平，避免套中套 */
+.settings-about-block .sidebar-section {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  box-shadow: none;
+}
+
+.settings-about-block .sidebar-section .section-title {
+  margin-bottom: 8px;
+}
+
+/* 设置弹窗的 Tabs 内边距收紧一点，680 宽下更像桌面应用 */
+.settings-modal .ant-tabs-nav {
+  margin-bottom: 14px;
+}
+
+.settings-modal .ant-tabs-content-holder {
+  min-height: 320px;
 }
 
 /* ── 空状态 ── */
@@ -1825,4 +1987,43 @@
 
 [data-theme='light'] .ant-modal-mask {
   background: rgba(15, 23, 42, 0.45) !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   桌面端弹窗定位约束
+
+   顶部有一条 36px 的自定义标题栏（--app-titlebar-height）。antd 的 Modal
+   默认 `top: 100px`，在这个前提下会从视口里溢出去：实测 1400×900 打开详情
+   面板，Modal 高 861、底边落在 961px —— 底部的「修改 / 保存到 Excel」在屏幕
+   外，必须把滚轮放在遮罩上滚一截才点得到。900×600 时溢出 144px。
+
+   这里做两件事：
+     1. top 让开标题栏（浏览器里变量为 0，退化成 12px，同样比 100px 好）；
+     2. 把弹窗内容改成 flex 列，用 max-height 卡住总高，让 body 自己滚。
+   各面板原有的 `styles.body.maxHeight` 仍然生效（两者取小），不会互相打架。
+   ══════════════════════════════════════════════════════════════════════ */
+.ant-modal-wrap:not(.ant-modal-centered) > .ant-modal {
+  top: calc(var(--app-titlebar-height, 0px) + 12px);
+}
+
+/*
+ * 注意：antd 5 的 .ant-modal-content 外面还套了一层无 class 的 div（zoom 动画用），
+ * 所以这里不能用 `.ant-modal > .ant-modal-content` —— 实测那条规则一条都没生效。
+ * 另外 .ant-modal 自身有 24px 的 padding-bottom，算总高时要一起扣掉。
+ */
+.ant-modal-content {
+  max-height: calc(100vh - var(--app-titlebar-height, 0px) - 48px);
+  display: flex;
+  flex-direction: column;
+}
+
+.ant-modal .ant-modal-header,
+.ant-modal .ant-modal-footer {
+  flex: 0 0 auto;
+}
+
+.ant-modal .ant-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }

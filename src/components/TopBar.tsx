@@ -73,6 +73,29 @@ const TopBar: React.FC<TopBarProps> = ({
   onExpandSidebar,
 }) => {
   const searchRef = useRef<InputRef>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * 把顶栏实际高度写进 CSS 变量 `--topbar-height`。
+   *
+   * 侧栏是绝对定位的浮层（不占布局），如果从 y=0 开始就会盖住顶栏左侧的搜索框。
+   * 让侧栏从顶栏下沿开始，顶栏永远完整可见。高度用实测值而不是写死常量 ——
+   * 窄窗口里顶栏可能换行变高。
+   */
+  useEffect(() => {
+    const el = barRef.current;
+    if (!el) return undefined;
+    const apply = () => {
+      document.documentElement.style.setProperty('--topbar-height', `${el.offsetHeight}px`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      document.documentElement.style.removeProperty('--topbar-height');
+    };
+  }, []);
 
   /**
    * ⌘K / Ctrl+K 聚焦搜索：这是和 Raycast / Linear 对齐的肌肉记忆，
@@ -137,7 +160,7 @@ const TopBar: React.FC<TopBarProps> = ({
   }
 
   return (
-    <div className="top-bar">
+    <div className="top-bar" ref={barRef}>
       <div className="top-bar-row">
         {/*
           品牌块兼侧栏入口：以前是浮在左上角的方块，和顶栏、网格都不对齐；
@@ -166,6 +189,16 @@ const TopBar: React.FC<TopBarProps> = ({
             suffix={<kbd className="search-kbd">{SHORTCUT_HINT}</kbd>}
             value={searchText}
             onChange={(e) => onSearchChange(e.target.value)}
+            onKeyDown={(e) => {
+              // 光标在搜索框里按 Esc 清空并失焦 —— 这是搜索框的通用肌肉记忆。
+              // 只绑在输入框上，不要提升到 window：否则详情面板打开时 Esc 会
+              // 一边关弹窗一边把搜索词清掉。
+              if (e.key === 'Escape' && searchText) {
+                e.preventDefault();
+                onSearchChange('');
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
             allowClear
           />
           <span className="search-divider" aria-hidden />

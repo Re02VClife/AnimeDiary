@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Segmented, Slider, Input, InputNumber, Button, Popconfirm, Switch, Modal, ColorPicker } from 'antd';
+import { Segmented, Input, Button, Popconfirm } from 'antd';
 import { PlusOutlined, EditOutlined, CloseOutlined } from '@ant-design/icons';
 import type { AnimeEntry, Dimension } from '../types';
 import { getTemplate } from '../../features/anime-data/template-service';
@@ -14,15 +14,13 @@ import { groupTagNames, normalizeTagName, sameTagName, findLikelyDuplicates } fr
 /** 计数小于这个值的标签默认收起（批量打标签会把标签数推到上百） */
 const TAG_COLLAPSE_THRESHOLD = 5;
 import { catgirlMessage } from '../theme';
-import { useTheme } from '../theme/ThemeContext';
 import AppIcon from '../theme/AppIcon';
-import UpdatePanel from './UpdatePanel';
-import PosterFixModal from './PosterFixModal';
 import ScoreDistribution from './ScoreDistribution';
-import type { ThemeColors } from '../theme/types';
 
 interface SidebarProps {
   collapsed?: boolean;
+  /** 打开全应用设置面板（外观 / 数据 / 工具 / 关于） */
+  onOpenSettings?: () => void;
 }
 
 /** Tag 预设存储 key */
@@ -52,15 +50,10 @@ const WATCH_DIM: Dimension = { key: 'watchDate', label: '观看时间', descript
  */
 const RANK_PREVIEW = 20;
 
-const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
+const Sidebar: React.FC<SidebarProps> = ({ collapsed = false, onOpenSettings }) => {
   const { state, dispatch, handleDimensionRank, handleAnimeClick, handleRenameTag,
-    handleDeleteTag, handleBatchAddTags, handleCancelBatch, handleExportUserData,
-    handleImportUserData, handleFixSearchAlias, handleOpenExcel, handleBatchSavePosters,
-    handleImportExcel, handleExportExcel, handleRebuildOverallColumn } = useAnimeContext();
-  const { animeList, activeDim, imgHeight, radarMode, radarMin, activeTag, batchMode, selectedBatchTags, activeTemplateId } = state;
-
-  // 批量补全海报面板（搜索后由你人工确认，不自动写入）
-  const [posterFixOpen, setPosterFixOpen] = useState(false);
+    handleDeleteTag, handleBatchAddTags, handleCancelBatch } = useAnimeContext();
+  const { animeList, activeDim, activeTag, batchMode, selectedBatchTags, activeTemplateId } = state;
 
   // 当前模板的维度
   const activeDims = useMemo(() => {
@@ -88,11 +81,6 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
   const [editValue, setEditValue] = useState('');
   const [newTagName, setNewTagName] = useState('');
   const [tagPresets, setTagPresets] = useState<string[]>(() => loadTagPresets());
-
-  // ── 主题状态 ──
-  const { state: themeState, colors, setThemeMode, toggleCatgirlMode, setCustomColors, resetCustomColors } = useTheme();
-  const [themeEditorOpen, setThemeEditorOpen] = useState(false);
-  const [editingColors, setEditingColors] = useState<Partial<ThemeColors>>({});
 
   // 按当前模板筛选后的条目列表（未选模板=全部，已选=仅该模板）
   const templateFiltered = useMemo(() => {
@@ -864,210 +852,21 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false }) => {
         )}
       </div>
 
-      {/* ── 主题 ── */}
-      <div className="sidebar-section">
-        <div className="section-title"><AppIcon name="theme" size={14} /> 主题</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {/* 深色/浅色切换 */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>模式</span>
-            <Segmented
-              size="small"
-              value={themeState.themeMode}
-              onChange={(v) => setThemeMode(v as 'dark' | 'light')}
-              options={[
-                { value: 'dark', label: '🌙 深色' },
-                { value: 'light', label: '☀️ 浅色' },
-              ]}
-              style={{ background: 'var(--bg-quaternary)' }}
-            />
-          </div>
+      {/* 主题 / 桌面应用 / 数据与工具 三类设置已收进 SettingsModal（App 里挂载）。
+          侧栏只保留「浏览与筛选」，长度从 2954px 降下来，hover 展开时也不用滚 3 屏了。 */}
 
-          {/* 猫娘模式 */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>🐱 猫娘模式</span>
-            <Switch
-              size="small"
-              checked={themeState.catgirlMode}
-              onChange={toggleCatgirlMode}
-            />
-          </div>
-
-          {/* 自定义配色 */}
-          <Button
-            size="small"
-            block
-            style={{ borderRadius: 6, fontSize: 12 }}
-            onClick={() => {
-              setEditingColors({ ...themeState.customColors });
-              setThemeEditorOpen(true);
-            }}
-          >
-            🎨 自定义配色
-          </Button>
-
-          {/* 当有自定义颜色时显示重置按钮 */}
-          {Object.keys(themeState.customColors).length > 0 && (
-            <Button
-              size="small"
-              block
-              danger
-              style={{ borderRadius: 6, fontSize: 12 }}
-              onClick={resetCustomColors}
-            >
-              恢复预设配色
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {/* 自定义配色编辑器 Modal */}
-      <Modal
-        title="🎨 自定义配色"
-        open={themeEditorOpen}
-        onCancel={() => setThemeEditorOpen(false)}
-        onOk={() => {
-          setCustomColors(editingColors);
-          setThemeEditorOpen(false);
-        }}
-        okText="应用"
-        cancelText="取消"
-        width={420}
+      {/* 设置入口：外观 / 数据 / 工具 / 关于 都在 SettingsModal 里（App.tsx 挂载） */}
+      <button
+        type="button"
+        className="sidebar-settings-entry"
+        onClick={onOpenSettings}
       >
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', maxHeight: 400, overflow: 'auto' }}>
-          {(Object.keys(colors) as (keyof ThemeColors)[]).map((key) => (
-            <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 11, color: 'var(--text-secondary)', flex: 1 }}>{key}</span>
-              <ColorPicker
-                size="small"
-                value={editingColors[key] ?? colors[key]}
-                onChange={(_, hex) => {
-                  setEditingColors((prev) => ({ ...prev, [key]: hex }));
-                }}
-              />
-            </div>
-          ))}
-        </div>
-      </Modal>
-
-      {/* ── 桌面应用（仅 Electron 下渲染） ── */}
-      <UpdatePanel />
-
-      {/* 批量补全海报：搜索后人工确认，采用结果写入本地覆盖 */}
-      <PosterFixModal
-        open={posterFixOpen}
-        onClose={() => setPosterFixOpen(false)}
-        animeList={animeList}
-        onApplied={(animeId, posterUrl) => dispatch({ type: 'SET_ANIME_POSTER', animeId, posterUrl })}
-      />
-
-      {/* ── 设置 ── */}
-      <div className="sidebar-section">
-        <div className="section-title"><AppIcon name="settings" size={14} /> 设置</div>
-        <div className="settings-list">
-          <div className="settings-group">表格数据</div>
-          <div className="settings-item" onClick={handleImportExcel}>
-            <span>📤 导入 Excel</span>
-          </div>
-          <div className="settings-item" onClick={handleExportExcel}>
-            <span>📥 导出 Excel</span>
-          </div>
-          <div className="settings-item" onClick={() => dispatch({ type: 'OPEN_MODAL', modal: 'excel' })}>
-            <span>📋 表格视图（应用内编辑）</span>
-          </div>
-          <div className="settings-item" onClick={handleOpenExcel}>
-            <span>📂 用系统程序打开 Excel</span>
-          </div>
-
-          <div className="settings-group">海报</div>
-          <div className="settings-item" onClick={handleBatchSavePosters}>
-            <span>🖼 持久化所有海报</span>
-          </div>
-          <div className="settings-item" onClick={() => setPosterFixOpen(true)}>
-            <span>🔍 批量补全海报（人工确认）</span>
-          </div>
-
-          <div className="settings-group">备份与恢复</div>
-          <div className="settings-item" onClick={() => dispatch({ type: 'OPEN_MODAL', modal: 'backupHistory' })}>
-            <span>🗄 存档与回退（快照 / 操作记录）</span>
-          </div>
-          <div className="settings-item" onClick={handleExportUserData}>
-            <span>💾 导出用户数据</span>
-          </div>
-          <div
-            className="settings-item"
-            onClick={() => {
-              const input = document.createElement('input');
-              input.type = 'file';
-              input.accept = '.zip';
-              input.onchange = (e) => {
-                const file = (e.target as HTMLInputElement).files?.[0];
-                if (file) handleImportUserData(file);
-              };
-              input.click();
-            }}
-          >
-            <span>📂 导入用户数据</span>
-          </div>
-
-          <div className="settings-group">工具</div>
-          <div className="settings-item" onClick={handleFixSearchAlias}>
-            <span>🔄 修正检索名</span>
-          </div>
-          <div className="settings-item" onClick={() => void handleRebuildOverallColumn()}>
-            <span>🧮 按模板权重重建总评列</span>
-          </div>
-          <div className="settings-item" onClick={() => dispatch({ type: 'OPEN_MODAL', modal: 'templateManager' })}>
-            <span>📐 维度管理</span>
-          </div>
-
-          <div className="settings-group">显示</div>
-          <div style={{ padding: '6px 10px' }}>
-            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 2 }}>
-              🖼️ 图片高度: {imgHeight}px
-            </div>
-            <Slider
-              min={200} max={800} step={20}
-              value={imgHeight}
-              onChange={(v) => dispatch({ type: 'SET_IMG_HEIGHT', payload: v })}
-              styles={{ track: { background: 'var(--brand-primary)' }, rail: { background: 'var(--border-primary)' } }}
-            />
-          </div>
-
-          {/* ── 雷达图设置 ── */}
-          <div style={{ padding: '6px 10px' }}>
-            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 4 }}>
-              📊 雷达图范围
-            </div>
-            <Segmented
-              size="small"
-              value={radarMode}
-              onChange={(v) => dispatch({ type: 'SET_RADAR_MODE', payload: v as 'percentile' | 'fixed' })}
-              options={[
-                { value: 'percentile', label: '百分比' },
-                { value: 'fixed', label: '固定值' },
-              ]}
-              block
-              style={{ marginBottom: 6 }}
-            />
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>最小值</span>
-              <InputNumber
-                size="small"
-                min={0}
-                max={radarMode === 'percentile' ? 50 : 7}
-                step={1}
-                value={radarMin}
-                onChange={(v) => dispatch({ type: 'SET_RADAR_MIN', payload: v ?? 0 })}
-                style={{ width: 70 }}
-              />
-              <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                {radarMode === 'percentile' ? '(0-50%)' : '(0-7分)'}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
+        <span className="sidebar-settings-icon">⚙️</span>
+        <span className="sidebar-settings-text">
+          <span className="sidebar-settings-title">设置</span>
+          <span className="sidebar-settings-sub">外观 · 数据 · 工具 · 关于</span>
+        </span>
+      </button>
     </div>
   );
 };

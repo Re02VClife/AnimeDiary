@@ -42,6 +42,15 @@ declare global {
     getDataDir: () => Promise<string>;
     openDataDir: () => Promise<string>;
 
+    /**
+     * 同步标题栏右上角系统按钮的配色（那块由 Electron 独立绘制，CSS 管不到）。
+     * colors 必须是 #RRGGBB，非法值主进程会回退默认色。
+     */
+    setTitleBarOverlay?: (
+      mode: 'dark' | 'light',
+      colors: { background?: string; symbol?: string },
+    ) => void;
+
     /** 热更新 */
     getUpdateStatus: () => Promise<UpdateStatus>;
     checkUpdate: () => Promise<UpdateStatus>;

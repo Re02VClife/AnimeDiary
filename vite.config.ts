@@ -56,8 +56,10 @@ export default defineConfig({
     watch: {
       // 主进程/构建产物与前端无关；监视 electron/ 会在原子写文件时触发 EBUSY 让 dev server 崩溃
       // *.tmpdir 是编辑器原子保存留下的临时目录，同样会 EBUSY
+      // docs/images/audio 是用户数据与截图归档：往里存一张图就可能 EBUSY 把 dev server 打死
       ignored: [
         '**/electron/**', '**/server/**', '**/release/**', '**/backups/**', '**/build/**',
+        '**/docs/**', '**/images/**', '**/audio/**', '**/*.xlsx',
         '**/*.tmpdir/**', '**/.review/**', '**/node_modules/**',
       ],
     },

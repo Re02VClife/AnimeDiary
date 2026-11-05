@@ -1954,6 +1954,17 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                       step={dim.key === 'vibe' ? 0.01 : 0.1}
                       value={score ? round2(score) : null} onChange={(v) => handleScoreChange(dim.key, v)}
                       disabled={!editing}
+                      /*
+                       * antd 会按 step 的小数位数补零：step=0.1 的维度把整数显示成
+                       * 「9.0」，step=0.01 的「电波」把 6.9 显示成「6.90」——
+                       * 同一排里 8.5 / 9.0 / 6.90 混排。只读态统一走 fmt2（最多两位、
+                       * 不补零）；编辑态交回 antd，否则用户输入「9.」会被立刻改写成「9」。
+                       */
+                      formatter={editing ? undefined : (v) => {
+                        if (v === undefined || v === null) return '';
+                        const n = Number(v);
+                        return Number.isFinite(n) ? fmt2(n) : String(v);
+                      }}
                       onFocus={() => { if (editing) setSliderDim(dim.key); }}
                       style={{
                         width: dim.key === 'vibe' ? 64 : 56,
