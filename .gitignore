@@ -11,7 +11,9 @@ browser-migration.json
 *.xlsx
 *.xls
 anilist_cache.json
+anilist_score_cache.json
 bangumi_cache.json
+jp_name_cache.json
 images/
 audio/
 
@@ -35,3 +37,6 @@ ai-usage.jsonl
 # 运行期数据（写操作日志，会随使用增长）
 operations.jsonl
 operations.1.jsonl
+
+# 本地体验报告与审查截图（含真实评分数据，仅本地留档）
+docs/desktop-review-*/

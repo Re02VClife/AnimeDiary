@@ -244,6 +244,36 @@ npm run build:api     # esbuild 打包，顺带做语法检查
 
 同理，`core/` 是被 `tsc` 检查的，但 `server/` 只能靠 esbuild。
 
+### 5.10 桌面壳层的四个约定（2026-11 加，改弹窗/主题/侧栏前必读）
+
+1. **标题栏右上角的系统按钮不吃 CSS**。`titleBarOverlay` 由 Electron 独立绘制，
+   页面里的变量影响不到它 —— 主题一变必须主进程改色。现在 `ThemeContext` 会自动发
+   IPC `window:set-titlebar-overlay`，主进程 `applyTitleBarOverlay()` 会校验 `#RRGGBB`
+   并回退默认值。**新增主题相关的颜色时别忘了这条**。
+
+2. **Modal 的 `top` 不能再用 antd 默认的 100**。顶部有 36px 自定义标题栏，`App.css`
+   末尾统一给了 `top: calc(var(--app-titlebar-height,0px) + 12px)`，并给
+   `.ant-modal-content` 限高 + flex 列布局让 body 自己滚。新建弹窗**不要再写
+   `style={{ top: ... }}`**（除了 ExcelEditor 那种确实要贴顶的特例）。
+   ⚠️ 选择器是 `.ant-modal-content`（后代匹配），**不能写 `> .ant-modal-content`** ——
+   antd 5 在这两者中间还套了一层无 class 的 div，带 `>` 的规则一条都不生效（实测踩过）。
+
+3. **侧栏是浮层，不是布局的一部分**。`.app-sidebar` 用 `position: absolute` 盖在
+   主内容上（z-index 200，低于 Modal 的 1000），展开时**不改变网格列数**。
+   `top` 从顶栏下沿算起（`var(--topbar-height, 68px)`，由 `TopBar` 用 ResizeObserver
+   实测写入）—— 写死 0 会盖住搜索框，实测踩过。
+   `App.tsx` 里原来的 `with-sidebar` class 已删，CSS 里对应的 4 条收缩规则也删了 ——
+   别加回来；顶栏现在是按**视口宽度**断点收缩（`.search-kbd` / `.category-tab`）。
+
+   ⚠️ **侧栏里不要再放设置项**：外观/数据/工具/关于已经收进 `SettingsModal`
+   （`App.tsx` 挂载），侧栏只留浏览与筛选。往里加东西会把刚瘦下来的 1880px 又顶回去。
+
+4. **截图 IPC 有并发互斥**。`capture:takeScreenshot` 用 in-flight Promise 合并并发请求
+   + 失败重试一次。原因：`screenshot-desktop` 在 Windows 上要把 `screenCapture.bat`
+   解压到**固定的**临时目录再 `cmd /c`，并发时必有一个失败（React StrictMode 会把
+   自动截图的 effect 跑两遍，实测打开面板就红字报错）。错误信息只写主进程日志，
+   界面只给一句人话。
+
 ---
 
 ## 6. 总评（综合观感）的口径 —— 三处必须一致
