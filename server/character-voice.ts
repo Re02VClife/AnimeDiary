@@ -235,7 +235,7 @@ export function signWbiQuery(
   imgKey: string,
   subKey: string,
 ): string {
-  const withTs = { ...params, wts: Math.round(Date.now() / 1000) };
+  const withTs: Record<string, string | number> = { ...params, wts: Math.round(Date.now() / 1000) };
   const query = Object.keys(withTs)
     .sort()
     .map((key) => {
