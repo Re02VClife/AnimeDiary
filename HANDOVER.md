@@ -1,7 +1,8 @@
 # AnimeDiary 进度与交接
 
-> 最后更新：**2026-11-06** · 当前版本 **1.3.6** · 前端走热更新；**1.3.5 / 1.3.6 都重新打了桌面安装包**
-> （`release/AnimeDiary-Setup-1.3.6.exe`），因为主进程新增了标题栏外观缓存，热更新覆盖不到壳层
+> 最后更新：**2026-11-07** · 当前版本 **1.3.6** · 前端走热更新；桌面安装包已重新打包并发布到
+> GitHub Releases（tag `v1.3.6`，`AnimeDiary-Setup-1.3.6.exe`），因为主进程新增了标题栏外观缓存，
+> 热更新覆盖不到壳层
 >
 > 这份文档面向"接手的人 / 下一个 AI 会话"，只写**当前状态、怎么发版、坑在哪**。
 > 2026-06 那次架构重构的完整记录在 [`progress.md`](progress.md) —— 那是历史存档，不要改写它。
@@ -59,6 +60,20 @@ Start-Process 'E:\AnimeDiary\AnimeDiary.exe' -ArgumentList '--remote-debugging-p
 - `--remote-debugging-port=9222` 只在需要 CDP 验证时加；不带也能正常跑。
 - `.review/` 是本地工具目录（**已 gitignore**），新环境里没有 `bump-version.js` / `cdp.js`。
   前者只是把 `package.json` 的 `version` 改掉（用 Node 写以保留 UTF-8），手动改也一样。
+
+**GitHub 发布**（1.3.6 起，安装包也挂到 Releases）：本机直连 github.com / api.github.com 会被 TLS 重置，
+必须走 Clash 代理 `127.0.0.1:7897`：
+
+```powershell
+git -c http.proxy=http://127.0.0.1:7897 -c https.proxy=http://127.0.0.1:7897 push origin master
+# 上传 release 资产用 curl：不加 --ssl-no-revoke 会因吊销检查离线报 CRYPT_E_REVOCATION_OFFLINE
+curl.exe --ssl-no-revoke -x http://127.0.0.1:7897 -X POST -H "Authorization: Bearer <token>" `
+  -H "Content-Type: application/octet-stream" --data-binary "@release\AnimeDiary-Setup-1.3.6.exe" `
+  "https://uploads.github.com/repos/Re02VClife/AnimeDiary/releases/<id>/assets?name=AnimeDiary-Setup-1.3.6.exe"
+```
+
+token 在 Windows 凭据管理器里（`git credential fill` 可取）。GitHub API 创建 release 时
+`target_commitish=master` 会自动建 tag；删旧 release 不会删 tag。
 
 **验证方式**：用 CDP 挂到跑起来的页面读 DOM，比截图可靠（Electron 的 GPU 合成窗口截图有时是空白）：
 
