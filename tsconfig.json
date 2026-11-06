@@ -22,5 +22,5 @@
       "@features/*": ["features/*"]
     }
   },
-  "include": ["src", "core", "features", "context", "tests"]
+  "include": ["src", "core", "features", "context", "tests", "server"]
 }
