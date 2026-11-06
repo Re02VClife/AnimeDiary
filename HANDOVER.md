@@ -1,6 +1,7 @@
 # AnimeDiary 进度与交接
 
-> 最后更新：**2026-11-06** · 当前版本 **1.3.4** · 前端通过热更新发布（安装包仍为 1.1.0，未改主进程；1.3.0 的桌面端修复也包含在 1.3.4 包内）
+> 最后更新：**2026-11-06** · 当前版本 **1.3.6** · 前端走热更新；**1.3.5 / 1.3.6 都重新打了桌面安装包**
+> （`release/AnimeDiary-Setup-1.3.6.exe`），因为主进程新增了标题栏外观缓存，热更新覆盖不到壳层
 >
 > 这份文档面向"接手的人 / 下一个 AI 会话"，只写**当前状态、怎么发版、坑在哪**。
 > 2026-06 那次架构重构的完整记录在 [`progress.md`](progress.md) —— 那是历史存档，不要改写它。
@@ -251,6 +252,12 @@ npm run build:api     # esbuild 打包，顺带做语法检查
    IPC `window:set-titlebar-overlay`，主进程 `applyTitleBarOverlay()` 会校验 `#RRGGBB`
    并回退默认值。**新增主题相关的颜色时别忘了这条**。
 
+   ⚠️ **热更新改不了它**。IPC 处理在 `electron/main.js`、桥接在 `electron/preload.js`，
+   这两个文件在 app.asar 里，只有重装安装包才会更新。1.3.5 之前装过旧壳的机器上，
+   浅色主题下右上角会一直留一块深色，页面侧无解 —— 别在渲染层找补。
+   主进程另存 `userData/window-appearance.json`（`applyTitleBarOverlay` 每次写、启动时读），
+   这样窗口创建的第一帧就是对的，不会先闪一下深色标题栏。
+
 2. **Modal 的 `top` 不能再用 antd 默认的 100**。顶部有 36px 自定义标题栏，`App.css`
    末尾统一给了 `top: calc(var(--app-titlebar-height,0px) + 12px)`，并给
    `.ant-modal-content` 限高 + flex 列布局让 body 自己滚。新建弹窗**不要再写
@@ -337,6 +344,18 @@ dims = 模板.dimensions.filter(d => d.key !== 'overall')   // 排除总评自�
 ---
 
 ## 7. 本阶段完成（2026-09 ~ 2026-10）
+
+### 已完成（1.3.5 / 1.3.6）—— 雷达图点先落地 + 标题栏外观缓存
+
+- **雷达图先画点、后画线**：ECharts 雷达图的入场动画里，symbol 点会直接落在最终位置，
+  折线和面积却从中心慢慢展开 —— 面板打开、切换模板或雷达图模式（`notMerge` 重建）的
+  前一两百毫秒，画面上只有几个孤零零的点，像没加载完。做法是**保留展开动画、去掉 symbol**
+  （`symbol: 'none'`，[RadarChart.tsx](src/components/RadarChart.tsx)）：点只有 4px，去掉后
+  观感几乎无差别，第一帧只剩网格 + 从中心长出来的线。**别再给雷达图系列加回 `symbol`**。
+- **浅色主题下右上角那条深色块**：来自 `titleBarOverlay`，主进程新增
+  `userData/window-appearance.json` —— `applyTitleBarOverlay()` 每次写、`createWindow()`
+  读，窗口第一帧就是上次的主题色，`backgroundColor` 也跟着主题走。这部分在 app.asar 里，
+  **热更新覆盖不到**，所以 1.3.5 起重打了安装包（最新是 `release/AnimeDiary-Setup-1.3.6.exe`）。
 
 | 版本 | 提交 | 内容 |
 |---|---|---|

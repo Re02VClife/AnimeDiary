@@ -94,8 +94,15 @@ const RadarChart: React.FC<RadarChartProps> = ({
           {
             value: dataValues,
             name: anime.title,
-            symbol: mini ? 'none' : 'circle',
-            symbolSize: 4,
+            /**
+             * 不画数据点（symbol）。
+             *
+             * 雷达图的入场动画里，折线和面积从中心慢慢展开，但 symbol 会**直接落在
+             * 最终位置**：面板打开、或切换模板/雷达图模式触发 notMerge 重建时，
+             * 前一两百毫秒画面上只有一串孤零零的点，像图没加载完。
+             * 点本身只有 4px，去掉后基本看不出差别，展开动画还能照常保留。
+             */
+            symbol: 'none',
             lineStyle: { color: 'var(--brand-primary)', width: 2 },
             areaStyle: { color: 'rgba(251, 114, 153, 0.15)' },
             itemStyle: { color: 'var(--brand-primary)' },

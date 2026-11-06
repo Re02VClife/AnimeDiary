@@ -121,6 +121,9 @@ localStorage ←→ template-service / ThemeContext / storage-service ←→ UI�
 - 两种模式：`percentile`（百分位 0-100）/ `fixed`（固定值 0-10，超出溢出）
 - ECharts radar `trigger: 'item'` 时 `params.value` 是数组，tooltip 需遍历
 - 最小值默认 0，可自定义（`radarMin`）
+- **`symbol: 'none'` 是有意为之**：雷达图保留了折线的入场展开动画，但 ECharts 会让 symbol 点
+  直接落在最终位置、线却从中心慢慢展开，面板打开/切换时先看到一串孤立的点。去掉点后动画正常，
+  点只有 4px，观感几乎无差别。别再给系列加回 `symbol`
 
 ## 注意事项
 

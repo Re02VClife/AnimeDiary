@@ -113,17 +113,54 @@ const TITLEBAR_DEFAULTS = {
   light: { color: '#ffffff', symbolColor: '#1f2328' },
 };
 
+/** 只接受 #RRGGBB：Electron 在这里不吃 rgba()/变量 */
+const titleBarHex = (v) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : null);
+
+/**
+ * 上次的主题外观。
+ *
+ * 主题存在渲染进程的 localStorage 里，主进程读不到；不自己记一份的话，
+ * 浅色主题的用户每次启动都会先看到深色标题栏闪一下，直到页面加载完发 IPC 才变。
+ */
+function windowAppearancePath() {
+  return path.join(app.getPath('userData'), 'window-appearance.json');
+}
+
+function loadWindowAppearance() {
+  try {
+    const s = JSON.parse(fs.readFileSync(windowAppearancePath(), 'utf-8'));
+    if (!s) return null;
+    const fallback = TITLEBAR_DEFAULTS[s.mode === 'light' ? 'light' : 'dark'];
+    return {
+      mode: s.mode === 'light' ? 'light' : 'dark',
+      color: titleBarHex(s.background) || fallback.color,
+      symbolColor: titleBarHex(s.symbol) || fallback.symbolColor,
+    };
+  } catch {
+    return null; // 首次运行 / 文件损坏
+  }
+}
+
+function saveWindowAppearance(mode, colors) {
+  try {
+    fs.writeFileSync(windowAppearancePath(), JSON.stringify({
+      mode: mode === 'light' ? 'light' : 'dark',
+      background: colors && colors.background,
+      symbol: colors && colors.symbol,
+    }), 'utf-8');
+  } catch { /* 记不住不影响使用 */ }
+}
+
 function applyTitleBarOverlay(mode, colors) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const fallback = TITLEBAR_DEFAULTS[mode === 'light' ? 'light' : 'dark'];
-  // 只接受 #RRGGBB：Electron 在这里不吃 rgba()/变量
-  const hex = (v) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : null);
   try {
     mainWindow.setTitleBarOverlay({
-      color: hex(colors && colors.background) || fallback.color,
-      symbolColor: hex(colors && colors.symbol) || fallback.symbolColor,
+      color: titleBarHex(colors && colors.background) || fallback.color,
+      symbolColor: titleBarHex(colors && colors.symbol) || fallback.symbolColor,
       height: 36,
     });
+    saveWindowAppearance(mode, colors);
   } catch (e) {
     console.warn('[AnimeDiary] 设置标题栏颜色失败:', e.message);
   }
@@ -285,17 +322,22 @@ function createWindow() {
     ? { width: saved.width, height: saved.height, x: saved.x, y: saved.y }
     : { width: saved?.width || 1400, height: saved?.height || 900 };
 
+  // 用上次的主题外观初始化，浅色主题的用户不会先看到一条深色标题栏
+  const appearance = loadWindowAppearance() || { mode: 'dark', ...TITLEBAR_DEFAULTS.dark };
+
   mainWindow = new BrowserWindow({
     ...placement,
     minWidth: 900,
     minHeight: 600,
     title: 'AnimeDiary - 番剧评分管理',
-    backgroundColor: '#0d1117',
+    // 窗口底色同标题栏：拖拽/缩放时露出的边缘不会突然变深
+    backgroundColor: appearance.mode === 'light' ? '#ffffff' : '#0d1117',
     // 隐藏系统标题栏，让内容延伸到顶部（更接近 Kazumi 那种干净感）
     titleBarStyle: 'hidden',
     // 右上角仍由系统绘制最小化/最大化/关闭按钮，并保留窗口边缘缩放手势
     titleBarOverlay: {
-      ...TITLEBAR_DEFAULTS.dark,
+      color: appearance.color,
+      symbolColor: appearance.symbolColor,
       height: 36,
     },
     ...(fs.existsSync(iconPath) ? { icon: iconPath } : {}),
