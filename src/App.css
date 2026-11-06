@@ -458,54 +458,45 @@
 
 /*
  * 分类文字默认只显示「当前分类」那一个，其余收成彩色圆点。
- * 鼠标移进分类栏（或键盘 focus）时整栏展开 —— 整栏一起动比单项各自伸缩更稳，
- * 也不会因为指针扫过就把某项顶开再弹回。
+ * 鼠标移到某个圆点上时，只展开那一项的文字 —— 不要整栏一起展开：
+ * 整栏展开会把相邻项和右侧按钮推开，指针扫过时来回位移，反而更抖。
  *
- * 宽度动画用 grid-template-columns: 0fr → 1fr，而不是 max-width：
- * max-width 的目标值远大于文字宽度时，前 1/3 时间就弹完了，后半段是空转；
- * 1fr 会按内容宽度等比例展开，340ms 全程都有变化，看起来才顺。
- * 右侧按钮由 margin-left:auto 固定，分类变宽不会把它推走。
+ * 收起不依赖焦点：早先这里用过 :focus-within 做整栏展开，点击分类后
+ * 按钮一直保持焦点，整栏就摊着不收，得点别处才收起。现在只有 :hover
+ * 和「当前项」会展开，鼠标移开立刻收。
+ *
+ * 宽度用 max-width 过渡，目标值按标签字数由 --label-w 给出（见 TopBar）。
+ * 不用 grid 0fr→1fr：那个写法在 Electron 的 flex 子项上，hover 时
+ * 1fr 会被算成 0，文字展不开。
  */
 .category-tab-label {
-  display: inline-grid;
-  grid-template-columns: 0fr;
+  display: inline-block;
+  max-width: 0;
   margin-left: 0;
   opacity: 0;
-  transform: translateX(-4px);
-  transition:
-    grid-template-columns 360ms var(--ease-out),
-    margin-left 360ms var(--ease-out),
-    opacity 220ms ease,
-    transform 360ms var(--ease-out);
-}
-
-.category-tab-label > span {
   overflow: hidden;
   white-space: nowrap;
+  vertical-align: middle;
+  transform: translateX(-3px);
+  transition:
+    max-width 240ms var(--ease-out),
+    margin-left 240ms var(--ease-out),
+    opacity 150ms ease,
+    transform 240ms var(--ease-out);
 }
 
-.category-tab.active .category-tab-label {
-  grid-template-columns: 1fr;
+/* 展开：当前分类常显；鼠标悬停的那一项单独展开 */
+.category-tab.active > .category-tab-label,
+.category-tab:hover > .category-tab-label {
+  max-width: var(--label-w, 4em);
   margin-left: 7px;
   opacity: 1;
   transform: none;
-}
-
-.category-tabs:hover .category-tab-label,
-.category-tabs:focus-within .category-tab-label {
-  grid-template-columns: 1fr;
-  margin-left: 7px;
-  opacity: 1;
-  transform: none;
-}
-
-/* 展开时非当前项也给一点文字亮度，方便扫读 */
-.category-tabs:hover .category-tab .category-tab-label {
-  color: var(--text-secondary);
-}
-
-.category-tabs:hover .category-tab.active .category-tab-label {
-  color: var(--text-primary);
+  transition:
+    max-width 300ms var(--ease-out),
+    margin-left 300ms var(--ease-out),
+    opacity 190ms ease,
+    transform 300ms var(--ease-out);
 }
 
 .category-tab:hover {

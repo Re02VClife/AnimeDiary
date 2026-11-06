@@ -243,15 +243,24 @@ const TopBar: React.FC<TopBarProps> = ({
                   style={{ '--cat-color': CATEGORY_TINT[cat] } as React.CSSProperties}
                   onClick={() => onCategoryChange(cat)}
                   // 默认只显示当前分类的文字，其余只剩彩色圆点：
-                  // 圆点本身没有语义，title / aria-label 负责可读性与可访问性。
-                  title={label}
+                  // hover 时该项自己会展开文字，所以不再用原生 title —— 否则系统
+                  // 提示会和展开动画叠在一起，看起来像两个浮层抢位置。
                   aria-label={label}
                   aria-pressed={active}
                 >
                   <span className="category-tab-dot" aria-hidden />
-                  {/* 内层 span 配合 grid-template-columns: 0fr→1fr 做宽度动画，
-                      比 max-width 更均匀：宽度按内容比例展开，不会前 100ms 就弹完 */}
-                  <span className="category-tab-label"><span>{label}</span></span>
+                  {/*
+                    宽度按字数给上限，配合 max-width 过渡。
+                    不用 grid-template-columns: 0fr→1fr：在 Electron 里实测，
+                    flex 子项的 1fr 在 hover 时会被算成 0，文字根本展不开
+                    （首次布局是 active 能正常显示，动态 hover 就失效）。
+                  */}
+                  <span
+                    className="category-tab-label"
+                    style={{ '--label-w': `${label.length * 1.05 + 0.25}em` } as React.CSSProperties}
+                  >
+                    {label}
+                  </span>
                 </button>
               );
             })}
