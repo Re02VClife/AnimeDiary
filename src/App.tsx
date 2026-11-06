@@ -179,25 +179,55 @@ const App: React.FC = () => {
   }, [activeTemplateId, templates]);
 
   /**
-   * 侧栏「鼠标离开就收起」。
+   * 侧栏 hover 展开 / 延迟收起。
    *
-   * 只靠 Sider 自己的 onMouseLeave 不够：侧栏是 hover 展开的，如果用户从品牌块
-   * 移开后**从没进入过 Sider**，onMouseLeave 永远不会触发 —— 侧栏就卡在展开态，
-   * 盖着左边一列卡片还关不掉（实测很别扭）。
-   * 这里按「鼠标是否还在侧栏矩形内」判断，鼠标一移出去就收起。
+   * 之前这里是「鼠标不在侧栏矩形内就立即收起」。实测有两个毛病：
+   *   1. 展开动画进行中 Sider 宽度还没到 300，鼠标虽然正往侧栏去，矩形判断却不成立，
+   *      于是刚展开就被收起、再 hover 再展开 —— 左上角一直闪。
+   *   2. 品牌块到侧栏之间隔着顶栏底部十几像素，鼠标路过那一帧也不在矩形内。
+   * 现在改成：宽度动画结束（>= 280px）后才开始判定，离开后等 260ms 再收；
+   * 期间鼠标回到侧栏或品牌块热区都会取消计时。
    */
   useEffect(() => {
     if (sidebarCollapsed) return undefined;
+    let closeTimer: number | null = null;
+    const cancel = () => {
+      if (closeTimer !== null) {
+        window.clearTimeout(closeTimer);
+        closeTimer = null;
+      }
+    };
     const onMove = (e: MouseEvent) => {
       const sider = document.querySelector('.app-sidebar');
       if (!sider) return;
       const r = sider.getBoundingClientRect();
-      const inside = e.clientX >= r.left && e.clientX <= r.right
-        && e.clientY >= r.top && e.clientY <= r.bottom;
-      if (!inside) setSidebarCollapsed(true);
+      // 展开动画没走完时宽度不稳定，先不判定，否则会自己把自己收起来
+      if (r.width < 280) return;
+
+      const inSider = e.clientX >= r.left && e.clientX <= r.right
+        && e.clientY >= r.top - 16 && e.clientY <= r.bottom;
+      // 品牌块 + 顶栏左侧也算热区：鼠标从这里滑进侧栏不该触发收起
+      const topbarH = parseInt(
+        getComputedStyle(document.documentElement).getPropertyValue('--topbar-height'), 10,
+      ) || 72;
+      const inHandle = e.clientX <= 92 && e.clientY <= topbarH;
+
+      if (inSider || inHandle) {
+        cancel();
+        return;
+      }
+      if (closeTimer === null) {
+        closeTimer = window.setTimeout(() => {
+          closeTimer = null;
+          setSidebarCollapsed(true);
+        }, 200);
+      }
     };
     window.addEventListener('mousemove', onMove);
-    return () => window.removeEventListener('mousemove', onMove);
+    return () => {
+      cancel();
+      window.removeEventListener('mousemove', onMove);
+    };
   }, [sidebarCollapsed]);
 
   // 启动时同步一次 AI 配置（真配置在服务端，浏览器只留镜像）
@@ -215,24 +245,47 @@ const App: React.FC = () => {
     }
   }, [activeTemplateId]);
 
+  /**
+   * 详情遮罩：不用 antd 自带的 mask 动画。
+   *
+   * 实测 antd 的 mask 要等 Modal 挂载后再过 ~200ms 才开始变暗，而海报 120ms 就起飞了，
+   * 结果是「海报在亮着的网格上飞 → 飞了一半背景突然变黑」，眼睛会觉得闪。
+   * 这里在 detailOpen 变化的同一轮就切换 body 上的类，自定义遮罩从 0 开始稳定淡入，
+   * antd 的 mask 只保留点击关闭的交互（视觉上透明）。
+   */
+  useEffect(() => {
+    document.body.classList.toggle('detail-mask-on', detailOpen);
+    return () => { document.body.classList.remove('detail-mask-on'); };
+  }, [detailOpen]);
+
   // FLIP 过渡：Modal 打开后捕获详情海报位置
   useEffect(() => {
     if (!flipState || flipState.endRect || !detailOpen) return;
-    // 安全兜底：800ms 后仍未捕获则放弃，避免海报永久隐藏
+    // 安全兜底：捕获失败时别让 Modal 海报永久隐藏
     const safety = setTimeout(() => {
       setFlipState((prev) => prev && !prev.endRect ? null : prev);
     }, 1200);
-    // 等 Modal 渲染完成
-    const timer = setTimeout(() => {
-      const modalImg = document.querySelector(
-        '[data-modal-poster="true"]'
-      ) as HTMLElement | null;
-      if (modalImg) {
+
+    /**
+     * 用两帧 rAF 代替 setTimeout(50)。
+     *
+     * 点击到海报起飞之间原本有 ~120ms 的静止空窗（实测遮罩和副本都还没动），
+     * 手感像"点了一下没反应，然后画面突然变暗"。Modal 的 DOM 在第一帧就挂好了，
+     * 第二帧就能量到最终位置，没必要等 50ms 定时器。
+     */
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const modalImg = document.querySelector(
+          '[data-modal-poster="true"]'
+        ) as HTMLElement | null;
+        if (!modalImg) return;
         const endRect = modalImg.getBoundingClientRect();
         if (endRect.width > 0 && endRect.height > 0) {
           const endObjPos = getComputedStyle(modalImg).objectPosition || '50% 50%';
           setFlipState((prev) => prev ? { ...prev, endRect, endObjPos } : null);
         } else {
+          // 极少数情况下图片还没布局完，再等一帧重试一次
           requestAnimationFrame(() => {
             const retry = modalImg.getBoundingClientRect();
             if (retry.width > 0) {
@@ -241,9 +294,13 @@ const App: React.FC = () => {
             }
           });
         }
-      }
-    }, 50);  // transitionName="" 已关闭动画，Modal 在最终位置
-    return () => { clearTimeout(timer); clearTimeout(safety); };
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      clearTimeout(safety);
+    };
   }, [flipState, detailOpen]);
 
   /**
@@ -308,10 +365,14 @@ const App: React.FC = () => {
         collapsedWidth={0}
         collapsed={sidebarCollapsed}
         onMouseEnter={() => setSidebarCollapsed(false)}
-        onMouseLeave={() => setSidebarCollapsed(true)}
         className="app-sidebar"
       >
-        <Sidebar collapsed={sidebarCollapsed} onOpenSettings={() => setSettingsOpen(true)} />
+        {/*
+          始终渲染完整内容，让宽度动画去裁剪它。
+          之前传 collapsed，收起瞬间内容会切成一个小方块，300ms 的收窄动画里
+          先"闪没"再缩，观感很跳；固定 300px 宽 + 折叠时淡出才连贯。
+        */}
+        <Sidebar onOpenSettings={() => setSettingsOpen(true)} />
       </Sider>
 
       {/* 侧栏已改成绝对定位浮层（App.css .app-sidebar），展开时不再挤压网格，
@@ -437,7 +498,9 @@ const App: React.FC = () => {
         radarMode={radarMode}
         radarMin={radarMin}
         contentHidden={flipState !== null && !flipState.endRect && detailOpen}
-        posterHidden={flipState !== null && detailOpen}
+        // 只要还有 FLIP 副本在场，详情里的海报就保持隐藏 —— 关闭时若按 detailOpen
+        // 判断会提前露出来，和正在飞回网格的副本叠成两张
+        posterHidden={flipState !== null}
         onPosterChange={(animeId, posterUrl) => {
           dispatch({ type: 'SET_ANIME_POSTER', animeId, posterUrl });
         }}

@@ -12,7 +12,15 @@ interface PosterFlipOverlayProps {
   onDone: () => void;
 }
 
-/** FLIP 海报过渡：克隆海报从网格位置飞入详情面板位置，同步过渡裁剪位置 */
+/**
+ * FLIP 海报过渡：克隆海报从网格位置飞入详情面板位置。
+ *
+ * 为什么用 background 而不是 <img>：
+ *   object-position 是离散值，不能过渡 —— 网格和详情面板的裁剪位置不同时
+ *   （角色卡最明显），飞入途中图片内容会瞬间跳一下，看起来像闪帧。
+ *   background-position 可以插值，配合 background-size: cover（语义与
+ *   object-fit: cover 相同），裁剪位置能跟着尺寸一起连续变化。
+ */
 const PosterFlipOverlay: React.FC<PosterFlipOverlayProps> = ({
   posterUrl, startRect, endRect, startObjPos, endObjPos, onDone,
 }) => {
@@ -25,7 +33,8 @@ const PosterFlipOverlay: React.FC<PosterFlipOverlayProps> = ({
       doneCalled.current = true;
       onDone();
     };
-    const timeout = setTimeout(done, 500);
+    // 兜底：过渡事件偶尔不触发（窗口失焦等），别让副本永久留在屏幕上
+    const timeout = setTimeout(done, 620);
     const raf = requestAnimationFrame(() => setAnimating(true));
     return () => { cancelAnimationFrame(raf); clearTimeout(timeout); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -38,29 +47,32 @@ const PosterFlipOverlay: React.FC<PosterFlipOverlayProps> = ({
     }
   };
 
+  const ease = 'cubic-bezier(0.22, 1, 0.36, 1)';
+  const move = `380ms ${ease}`;
+
   const base: React.CSSProperties = {
     position: 'fixed',
     zIndex: 10000,
-    objectFit: 'cover',
     pointerEvents: 'none',
     borderRadius: animating ? 8 : 10,
     left: animating ? endRect.left : startRect.left,
     top: animating ? endRect.top : startRect.top,
     width: animating ? endRect.width : startRect.width,
     height: animating ? endRect.height : startRect.height,
-    objectPosition: animating ? (endObjPos || '50% 50%') : (startObjPos || '50% 50%'),
+    backgroundImage: `url(${JSON.stringify(posterUrl)})`,
+    backgroundSize: 'cover',
+    backgroundRepeat: 'no-repeat',
+    backgroundPosition: animating ? (endObjPos || '50% 50%') : (startObjPos || '50% 50%'),
+    willChange: 'left, top, width, height, background-position',
     transition: animating
-      ? 'all 0.35s cubic-bezier(0.4, 0, 0.2, 1)'
+      ? `left ${move}, top ${move}, width ${move}, height ${move}, border-radius ${move}, background-position ${move}`
       : 'none',
+    boxShadow: '0 24px 60px -24px rgba(0, 0, 0, 0.85)',
   };
 
   return createPortal(
-    <img
-      src={posterUrl}
-      style={base}
-      onTransitionEnd={handleTransitionEnd}
-    />,
-    document.body
+    <div style={base} onTransitionEnd={handleTransitionEnd} />,
+    document.body,
   );
 };
 

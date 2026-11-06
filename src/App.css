@@ -71,22 +71,25 @@
   box-shadow: 24px 0 60px -46px rgba(0, 0, 0, 0.95);
   overflow-y: auto;
   overflow-x: hidden;
-  transition: width 300ms var(--ease-out);
+  transition: width 240ms var(--ease-out);
 }
 
-/* 侧栏展开时内容轻微淡入，收起时不要看到内容先被压扁 */
+/*
+ * 侧栏内容始终按完整宽度渲染，折叠时只淡出、不重排。
+ * 之前折叠会立刻把内容换成一个小方块，宽度动画里先闪没再收，很跳。
+ */
 .app-sidebar .ant-layout-sider-children {
+  width: 300px;
   padding: 16px 12px 28px;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  animation: section-in 320ms var(--ease-out);
+  transition: opacity 160ms ease;
 }
 
-/* 收起状态：去掉内边距，图标方块填满侧栏 */
 .app-sidebar.ant-layout-sider-collapsed .ant-layout-sider-children {
-  padding: 0;
-  animation: none;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .main-layout {
@@ -356,7 +359,8 @@
 }
 
 .search-mode-seg .ant-segmented-item-selected {
-  animation: seg-pulse 0.9s ease-out;
+  /* 0.9s 的底色脉冲太抢眼，缩短到 0.5s 只作轻提示 */
+  animation: seg-pulse 0.5s ease-out;
 }
 
 /* ── DatePicker 主题适配 ── */
@@ -493,10 +497,10 @@
   opacity: 1;
   transform: none;
   transition:
-    max-width 300ms var(--ease-out),
-    margin-left 300ms var(--ease-out),
-    opacity 190ms ease,
-    transform 300ms var(--ease-out);
+    max-width 260ms var(--ease-out),
+    margin-left 260ms var(--ease-out),
+    opacity 170ms ease,
+    transform 260ms var(--ease-out);
 }
 
 .category-tab:hover {
@@ -729,11 +733,11 @@
   box-shadow: var(--shadow-sm);
   transform-origin: center bottom;
   transition:
-    transform 320ms var(--ease-out),
-    box-shadow 320ms var(--ease-out),
+    transform 260ms var(--ease-out),
+    box-shadow 260ms var(--ease-out),
     border-color var(--duration-base) ease;
-  animation: card-rise 0.5s var(--ease-out) both;
-  animation-delay: calc(var(--i, 0) * 15ms);
+  animation: card-rise 0.42s var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 11ms);
 }
 
 @keyframes card-rise {
@@ -1921,7 +1925,41 @@
 /* ── 详情面板与全站弹层 ── */
 .ant-modal-mask {
   background: var(--mask-bg) !important;
-  backdrop-filter: blur(6px) saturate(1.1);
+  /*
+   * 这里原本有 backdrop-filter: blur(6px)。点海报时遮罩是"啪"地整屏出现，
+   * 全屏模糊要在同一帧算一遍，弱一点的机器上会掉帧，看起来就是闪一下。
+   * 深色遮罩本身已经足够压住背景，去掉模糊后打开/关闭都更稳。
+   *
+   * 另外提前把它提升成独立合成层：遮罩第一次出现时浏览器要重新分配层，
+   * 背景卡片会被迫重绘一帧（表现就是闪一下），will-change + translateZ(0)
+   * 让它一开始就在自己的层里，只做 opacity 动画。
+   */
+  will-change: opacity;
+  transform: translateZ(0);
+}
+
+/*
+ * 详情遮罩：点击的同一轮就开始淡入，不等 antd 的 mask 动画。
+ * z-index 低于 Modal（1000）、高于侧栏/内容；pointer-events: none 不挡任何点击。
+ */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: var(--mask-bg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+
+body.detail-mask-on::after {
+  opacity: 1;
+}
+
+/* 详情自己的 antd mask 只保留点击关闭，不再画第二层暗色 */
+.ant-modal-root:has(.anime-detail-modal) .ant-modal-mask {
+  background: transparent !important;
 }
 
 .anime-detail-modal .ant-modal-content {

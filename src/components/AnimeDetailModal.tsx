@@ -1731,13 +1731,16 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
           </Space>
         </div>
       }
-      {...(contentHidden ? { transitionName: '', maskTransitionName: '' } : {})}
+      {...((contentHidden || posterHidden)
+        // FLIP 期间面板本体不做出现/消失动画，只保留遮罩的淡入淡出
+        ? { transitionName: '' }
+        : {})}
       styles={{
         body: {
           maxHeight: '75vh',
           overflowY: 'auto',
           opacity: contentHidden ? 0 : 1,
-          transition: 'opacity 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
+          transition: 'opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1)',
         },
       }}
     >
