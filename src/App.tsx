@@ -185,7 +185,7 @@ const App: React.FC = () => {
    *   1. 展开动画进行中 Sider 宽度还没到 300，鼠标虽然正往侧栏去，矩形判断却不成立，
    *      于是刚展开就被收起、再 hover 再展开 —— 左上角一直闪。
    *   2. 品牌块到侧栏之间隔着顶栏底部十几像素，鼠标路过那一帧也不在矩形内。
-   * 现在改成：宽度动画结束（>= 280px）后才开始判定，离开后等 260ms 再收；
+   * 现在改成：宽度动画结束（>= 280px）后才开始判定，离开后等 200ms 再收；
    * 期间鼠标回到侧栏或品牌块热区都会取消计时。
    */
   useEffect(() => {
@@ -206,13 +206,19 @@ const App: React.FC = () => {
 
       const inSider = e.clientX >= r.left && e.clientX <= r.right
         && e.clientY >= r.top - 16 && e.clientY <= r.bottom;
-      // 品牌块 + 顶栏左侧也算热区：鼠标从这里滑进侧栏不该触发收起
-      const topbarH = parseInt(
-        getComputedStyle(document.documentElement).getPropertyValue('--topbar-height'), 10,
-      ) || 72;
-      const inHandle = e.clientX <= 92 && e.clientY <= topbarH;
+      /*
+       * 品牌块用它的真实矩形算热区，不能拿 --topbar-height 当屏幕坐标：
+       * 那个变量是顶栏「高度」，而 Electron 顶栏上方还有 36px 自定义标题栏，
+       * 品牌块下半截（y 71~90）会落到热区外 —— 表现就是悬停有「打开侧栏」提示，
+       * 鼠标一停过去就被判成离开、侧栏刚开就收，看起来完全打不开。
+       */
+      const brand = document.querySelector('.brand-trigger');
+      const br = brand ? brand.getBoundingClientRect() : null;
+      const inBrand = !!br
+        && e.clientX >= br.left - 8 && e.clientX <= br.right + 8
+        && e.clientY >= br.top - 8 && e.clientY <= br.bottom + 8;
 
-      if (inSider || inHandle) {
+      if (inSider || inBrand) {
         cancel();
         return;
       }
