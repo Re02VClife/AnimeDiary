@@ -234,14 +234,18 @@ afterEach(() => {
 });
 
 describe('音乐工具', () => {
-  it('app_music_match 不传番名时扫全歌单，按 subtitle 反查归属', async () => {
+  it('app_music_match 不传番名时扫全歌单，按 subtitle 反查归属，并跳过角色卡', async () => {
     const { host } = makeHost([
       makeEntry({ id: 'e1', title: '化物语' }),
       makeEntry({ id: 'e2', title: '莉兹与青鸟' }),
+      // 角色卡：名字是番名的子串，混进匹配池会抢归属
+      makeEntry({ id: 'c1', title: '芙莉莲', templateId: 'character' }),
     ]);
     const tools = createAppTools(host, 'read');
     const out = await find(tools, 'app_music_match').run({}) as {
       playlist: { title: string; count: number };
+      library: number;
+      characterCardsSkipped: number;
       matched: number;
       items: Array<{ mid: string; anime: string | null; matchedBy: string | null }>;
     };
@@ -249,9 +253,23 @@ describe('音乐工具', () => {
     expect(out.playlist.title).toBe('动漫');
     expect(out.playlist.count).toBe(3);
     expect(out.matched).toBe(3);
+    // 匹配池只算番剧：3 部里扣掉 1 张角色卡
+    expect(out.library).toBe(2);
+    expect(out.characterCardsSkipped).toBe(1);
     // 按匹配分降序：番名越长命中越不可能是巧合，分越高
     expect(out.items.map((i) => i.anime)).toEqual(['莉兹与青鸟', '化物语', '化物语']);
     expect(out.items.every((i) => i.matchedBy === 'subtitle')).toBe(true);
+  });
+
+  it('app_music_match 把角色卡标题当番名时给出明确提示', async () => {
+    const { host } = makeHost([
+      makeEntry({ id: 'e1', title: '化物语' }),
+      makeEntry({ id: 'c1', title: '芙莉莲', templateId: 'character' }),
+    ]);
+    const tools = createAppTools(host, 'read');
+
+    await expect(find(tools, 'app_music_match').run({ animeTitle: '芙莉莲' }))
+      .rejects.toThrow(/角色卡/);
   });
 
   it('app_music_match 传番名时只返回这一部的歌', async () => {

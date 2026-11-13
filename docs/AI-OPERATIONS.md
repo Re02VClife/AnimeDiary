@@ -126,7 +126,8 @@ episodes / currentEpisode / bangumiScore / watchDate / notes / review`。
 ```json
 {
   "playlist": { "title": "动漫", "count": 177 },
-  "library": 168,
+  "library": 260,
+  "characterCardsSkipped": 212,
   "total": 177,
   "matched": 42,
   "returned": 42,
@@ -137,6 +138,11 @@ episodes / currentEpisode / bangumiScore / watchDate / notes / review`。
   ]
 }
 ```
+
+匹配池**只含番剧条目**，角色卡（`templateId === 'character'`）不参与：
+它们有 200 多张，混进来既会让「曲库多少部」这个数字对不上账，
+也会因为名字是番名的子串（角色卡「芙莉莲」vs《葬送的芙莉莲》）抢走归属。
+`library` 是番剧数，`characterCardsSkipped` 是被跳过的角色卡数。
 
 `matchedBy` 说明依据：`subtitle`（出处，最可信）> `album` > `name`。
 匹配只做「歌 → 番」的一对一归属，不判断这首歌是不是 OP（subtitle 里本来写着）。

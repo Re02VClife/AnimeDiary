@@ -12,6 +12,7 @@
  */
 
 import type { AnimeCategory, AnimeEntry } from '../../src/types';
+import { CHARACTER_TEMPLATE_ID } from '../../src/types';
 import { calcOverall } from '../../core/overall';
 import { sameTagName } from '../../core/tag-name';
 import type { AIPermission } from '../../core/ai-permission';
@@ -186,6 +187,18 @@ async function loadPlaylistOrThrow(): Promise<MusicPlaylist> {
   }
 }
 
+/**
+ * 音乐匹配只看「作品」，跳过角色卡。
+ *
+ * 库里角色卡有两百多张，混进匹配池会出两类错：
+ *   1. 数字失真 —— 用户问「曲库多少部」，回一个把角色算进去的数，没法对账；
+ *   2. 抢归属 —— 角色卡叫「芙莉莲」，歌的 subtitle 是「《葬送的芙莉莲》片头曲」，
+ *      包含匹配会让角色卡抢在番剧前面。
+ */
+function isWorkEntry(entry: AnimeEntry): boolean {
+  return entry.templateId !== CHARACTER_TEMPLATE_ID;
+}
+
 /** 这首歌跟番名撞在哪个字段上（subtitle 是 QQ 音乐标的出处，最可信） */
 function matchField(track: MusicTrack, variants: string[]): 'subtitle' | 'album' | 'name' | null {
   if (variants.length === 0) return null;
@@ -311,7 +324,7 @@ const MUSIC_MATCH_SPEC: AppToolSpec = {
   name: 'app_music_match',
   title: '匹配歌单里的歌与番剧',
   description: '把用户 QQ 音乐歌单里的曲目，按 QQ 音乐标的出处（subtitle 里的「《xxx》TV动画片头曲」）'
-    + '和库里的番名匹配，返回「这首歌属于哪部番」的对照表。'
+    + '和库里的番名匹配，返回「这首歌属于哪部番」的对照表。只扫番剧条目，角色卡不参与（它们会抢归属）。'
     + '传 animeTitle 只看某一部；不传就扫整个歌单。'
     + '用户问「歌单里哪些歌是我看过的番的 OP/ED」时用这一个工具一次拿全表，不要逐首去搜。只读。',
   effect: 'read',
@@ -544,14 +557,30 @@ export function createAppTools(host: AppToolHost, permission: AIPermission): App
       const onlyMatched = args.onlyMatched === undefined ? true : args.onlyMatched !== false;
       const animeTitle = str(args, 'animeTitle', 120);
       const playlist = await loadPlaylistOrThrow();
+      // 角色卡不参与匹配：库里的「芙莉莲」是角色卡，不是《葬送的芙莉莲》
+      const works = host.list.filter(isWorkEntry);
+      const characterCardsSkipped = host.list.length - works.length;
 
       // 单部：直接复用界面「本番推荐」那套排序，结果与候选框完全一致
       if (animeTitle) {
-        const entry = requireEntry(host.list, animeTitle);
+        let entry: AnimeEntry;
+        try {
+          entry = requireEntry(works, animeTitle);
+        } catch (e) {
+          if (findEntries(host.list, animeTitle).length > 0) {
+            throw new AppToolError(
+              'NOT_FOUND',
+              `「${animeTitle}」匹配到的是角色卡；音乐匹配只针对番剧条目，请传作品名`,
+            );
+          }
+          throw e;
+        }
         const ranked = rankTracksForAnime(playlist.tracks, entry, limit);
         return {
           playlist: { title: playlist.title, count: playlist.tracks.length },
           anime: entry.title,
+          library: works.length,
+          characterCardsSkipped,
           total: playlist.tracks.length,
           matched: ranked.length,
           returned: ranked.length,
@@ -560,8 +589,8 @@ export function createAppTools(host: AppToolHost, permission: AIPermission): App
       }
 
       // 全歌单反向匹配：每首歌找唯一最可能的番。
-      // 先把每部番的检索变体算一次 —— 177 首 × 200 部，逐次归一化标题会明显变慢。
-      const entries = host.list
+      // 先把每部番的检索变体算一次 —— 177 首 × 260 部，逐次归一化标题会明显变慢。
+      const entries = works
         .map((entry) => ({ entry, variants: titleVariants(entry) }))
         .filter((x) => x.variants.length > 0);
 
@@ -588,7 +617,8 @@ export function createAppTools(host: AppToolHost, permission: AIPermission): App
       const matched = rows.filter((r) => r.entry).length;
       return {
         playlist: { title: playlist.title, count: playlist.tracks.length },
-        library: host.list.length,
+        library: works.length,
+        characterCardsSkipped,
         total: playlist.tracks.length,
         matched,
         returned: Math.min(rows.length, limit),
