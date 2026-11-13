@@ -118,8 +118,13 @@ episodes / currentEpisode / bangumiScore / watchDate / notes / review`。
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `animeTitle` | string | 否 | 只看这一部；必须与列表标题一致 |
-| `limit` | number | 否 | 默认 60，上限 200 |
+| `limit` | number | 否 | 默认 60，上限 300 |
 | `onlyMatched` | boolean | 否 | 默认 true；false 时未匹配的曲目也会返回（`anime: null`） |
+| `offset` | number | 否 | 跳过前 N 条，默认 0（配合 `compact` 分页） |
+| `compact` | boolean | 否 | 只回 `mid + anime`，体积最小；要一次拉全表时用 |
+
+> 工具结果回给模型有 **8KB 上限**（`MAX_TOOL_RESULT_CHARS`），超了会被截断并标注。
+> 112 条完整记录约 20KB → 必然截断；改传 `compact: true` 后约 5KB，一次就能拿全。
 
 返回：
 
@@ -168,6 +173,27 @@ episodes / currentEpisode / bangumiScore / watchDate / notes / review`。
 | `songName` | string | 否 | 没有 mid 时按歌名找；多首同名会报 `AMBIGUOUS` |
 
 返回 `{ ok: true, anime, track: { mid, name, singer, ... } }`。
+
+### 3.9 `app_music_bind_batch`（写）
+
+把「歌单里匹配到番剧的曲目」**一次绑完**，不需要先把对照表拉进上下文，也不用逐首调 3.8。
+整批只弹一次确认。
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `animeTitles` | string[] | 否 | 只绑这几部（完整标题，最多 50）；不传 = 所有匹配到的番 |
+| `minScore` | number | 否 | 只绑相关度 ≥ 该值的曲目，默认 0（建议 `100` 只取 subtitle 命中的） |
+| `limit` | number | 否 | 最多绑多少首，默认 200，上限 500 |
+| `dryRun` | boolean | 否 | `true` 只返回将绑定的清单，不写入（给用户过目用） |
+
+返回：
+
+```json
+{ "ok": true, "bound": 112, "animeCount": 87, "failedCount": 0, "failed": [] }
+```
+
+推荐流程：先 `app_music_bind_batch({ dryRun: true })` 让用户看清单与数量，
+确认后再调一次不带 `dryRun` 的正式绑定，而不是逐首 `app_music_bind`。
 
 ## 4. 权限与授权
 
@@ -230,10 +256,11 @@ episodes / currentEpisode / bangumiScore / watchDate / notes / review`。
 
 ### 按歌单给番配 OP/ED
 
-1. `app_music_match({ limit: 200 })` 拿到「歌 → 番」全表；
-2. 把 `matched` 数与前十几条按番名分组列给用户，顺便说明 `matchedBy` 的依据；
-3. 用户点名要绑哪几首时，再用返回的 `mid` 调 `app_music_bind`（`confirm` 档会弹确认）；
-4. 不要为了「补齐」逐首调用 `app_music_search`：歌单外的基本是翻唱/同人，绑了反而脏。
+1. `app_music_match({ compact: true, limit: 300 })` 拿到「歌 → 番」全表（112 条约 5KB，不会被截断）；
+2. 把 `matched` 数与前十几条按番名分组列给用户，必要时补 `matchedBy` 的依据；
+3. 用户要整批绑 → `app_music_bind_batch({ dryRun: true })` 给清单，确认后再正式绑定；
+4. 只绑某几部 → 传 `animeTitles: ["…"]`；只要高置信度 → 传 `minScore: 100`；
+5. 不要为了「补齐」逐首调用 `app_music_search`：歌单外的基本是翻唱/同人，绑了反而脏。
 
 ## 8. 扩展：HTTP / 插件接入
 

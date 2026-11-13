@@ -40,8 +40,8 @@ export interface AppToolHost {
   list: AnimeEntry[];
   /** 保存单条：必须映射到 handleSaveAnime(updated, true)，避免关掉详情面板 */
   saveAnime(updated: AnimeEntry): Promise<void>;
-  /** confirm 档的写操作确认；返回 false 表示用户拒绝 */
-  approve?(spec: AppToolSpec, args: Record<string, unknown>): Promise<boolean>;
+  /** confirm 档的写操作确认；返回 false 表示用户拒绝。summary 是给人看的补充说明 */
+  approve?(spec: AppToolSpec, args: Record<string, unknown>, summary?: string): Promise<boolean>;
   /**
    * 把一首歌绑到某部番的卡片上。
    * 写的是 music-links.json（侧车文件），**不碰 Excel**，所以不走 saveAnime；
@@ -199,6 +199,42 @@ function isWorkEntry(entry: AnimeEntry): boolean {
   return entry.templateId !== CHARACTER_TEMPLATE_ID;
 }
 
+interface MatchRow {
+  track: MusicTrack;
+  entry: AnimeEntry | null;
+  score: number;
+  matchedBy: string | null;
+}
+
+/**
+ * 全歌单反向匹配：每首歌在番剧池里找唯一最可能的归属，按分数降序。
+ * 先把每部番的检索变体算一次 —— 177 首 × 260 部，逐次归一化标题会明显变慢。
+ */
+function matchPlaylistToWorks(playlist: MusicPlaylist, works: AnimeEntry[]): MatchRow[] {
+  const pool = works
+    .map((entry) => ({ entry, variants: titleVariants(entry) }))
+    .filter((x) => x.variants.length > 0);
+
+  const rows: MatchRow[] = [];
+  for (const track of playlist.tracks) {
+    let best: { entry: AnimeEntry; score: number } | null = null;
+    for (const { entry, variants } of pool) {
+      const score = scoreTrackForAnime(track, variants);
+      if (score > 0 && (!best || score > best.score)) best = { entry, score };
+    }
+    if (best) {
+      rows.push({
+        track,
+        entry: best.entry,
+        score: best.score,
+        matchedBy: matchField(track, titleVariants(best.entry)),
+      });
+    }
+  }
+  rows.sort((a, b) => b.score - a.score || a.track.name.localeCompare(b.track.name));
+  return rows;
+}
+
 /** 这首歌跟番名撞在哪个字段上（subtitle 是 QQ 音乐标的出处，最可信） */
 function matchField(track: MusicTrack, variants: string[]): 'subtitle' | 'album' | 'name' | null {
   if (variants.length === 0) return null;
@@ -328,13 +364,15 @@ const MUSIC_MATCH_SPEC: AppToolSpec = {
     + '传 animeTitle 只看某一部；不传就扫整个歌单。'
     + '用户问「歌单里哪些歌是我看过的番的 OP/ED」时用这一个工具一次拿全表，不要逐首去搜。只读。',
   effect: 'read',
-  modelInputs: ['animeTitle', 'limit', 'onlyMatched'],
+  modelInputs: ['animeTitle', 'limit', 'onlyMatched', 'offset', 'compact'],
   inputSchema: {
     type: 'object',
     properties: {
       animeTitle: { type: 'string', description: '只看这部番的歌；必须与列表里的标题一致' },
-      limit: { type: 'number', description: '最多返回多少条，默认 60，上限 200' },
+      limit: { type: 'number', description: '最多返回多少条，默认 60，上限 300' },
       onlyMatched: { type: 'boolean', description: '只返回匹配上的曲目，默认 true' },
+      offset: { type: 'number', description: '跳过前 N 条，默认 0；配合 compact 分页拿全表' },
+      compact: { type: 'boolean', description: '只回 mid + anime，体积小；要一次拉全表时用' },
     },
     required: [],
   },
@@ -374,9 +412,32 @@ const MUSIC_BIND_SPEC: AppToolSpec = {
   },
 };
 
+const MUSIC_BIND_BATCH_SPEC: AppToolSpec = {
+  name: 'app_music_bind_batch',
+  title: '批量绑定歌单曲目',
+  description: '把「歌单里匹配到番剧的曲目」一次性绑到各自的卡片上，不需要先拉全表、也不用逐首调 app_music_bind。'
+    + '可用 animeTitles 限定几部、minScore 只取高置信度；dryRun 只预览不写。'
+    + '只写 music-links.json，不动 Excel。写操作（只弹一次确认）。',
+  effect: 'write',
+  modelInputs: ['animeTitles', 'minScore', 'limit', 'dryRun'],
+  inputSchema: {
+    type: 'object',
+    properties: {
+      animeTitles: {
+        type: 'array', items: { type: 'string' },
+        description: '只绑这几部（完整标题），最多 50 个；不传 = 所有匹配到的番',
+      },
+      minScore: { type: 'number', description: '只绑相关度 ≥ 该值的曲目，默认 0' },
+      limit: { type: 'number', description: '最多绑多少首，默认 200，上限 500' },
+      dryRun: { type: 'boolean', description: 'true 只返回将要绑定的清单，不写入' },
+    },
+    required: [],
+  },
+};
+
 const ALL_SPECS: AppToolSpec[] = [
   LIST_SPEC, GET_SPEC, TAG_STATS_SPEC, UPDATE_SPEC, TAG_ADD_SPEC, TAG_REMOVE_SPEC,
-  MUSIC_MATCH_SPEC, MUSIC_SEARCH_SPEC, MUSIC_BIND_SPEC,
+  MUSIC_MATCH_SPEC, MUSIC_SEARCH_SPEC, MUSIC_BIND_SPEC, MUSIC_BIND_BATCH_SPEC,
 ];
 
 async function ensureApproval(
@@ -384,12 +445,13 @@ async function ensureApproval(
   spec: AppToolSpec,
   args: Record<string, unknown>,
   permission: AIPermission,
+  summary?: string,
 ): Promise<void> {
   if (!needsApproval(permission, spec.effect)) return;
   if (!host.approve) {
     throw new AppToolError('FORBIDDEN', '当前是「提议后确认」权限，但宿主没有提供确认入口');
   }
-  const ok = await host.approve(spec, args);
+  const ok = await host.approve(spec, args, summary);
   if (!ok) throw new AppToolError('FORBIDDEN', '用户取消了这次改动');
 }
 
@@ -553,7 +615,9 @@ export function createAppTools(host: AppToolHost, permission: AIPermission): App
   byName.set(MUSIC_MATCH_SPEC.name, {
     spec: MUSIC_MATCH_SPEC,
     async run(args) {
-      const limit = int(args, 'limit', 1, 200) ?? 60;
+      const limit = int(args, 'limit', 1, 300) ?? 60;
+      const offset = int(args, 'offset', 0, 100000) ?? 0;
+      const compact = args.compact === true;
       const onlyMatched = args.onlyMatched === undefined ? true : args.onlyMatched !== false;
       const animeTitle = str(args, 'animeTitle', 120);
       const playlist = await loadPlaylistOrThrow();
@@ -588,45 +652,32 @@ export function createAppTools(host: AppToolHost, permission: AIPermission): App
         };
       }
 
-      // 全歌单反向匹配：每首歌找唯一最可能的番。
-      // 先把每部番的检索变体算一次 —— 177 首 × 260 部，逐次归一化标题会明显变慢。
-      const entries = works
-        .map((entry) => ({ entry, variants: titleVariants(entry) }))
-        .filter((x) => x.variants.length > 0);
-
-      const rows: { track: MusicTrack; entry: AnimeEntry | null; score: number; matchedBy: string | null }[] = [];
-      for (const track of playlist.tracks) {
-        let best: { entry: AnimeEntry; score: number } | null = null;
-        for (const { entry, variants } of entries) {
-          const score = scoreTrackForAnime(track, variants);
-          if (score > 0 && (!best || score > best.score)) best = { entry, score };
-        }
-        if (best) {
-          rows.push({
-            track,
-            entry: best.entry,
-            score: best.score,
-            matchedBy: matchField(track, titleVariants(best.entry)),
-          });
-        } else if (!onlyMatched) {
-          rows.push({ track, entry: null, score: 0, matchedBy: null });
+      const rows = matchPlaylistToWorks(playlist, works);
+      if (!onlyMatched) {
+        const hit = new Set(rows.map((r) => r.track.mid));
+        for (const track of playlist.tracks) {
+          if (!hit.has(track.mid)) rows.push({ track, entry: null, score: 0, matchedBy: null });
         }
       }
 
-      rows.sort((a, b) => b.score - a.score || a.track.name.localeCompare(b.track.name));
-      const matched = rows.filter((r) => r.entry).length;
+      const page = rows.slice(offset, offset + limit);
       return {
         playlist: { title: playlist.title, count: playlist.tracks.length },
         library: works.length,
         characterCardsSkipped,
         total: playlist.tracks.length,
-        matched,
-        returned: Math.min(rows.length, limit),
-        items: rows.slice(0, limit).map((r) => ({
-          ...slimTrack(r.track),
-          anime: r.entry?.title ?? null,
-          matchedBy: r.matchedBy,
-        })),
+        matched: rows.filter((r) => r.entry).length,
+        offset,
+        returned: page.length,
+        // 要一次拉全表就带 compact：只回 mid + anime，112 条也就几 KB，
+        // 不会被 chat-agent 的 8KB 结果上限截断
+        items: compact
+          ? page.map((r) => ({ mid: r.track.mid, anime: r.entry?.title ?? null }))
+          : page.map((r) => ({
+            ...slimTrack(r.track),
+            anime: r.entry?.title ?? null,
+            matchedBy: r.matchedBy,
+          })),
       };
     },
   });
@@ -690,6 +741,81 @@ export function createAppTools(host: AppToolHost, permission: AIPermission): App
         throw new AppToolError('WRITE_FAILED', e instanceof Error ? e.message : String(e));
       }
       return { ok: true, anime: entry.title, track: slimTrack(track) };
+    },
+  });
+
+  byName.set(MUSIC_BIND_BATCH_SPEC.name, {
+    spec: MUSIC_BIND_BATCH_SPEC,
+    async run(args) {
+      const dryRun = args.dryRun === true;
+      const minScore = num(args, 'minScore', 0, 1000) ?? 0;
+      const limit = int(args, 'limit', 1, 500) ?? 200;
+      const wantedTitles = strList(args, 'animeTitles', 50, 120);
+
+      const playlist = await loadPlaylistOrThrow();
+      const works = host.list.filter(isWorkEntry);
+
+      if (wantedTitles.length > 0) {
+        const known = new Set(works.map((w) => w.title.toLowerCase()));
+        const missing = wantedTitles.filter((t) => !known.has(t.toLowerCase()));
+        if (missing.length > 0) {
+          throw new AppToolError(
+            'NOT_FOUND',
+            `这些标题不在番剧列表里（角色卡不参与绑定）：${missing.slice(0, 6).join('、')}`,
+          );
+        }
+      }
+
+      const wanted = new Set(wantedTitles.map((t) => t.toLowerCase()));
+      const rows = matchPlaylistToWorks(playlist, works)
+        .filter((r) => r.score >= minScore)
+        .filter((r) => wanted.size === 0 || (r.entry && wanted.has(r.entry.title.toLowerCase())))
+        .slice(0, limit);
+
+      if (rows.length === 0) {
+        return { ok: true, bound: 0, note: '没有符合条件的曲目（歌单里没有匹配到这些番）' };
+      }
+
+      const animeCount = new Set(rows.map((r) => r.entry!.title)).size;
+      const sample = rows.slice(0, 5).map((r) => `${r.track.name} → ${r.entry!.title}`).join('；');
+      const summary = `将把 ${rows.length} 首歌绑到 ${animeCount} 部番的卡片上：${sample}${rows.length > 5 ? ' 等' : ''}`;
+
+      if (dryRun) {
+        return {
+          ok: true,
+          dryRun: true,
+          wouldBind: rows.length,
+          animeCount,
+          animes: Array.from(new Set(rows.map((r) => r.entry!.title))).slice(0, 30),
+          sample: rows.slice(0, 10).map((r) => ({ mid: r.track.mid, name: r.track.name, anime: r.entry!.title })),
+        };
+      }
+
+      if (!host.bindMusic) {
+        throw new AppToolError('FORBIDDEN', '宿主没有提供音乐绑定入口（界面版本过旧？）');
+      }
+      // 整批只弹一次确认：112 首逐条确认没人点得下去
+      await ensureApproval(host, MUSIC_BIND_BATCH_SPEC, args, perm, summary);
+
+      const failed: string[] = [];
+      let bound = 0;
+      for (const row of rows) {
+        try {
+          await host.bindMusic(row.entry!, row.track);
+          bound += 1;
+        } catch (e) {
+          failed.push(`${row.track.name} → ${row.entry!.title}：${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+
+      return {
+        ok: failed.length === 0,
+        bound,
+        animeCount,
+        failedCount: failed.length,
+        failed: failed.slice(0, 10),
+        note: failed.length > 0 ? '部分曲目绑定失败，通常是本地服务不可用' : undefined,
+      };
     },
   });
 

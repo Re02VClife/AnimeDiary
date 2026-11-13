@@ -322,6 +322,83 @@ describe('音乐工具', () => {
     expect(binds).toBe(0);
   });
 
+  it('app_music_match 支持 compact + offset 分页', async () => {
+    const { host } = makeHost([makeEntry({ id: 'e1', title: '化物语' }), makeEntry({ id: 'e2', title: '莉兹与青鸟' })]);
+    const tools = createAppTools(host, 'read');
+    const out = await find(tools, 'app_music_match').run({ compact: true, offset: 1, limit: 1 }) as {
+      offset: number;
+      returned: number;
+      items: Array<Record<string, unknown>>;
+    };
+
+    expect(out.offset).toBe(1);
+    expect(out.returned).toBe(1);
+    // compact 只留 mid + anime：整表才塞得进 8KB 的结果上限
+    expect(Object.keys(out.items[0]).sort()).toEqual(['anime', 'mid']);
+  });
+
+  it('app_music_bind_batch dryRun 只预览、不写入', async () => {
+    const { host } = makeHost([makeEntry({ id: 'e1', title: '化物语' }), makeEntry({ id: 'e2', title: '莉兹与青鸟' })]);
+    let binds = 0;
+    host.bindMusic = async () => { binds += 1; };
+    const tools = createAppTools(host, 'write');
+
+    const out = await find(tools, 'app_music_bind_batch').run({ dryRun: true }) as {
+      wouldBind: number;
+      animeCount: number;
+    };
+    expect(out.wouldBind).toBe(3);
+    expect(out.animeCount).toBe(2);
+    expect(binds).toBe(0);
+  });
+
+  it('app_music_bind_batch 一次绑完，并按 animeTitles / minScore 过滤', async () => {
+    const { host, saved } = makeHost([makeEntry({ id: 'e1', title: '化物语' }), makeEntry({ id: 'e2', title: '莉兹与青鸟' })]);
+    const bound: Array<{ anime: string; mid: string }> = [];
+    host.bindMusic = async (entry, track) => { bound.push({ anime: entry.title, mid: track.mid }); };
+    const tools = createAppTools(host, 'write');
+
+    const all = await find(tools, 'app_music_bind_batch').run({}) as { bound: number; animeCount: number };
+    expect(all.bound).toBe(3);
+    expect(all.animeCount).toBe(2);
+    expect(saved).toHaveLength(0); // 不碰 Excel
+
+    bound.length = 0;
+    const onlyOne = await find(tools, 'app_music_bind_batch').run({ animeTitles: ['化物语'] }) as { bound: number };
+    expect(onlyOne.bound).toBe(2);
+    expect(bound.every((b) => b.anime === '化物语')).toBe(true);
+
+    // 番名越长分越高：莉兹与青鸟 110，化物语 106
+    bound.length = 0;
+    const highScore = await find(tools, 'app_music_bind_batch').run({ minScore: 108 }) as { bound: number };
+    expect(highScore.bound).toBe(1);
+    expect(bound[0].anime).toBe('莉兹与青鸟');
+  });
+
+  it('app_music_bind_batch 在 confirm 档被拒后一首都不绑', async () => {
+    const { host } = makeHost([makeEntry({ id: 'e1', title: '化物语' })]);
+    let binds = 0;
+    host.bindMusic = async () => { binds += 1; };
+    host.approve = async () => false;
+    const tools = createAppTools(host, 'confirm');
+
+    await expect(find(tools, 'app_music_bind_batch').run({}))
+      .rejects.toThrow(/\[FORBIDDEN\]/);
+    expect(binds).toBe(0);
+  });
+
+  it('app_music_bind_batch 的标题不在番剧池时给 NOT_FOUND', async () => {
+    const { host } = makeHost([
+      makeEntry({ id: 'e1', title: '化物语' }),
+      makeEntry({ id: 'c1', title: '芙莉莲', templateId: 'character' }),
+    ]);
+    host.bindMusic = async () => {};
+    const tools = createAppTools(host, 'write');
+
+    await expect(find(tools, 'app_music_bind_batch').run({ animeTitles: ['芙莉莲'] }))
+      .rejects.toThrow(/角色卡不参与绑定/);
+  });
+
   it('app_music_bind 找不到歌名时给 NOT_FOUND', async () => {
     const { host } = makeHost([makeEntry({ title: '化物语' })]);
     host.bindMusic = async () => {};

@@ -314,15 +314,21 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
       // 音乐绑定写的是 music-links.json（侧车），不碰 Excel，所以单独给一条入口；
       // 内部仍复用 features/music 的 bindTrack，界面与 AI 改的是同一份数据
       bindMusic: (entry, track) => bindTrack(animeKeyFor(entry), track),
-      approve: (spec, args) => new Promise<boolean>((resolve) => {
+      approve: (spec, args, summary) => new Promise<boolean>((resolve) => {
+        const isMusic = spec.name.startsWith('app_music');
         Modal.confirm({
           title: `允许 AI 执行「${spec.title}」？`,
           width: 480,
           content: (
             <div style={{ fontSize: 12 }}>
               <div style={{ color: 'var(--text-secondary)', marginBottom: 6 }}>
-                这是写操作，会直接写入 Excel（写前自动留快照）。
+                {isMusic
+                  ? '这会写入音乐绑定（music-links.json），不影响 Excel。'
+                  : '这是写操作，会直接写入 Excel（写前自动留快照）。'}
               </div>
+              {summary && (
+                <div style={{ color: 'var(--text-primary)', marginBottom: 6, lineHeight: 1.6 }}>{summary}</div>
+              )}
               <pre style={{
                 margin: 0, padding: 8, background: 'var(--bg-primary)',
                 border: '1px solid var(--border-primary)', borderRadius: 6,
