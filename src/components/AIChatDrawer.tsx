@@ -19,6 +19,8 @@ import type { AIRun } from '../../features/ai-analysis/ai-runtime';
 import { runChatAgent } from '../../features/ai-analysis/chat-agent';
 import type { ChatRecord } from '../../features/ai-analysis/chat-agent';
 import { createAppTools } from '../../features/ai-analysis/app-tools';
+import { animeKeyFor } from '../../core/music-links';
+import { bindTrack } from '../../features/music/music-store';
 import { recordsToItems, firstUserTitle } from '../../features/ai-analysis/chat-transcript';
 import type { ChatItem } from '../../features/ai-analysis/chat-transcript';
 import {
@@ -309,6 +311,9 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
     const appTools = createAppTools({
       get list() { return listRef.current; },
       saveAnime: (updated) => onSaveAnime(updated, true),
+      // 音乐绑定写的是 music-links.json（侧车），不碰 Excel，所以单独给一条入口；
+      // 内部仍复用 features/music 的 bindTrack，界面与 AI 改的是同一份数据
+      bindMusic: (entry, track) => bindTrack(animeKeyFor(entry), track),
       approve: (spec, args) => new Promise<boolean>((resolve) => {
         Modal.confirm({
           title: `允许 AI 执行「${spec.title}」？`,

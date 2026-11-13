@@ -15,6 +15,9 @@
 
 **不要**尝试绕过工具直接改文件、改 localStorage 或拼 Excel 路径。
 
+> 唯一例外：**音乐绑定**（`app_music_bind`）写的是 `music-links.json`（侧车文件），不碰 Excel，
+> 所以它走 `host.bindMusic` 而不是 `host.saveAnime`。除此之外仍只有一条 Excel 写入路径。
+
 ## 2. 调用协议
 
 工具采用 OpenAI function calling 的标准形状：
@@ -107,6 +110,59 @@ episodes / currentEpisode / bangumiScore / watchDate / notes / review`。
 返回 `{ ok: true, title, added: [...] }` 或 `{ ok: true, title, removed: [...] }`。
 这两个工具只改**这一部**的标签，不动全局标签池。
 
+### 3.6 `app_music_match`（只读）
+
+把用户 QQ 音乐歌单里的曲目，按 QQ 音乐标的出处（`subtitle` 里的「《化物语》TV动画第10集片头曲」）
+和库里的番名匹配。这是回答「歌单里哪些歌是我看过的番」唯一正确的入口 —— 一次扫全表。
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `animeTitle` | string | 否 | 只看这一部；必须与列表标题一致 |
+| `limit` | number | 否 | 默认 60，上限 200 |
+| `onlyMatched` | boolean | 否 | 默认 true；false 时未匹配的曲目也会返回（`anime: null`） |
+
+返回：
+
+```json
+{
+  "playlist": { "title": "动漫", "count": 177 },
+  "library": 168,
+  "total": 177,
+  "matched": 42,
+  "returned": 42,
+  "items": [
+    { "mid": "003AGGTc2Hdyro", "name": "恋愛サーキュレーション", "singer": "花澤香菜",
+      "subtitle": "《化物语》TV动画第10集片头曲", "duration": "4:15", "vip": true,
+      "anime": "化物语", "matchedBy": "subtitle" }
+  ]
+}
+```
+
+`matchedBy` 说明依据：`subtitle`（出处，最可信）> `album` > `name`。
+匹配只做「歌 → 番」的一对一归属，不判断这首歌是不是 OP（subtitle 里本来写着）。
+
+### 3.7 `app_music_search`（只读）
+
+按歌名/歌手搜 QQ 音乐，用来找歌单里没有的曲子。返回条数少（接口只给精确命中），不要指望翻页。
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `query` | string | 是 | 歌名或歌手 |
+| `limit` | number | 否 | 默认 8，上限 20 |
+
+### 3.8 `app_music_bind`（写）
+
+把歌单里的一首歌绑定到某部番的卡片上（就是卡片「音声」里看到的那份列表）。
+写 `music-links.json`，**不动 Excel**；同一首重复绑定自动跳过。
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `animeTitle` | string | 是 | 完整标题 |
+| `mid` | string | 否 | 歌曲 songmid，推荐（来自 `app_music_match` 的结果） |
+| `songName` | string | 否 | 没有 mid 时按歌名找；多首同名会报 `AMBIGUOUS` |
+
+返回 `{ ok: true, anime, track: { mid, name, singer, ... } }`。
+
 ## 4. 权限与授权
 
 当前档位来自「AI 设置 → 🛡 AI 写操作权限」：
@@ -143,7 +199,8 @@ episodes / currentEpisode / bangumiScore / watchDate / notes / review`。
 4. **不改公式列**：D 列总评由应用重建，不要试图写它。
 5. **评分范围**：0–10；维度 key 必须是当前模板里的 key，否则会被静默丢弃。
 6. **标签归一化**：`科幻` 与 `科幻 ` 视为同一个；删除按归一化匹配。
-7. **写失败要如实转述**：不要假装成功。
+7. **音乐绑定**：只能绑歌单里已有的曲目（优先传 `mid`）；写 `music-links.json`，不写 Excel。
+8. **写失败要如实转述**：不要假装成功。
 
 ## 7. 典型流程
 
@@ -165,6 +222,13 @@ episodes / currentEpisode / bangumiScore / watchDate / notes / review`。
 1. 返回 `AMBIGUOUS` 时，把候选标题原样列给用户；
 2. 用户选定后再调用，不要自己挑一个。
 
+### 按歌单给番配 OP/ED
+
+1. `app_music_match({ limit: 200 })` 拿到「歌 → 番」全表；
+2. 把 `matched` 数与前十几条按番名分组列给用户，顺便说明 `matchedBy` 的依据；
+3. 用户点名要绑哪几首时，再用返回的 `mid` 调 `app_music_bind`（`confirm` 档会弹确认）；
+4. 不要为了「补齐」逐首调用 `app_music_search`：歌单外的基本是翻唱/同人，绑了反而脏。
+
 ## 8. 扩展：HTTP / 插件接入
 
 当前执行器跑在渲染进程（复用 `AnimeContext` 的写链路），工具定义与执行位置解耦。
@@ -177,5 +241,6 @@ episodes / currentEpisode / bangumiScore / watchDate / notes / review`。
 **新增写工具时必须遵守**：
 
 1. 声明 `effect: 'write'`，由 `createAppTools` / `canUseAppTool` 统一过滤；
-2. 写数据只能调用 `host.saveAnime`，不得新增第二条 Excel 写入路径；
+2. 改 Excel 只能调用 `host.saveAnime`，不得新增第二条 Excel 写入路径；
+   （音乐这类侧车数据走各自的 host 回调，如 `host.bindMusic`，同样只能有一条写入实现）
 3. 在 `app-tools.test.ts` 里补「权限拒绝」和「成功写入」两类用例。

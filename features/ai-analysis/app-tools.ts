@@ -24,6 +24,15 @@ import {
   type AppToolSpec,
 } from '../../core/app-tools';
 import { getTemplate } from '../anime-data/template-service';
+import {
+  formatTrackDuration,
+  normalizeForMatch,
+  rankTracksForAnime,
+  scoreTrackForAnime,
+  titleVariants,
+} from '../../core/music-links';
+import type { MusicPlaylist, MusicTrack } from '../../core/music-links';
+import { fetchPlaylist, searchMusic } from '../music/music-service';
 
 export interface AppToolHost {
   /** 当前实时数据（由 AIChatDrawer 从 context 传入） */
@@ -32,6 +41,12 @@ export interface AppToolHost {
   saveAnime(updated: AnimeEntry): Promise<void>;
   /** confirm 档的写操作确认；返回 false 表示用户拒绝 */
   approve?(spec: AppToolSpec, args: Record<string, unknown>): Promise<boolean>;
+  /**
+   * 把一首歌绑到某部番的卡片上。
+   * 写的是 music-links.json（侧车文件），**不碰 Excel**，所以不走 saveAnime；
+   * 由 AIChatDrawer 注入，内部调 features/music 的 bindTrack。
+   */
+  bindMusic?(entry: AnimeEntry, track: MusicTrack): Promise<void>;
 }
 
 const CATEGORIES: AnimeCategory[] = ['watching', 'wantToWatch', 'onHold', 'watched', 'dropped'];
@@ -148,6 +163,41 @@ function detail(entry: AnimeEntry) {
   };
 }
 
+// ── 音乐歌单（QQ 音乐侧车数据，不进 Excel） ──
+
+/** 曲目 → 给模型看的小卡片；原始结构太大，别整坨塞进上下文 */
+function slimTrack(track: MusicTrack) {
+  return {
+    mid: track.mid,
+    name: track.name,
+    singer: track.singer,
+    album: track.album || null,
+    subtitle: track.subtitle ?? null,
+    duration: formatTrackDuration(track.interval),
+    vip: !!track.vip,
+  };
+}
+
+async function loadPlaylistOrThrow(): Promise<MusicPlaylist> {
+  try {
+    return await fetchPlaylist();
+  } catch (e) {
+    throw new AppToolError('NOT_FOUND', `读不到歌单：${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/** 这首歌跟番名撞在哪个字段上（subtitle 是 QQ 音乐标的出处，最可信） */
+function matchField(track: MusicTrack, variants: string[]): 'subtitle' | 'album' | 'name' | null {
+  if (variants.length === 0) return null;
+  const subtitle = normalizeForMatch(track.subtitle || '');
+  const album = normalizeForMatch(track.album || '');
+  const name = normalizeForMatch(track.name || '');
+  if (variants.some((v) => subtitle.includes(v))) return 'subtitle';
+  if (variants.some((v) => album.includes(v))) return 'album';
+  if (variants.some((v) => name.includes(v))) return 'name';
+  return null;
+}
+
 // ── 工具定义 ──
 
 const LIST_SPEC: AppToolSpec = {
@@ -257,8 +307,63 @@ const TAG_REMOVE_SPEC: AppToolSpec = {
   },
 };
 
+const MUSIC_MATCH_SPEC: AppToolSpec = {
+  name: 'app_music_match',
+  title: '匹配歌单里的歌与番剧',
+  description: '把用户 QQ 音乐歌单里的曲目，按 QQ 音乐标的出处（subtitle 里的「《xxx》TV动画片头曲」）'
+    + '和库里的番名匹配，返回「这首歌属于哪部番」的对照表。'
+    + '传 animeTitle 只看某一部；不传就扫整个歌单。'
+    + '用户问「歌单里哪些歌是我看过的番的 OP/ED」时用这一个工具一次拿全表，不要逐首去搜。只读。',
+  effect: 'read',
+  modelInputs: ['animeTitle', 'limit', 'onlyMatched'],
+  inputSchema: {
+    type: 'object',
+    properties: {
+      animeTitle: { type: 'string', description: '只看这部番的歌；必须与列表里的标题一致' },
+      limit: { type: 'number', description: '最多返回多少条，默认 60，上限 200' },
+      onlyMatched: { type: 'boolean', description: '只返回匹配上的曲目，默认 true' },
+    },
+    required: [],
+  },
+};
+
+const MUSIC_SEARCH_SPEC: AppToolSpec = {
+  name: 'app_music_search',
+  title: '搜索 QQ 音乐',
+  description: '按歌名/歌手搜 QQ 音乐，用来找歌单里没有的曲子（结果较少，只给精确命中）。只读。',
+  effect: 'read',
+  modelInputs: ['query', 'limit'],
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: '歌名或歌手' },
+      limit: { type: 'number', description: '最多返回几首，默认 8，上限 20' },
+    },
+    required: ['query'],
+  },
+};
+
+const MUSIC_BIND_SPEC: AppToolSpec = {
+  name: 'app_music_bind',
+  title: '把歌绑到番剧卡片',
+  description: '把歌单里的一首歌绑定到某部番的卡片上（就是卡片「音声」里看到的那份列表）。'
+    + '只写音乐绑定文件，不动 Excel；同一首重复绑定会自动跳过。写操作。',
+  effect: 'write',
+  modelInputs: ['animeTitle', 'mid', 'songName'],
+  inputSchema: {
+    type: 'object',
+    properties: {
+      animeTitle: { type: 'string', description: '完整标题' },
+      mid: { type: 'string', description: '歌曲 songmid（推荐，最准；来自 app_music_match 的结果）' },
+      songName: { type: 'string', description: '没有 mid 时按歌名在歌单里找' },
+    },
+    required: ['animeTitle'],
+  },
+};
+
 const ALL_SPECS: AppToolSpec[] = [
   LIST_SPEC, GET_SPEC, TAG_STATS_SPEC, UPDATE_SPEC, TAG_ADD_SPEC, TAG_REMOVE_SPEC,
+  MUSIC_MATCH_SPEC, MUSIC_SEARCH_SPEC, MUSIC_BIND_SPEC,
 ];
 
 async function ensureApproval(
@@ -429,6 +534,132 @@ export function createAppTools(host: AppToolHost, permission: AIPermission): App
       if (removed.length === 0) return { ok: true, title: entry.title, removed: [], note: '这些标签本来就不在这部番上' };
       await saveOrThrow(host, { ...entry, tags: kept });
       return { ok: true, title: entry.title, removed };
+    },
+  });
+
+  byName.set(MUSIC_MATCH_SPEC.name, {
+    spec: MUSIC_MATCH_SPEC,
+    async run(args) {
+      const limit = int(args, 'limit', 1, 200) ?? 60;
+      const onlyMatched = args.onlyMatched === undefined ? true : args.onlyMatched !== false;
+      const animeTitle = str(args, 'animeTitle', 120);
+      const playlist = await loadPlaylistOrThrow();
+
+      // 单部：直接复用界面「本番推荐」那套排序，结果与候选框完全一致
+      if (animeTitle) {
+        const entry = requireEntry(host.list, animeTitle);
+        const ranked = rankTracksForAnime(playlist.tracks, entry, limit);
+        return {
+          playlist: { title: playlist.title, count: playlist.tracks.length },
+          anime: entry.title,
+          total: playlist.tracks.length,
+          matched: ranked.length,
+          returned: ranked.length,
+          items: ranked.map((t) => ({ ...slimTrack(t), anime: entry.title, matchedBy: 'subtitle' })),
+        };
+      }
+
+      // 全歌单反向匹配：每首歌找唯一最可能的番。
+      // 先把每部番的检索变体算一次 —— 177 首 × 200 部，逐次归一化标题会明显变慢。
+      const entries = host.list
+        .map((entry) => ({ entry, variants: titleVariants(entry) }))
+        .filter((x) => x.variants.length > 0);
+
+      const rows: { track: MusicTrack; entry: AnimeEntry | null; score: number; matchedBy: string | null }[] = [];
+      for (const track of playlist.tracks) {
+        let best: { entry: AnimeEntry; score: number } | null = null;
+        for (const { entry, variants } of entries) {
+          const score = scoreTrackForAnime(track, variants);
+          if (score > 0 && (!best || score > best.score)) best = { entry, score };
+        }
+        if (best) {
+          rows.push({
+            track,
+            entry: best.entry,
+            score: best.score,
+            matchedBy: matchField(track, titleVariants(best.entry)),
+          });
+        } else if (!onlyMatched) {
+          rows.push({ track, entry: null, score: 0, matchedBy: null });
+        }
+      }
+
+      rows.sort((a, b) => b.score - a.score || a.track.name.localeCompare(b.track.name));
+      const matched = rows.filter((r) => r.entry).length;
+      return {
+        playlist: { title: playlist.title, count: playlist.tracks.length },
+        library: host.list.length,
+        total: playlist.tracks.length,
+        matched,
+        returned: Math.min(rows.length, limit),
+        items: rows.slice(0, limit).map((r) => ({
+          ...slimTrack(r.track),
+          anime: r.entry?.title ?? null,
+          matchedBy: r.matchedBy,
+        })),
+      };
+    },
+  });
+
+  byName.set(MUSIC_SEARCH_SPEC.name, {
+    spec: MUSIC_SEARCH_SPEC,
+    async run(args) {
+      const query = str(args, 'query', 80);
+      if (!query) throw new AppToolError('INVALID_ARGS', 'query 不能为空');
+      const limit = int(args, 'limit', 1, 20) ?? 8;
+      let tracks: MusicTrack[];
+      try {
+        tracks = await searchMusic(query);
+      } catch (e) {
+        throw new AppToolError('NOT_FOUND', `搜索失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+      return {
+        query,
+        total: tracks.length,
+        returned: Math.min(tracks.length, limit),
+        items: tracks.slice(0, limit).map(slimTrack),
+      };
+    },
+  });
+
+  byName.set(MUSIC_BIND_SPEC.name, {
+    spec: MUSIC_BIND_SPEC,
+    async run(args) {
+      await ensureApproval(host, MUSIC_BIND_SPEC, args, perm);
+      const entry = requireEntry(host.list, str(args, 'animeTitle', 120) || '');
+      if (!host.bindMusic) {
+        throw new AppToolError('FORBIDDEN', '宿主没有提供音乐绑定入口（界面版本过旧？）');
+      }
+
+      const playlist = await loadPlaylistOrThrow();
+      const mid = str(args, 'mid', 40);
+      const songName = str(args, 'songName', 120);
+      let track = mid ? playlist.tracks.find((t) => t.mid === mid) : undefined;
+
+      if (!track && songName) {
+        const exact = playlist.tracks.filter((t) => t.name === songName);
+        const pool = exact.length > 0
+          ? exact
+          : playlist.tracks.filter((t) => t.name.toLowerCase().includes(songName.toLowerCase()));
+        if (pool.length > 1) {
+          const names = pool.slice(0, 6).map((t) => `${t.name}（${t.singer}）`).join('、');
+          throw new AppToolError('AMBIGUOUS', `「${songName}」在歌单里匹配到 ${pool.length} 首：${names}。请改用 mid`);
+        }
+        track = pool[0];
+      }
+
+      if (!track) {
+        throw new AppToolError('NOT_FOUND', mid
+          ? `歌单里没有 mid=${mid} 的歌（先调 app_music_match 确认）`
+          : `歌单里没有标题匹配「${songName || ''}」的歌`);
+      }
+
+      try {
+        await host.bindMusic(entry, track);
+      } catch (e) {
+        throw new AppToolError('WRITE_FAILED', e instanceof Error ? e.message : String(e));
+      }
+      return { ok: true, anime: entry.title, track: slimTrack(track) };
     },
   });
 

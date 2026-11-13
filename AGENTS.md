@@ -78,7 +78,8 @@ QQ 音乐 ←→ /api/music/* ←→ server/music-qq.ts ←→ core/music-links.
   （RadarChart）；改前 grep，最好合并。
 - **AI 写工具**：契约在 `core/app-tools.ts`，执行器在 `features/ai-analysis/app-tools.ts`。
   写工具必须标 `effect: 'write'`，且只能回调 `host.saveAnime`（即 `handleSaveAnime`），
-  不得另开 Excel 写入路径。给 AI 的操作手册在 `docs/AI-OPERATIONS.md`，新增工具要同步更新。
+  不得另开 Excel 写入路径；音乐绑定 `app_music_bind` 是侧车数据的例外，走 `host.bindMusic`
+  写 `music-links.json`。给 AI 的操作手册在 `docs/AI-OPERATIONS.md`，新增工具要同步更新。
 
 ## 坑与验证
 

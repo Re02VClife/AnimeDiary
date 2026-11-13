@@ -6,7 +6,7 @@
  *   2. confirm 档的写工具必须经过 approve，拒绝后一个字都不写；
  *   3. 写操作只调用 host.saveAnime（唯一 Excel 写入口），不自己碰数据。
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import type { AnimeEntry } from '../../../src/types';
 import { createAppTools, listAppToolSpecs, type AppToolHost } from '../../../features/ai-analysis/app-tools';
 import type { AppToolRuntime } from '../../../core/app-tools';
@@ -50,12 +50,12 @@ function find(tools: AppToolRuntime[], name: string): AppToolRuntime {
 }
 
 describe('注册期的权限裁剪', () => {
-  it('read 档只暴露 3 个只读工具，写工具连定义都不给', () => {
+  it('read 档只暴露只读工具，写工具连定义都不给', () => {
     const { host } = makeHost([makeEntry()]);
     const tools = createAppTools(host, 'read');
-    expect(tools.map((t) => t.spec.effect)).toEqual(['read', 'read', 'read']);
+    expect(tools.every((t) => t.spec.effect === 'read')).toBe(true);
     expect(tools.map((t) => t.spec.name).sort()).toEqual([
-      'app_anime_get', 'app_anime_list', 'app_tag_stats',
+      'app_anime_get', 'app_anime_list', 'app_music_match', 'app_music_search', 'app_tag_stats',
     ]);
   });
 
@@ -194,5 +194,122 @@ describe('写工具', () => {
 
     await find(tools, 'app_tag_add').run({ title: entry.title, tags: ['公路片'] });
     expect(saved).toHaveLength(1);
+  });
+});
+
+// ── 音乐工具 ──
+//
+// 歌单来自 /api/music/playlist（服务端已缓存 6 小时），这里用假 fetch 顶掉，
+// 只验证「歌单 → 番」的匹配口径与绑定入口，不碰真实网络。
+
+const PLAYLIST_FIXTURE = {
+  id: '8857836243',
+  title: '动漫',
+  songCount: 3,
+  fetchedAt: 0,
+  tracks: [
+    { mid: '003AGGTc2Hdyro', name: '恋愛サーキュレーション', singer: '花澤香菜', album: '歌物語', subtitle: '《化物语》TV动画第10集片头曲', interval: 255, vip: true },
+    { mid: '003mV4wq0syICL', name: 'staple stable', singer: '斎藤千和', album: '化物語', subtitle: '《化物语》TV动画片头曲', interval: 276 },
+    { mid: '001PAbnC1NHiR0', name: 'リズと青い鳥 第二楽章', singer: '北宇治高校吹奏楽部', album: 'girls,dance,staircase', subtitle: '《莉兹与青鸟》电影配乐', interval: 301 },
+  ],
+};
+
+function jsonResponse(data: unknown): Response {
+  return { ok: true, status: 200, text: async () => JSON.stringify(data), json: async () => data } as unknown as Response;
+}
+
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+    const url = String(input);
+    if (url.includes('/api/music/playlist')) return jsonResponse({ playlist: PLAYLIST_FIXTURE });
+    if (url.includes('/api/music/search')) {
+      return jsonResponse({ tracks: [{ mid: '00451VFK3AGNME', name: '恋爱循环', singer: 'Miko孙涵', album: '' }] });
+    }
+    return jsonResponse({});
+  }));
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe('音乐工具', () => {
+  it('app_music_match 不传番名时扫全歌单，按 subtitle 反查归属', async () => {
+    const { host } = makeHost([
+      makeEntry({ id: 'e1', title: '化物语' }),
+      makeEntry({ id: 'e2', title: '莉兹与青鸟' }),
+    ]);
+    const tools = createAppTools(host, 'read');
+    const out = await find(tools, 'app_music_match').run({}) as {
+      playlist: { title: string; count: number };
+      matched: number;
+      items: Array<{ mid: string; anime: string | null; matchedBy: string | null }>;
+    };
+
+    expect(out.playlist.title).toBe('动漫');
+    expect(out.playlist.count).toBe(3);
+    expect(out.matched).toBe(3);
+    // 按匹配分降序：番名越长命中越不可能是巧合，分越高
+    expect(out.items.map((i) => i.anime)).toEqual(['莉兹与青鸟', '化物语', '化物语']);
+    expect(out.items.every((i) => i.matchedBy === 'subtitle')).toBe(true);
+  });
+
+  it('app_music_match 传番名时只返回这一部的歌', async () => {
+    const { host } = makeHost([makeEntry({ id: 'e1', title: '化物语' })]);
+    const tools = createAppTools(host, 'read');
+    const out = await find(tools, 'app_music_match').run({ animeTitle: '化物语' }) as {
+      anime: string;
+      items: Array<{ mid: string }>;
+    };
+    expect(out.anime).toBe('化物语');
+    expect(out.items.map((i) => i.mid)).toEqual(['003AGGTc2Hdyro', '003mV4wq0syICL']);
+  });
+
+  it('app_music_search 返回 QQ 音乐的搜索结果', async () => {
+    const { host } = makeHost([makeEntry()]);
+    const tools = createAppTools(host, 'read');
+    const out = await find(tools, 'app_music_search').run({ query: '恋爱循环' }) as {
+      items: Array<{ mid: string; name: string }>;
+    };
+    expect(out.items[0]).toMatchObject({ mid: '00451VFK3AGNME', name: '恋爱循环' });
+  });
+
+  it('app_music_bind 走 host.bindMusic，不碰 Excel', async () => {
+    const entry = makeEntry({ title: '化物语' });
+    const { host, saved } = makeHost([entry]);
+    const bound: Array<{ anime: string; mid: string }> = [];
+    host.bindMusic = async (target, track) => { bound.push({ anime: target.title, mid: track.mid }); };
+    const tools = createAppTools(host, 'write');
+
+    const out = await find(tools, 'app_music_bind').run({
+      animeTitle: '化物语',
+      mid: '003mV4wq0syICL',
+    }) as { ok: boolean; track: { name: string } };
+
+    expect(out.ok).toBe(true);
+    expect(out.track.name).toBe('staple stable');
+    expect(bound).toEqual([{ anime: '化物语', mid: '003mV4wq0syICL' }]);
+    expect(saved).toHaveLength(0); // 音乐绑定不写 Excel
+  });
+
+  it('app_music_bind 在 confirm 档被拒后不绑定', async () => {
+    const { host } = makeHost([makeEntry({ title: '化物语' })]);
+    let binds = 0;
+    host.bindMusic = async () => { binds += 1; };
+    host.approve = async () => false;
+    const tools = createAppTools(host, 'confirm');
+
+    await expect(find(tools, 'app_music_bind').run({ animeTitle: '化物语', mid: '003mV4wq0syICL' }))
+      .rejects.toThrow(/\[FORBIDDEN\]/);
+    expect(binds).toBe(0);
+  });
+
+  it('app_music_bind 找不到歌名时给 NOT_FOUND', async () => {
+    const { host } = makeHost([makeEntry({ title: '化物语' })]);
+    host.bindMusic = async () => {};
+    const tools = createAppTools(host, 'write');
+
+    await expect(find(tools, 'app_music_bind').run({ animeTitle: '化物语', songName: '不存在' }))
+      .rejects.toThrow(/\[NOT_FOUND\]/);
   });
 });
