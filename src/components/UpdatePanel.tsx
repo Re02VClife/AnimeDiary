@@ -3,8 +3,7 @@
  * 浏览器里 window.electronAPI 不存在，此时组件不渲染任何内容。
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { Button, Input, Progress, Tooltip } from 'antd';
-import { catgirlMessage } from '../theme';
+import { message, Button, Input, Progress, Tooltip } from 'antd';
 
 const UpdatePanel: React.FC = () => {
   const api = window.electronAPI;
@@ -36,9 +35,9 @@ const UpdatePanel: React.FC = () => {
       const next = await api.setUpdateUrl(updateUrl.trim());
       setUpdateUrl(next?.updateUrl || '');
       setEditingUrl(false);
-      catgirlMessage.success('更新源已保存，下次检查生效');
+      message.success('更新源已保存，下次检查生效');
     } catch (e) {
-      catgirlMessage.error('保存失败：' + (e instanceof Error ? e.message : '未知错误'));
+      message.error('保存失败：' + (e instanceof Error ? e.message : '未知错误'));
     }
   }, [api, updateUrl]);
 
@@ -47,14 +46,14 @@ const UpdatePanel: React.FC = () => {
     try {
       const s = await api.checkUpdate();
       if (s.error) {
-        catgirlMessage.error('检查更新失败：' + s.error);
+        message.error('检查更新失败：' + s.error);
       } else if (s.downloadedVersion) {
-        catgirlMessage.success(`已下载 v${s.downloadedVersion}，重启后生效`);
+        message.success(`已下载 v${s.downloadedVersion}，重启后生效`);
       } else {
-        catgirlMessage.success(`已是最新版本（v${s.currentVersion}）`);
+        message.success(`已是最新版本（v${s.currentVersion}）`);
       }
     } catch (e) {
-      catgirlMessage.error('检查更新失败：' + (e instanceof Error ? e.message : '未知错误'));
+      message.error('检查更新失败：' + (e instanceof Error ? e.message : '未知错误'));
     }
   }, [api]);
 

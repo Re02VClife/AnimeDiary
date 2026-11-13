@@ -144,6 +144,16 @@
   transform: scale(0.97);
 }
 
+/* 浅色主题：品牌块直接用二次元图标，去掉渐变底与扫光 */
+.brand-trigger.has-icon {
+  background: transparent;
+  box-shadow: none;
+}
+
+.brand-trigger.has-icon .brand-spark {
+  display: none;
+}
+
 .brand-glyph {
   position: relative;
   z-index: 1;
@@ -861,6 +871,32 @@
   pointer-events: none;
 }
 
+/* 已绑定音乐角标：海报左上角，点一下打开音乐候选框 */
+.anime-card .poster-music-badge {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  line-height: 1.7;
+  color: #fff;
+  background: color-mix(in srgb, var(--brand-primary) 68%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brand-primary) 85%, transparent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  z-index: 4;
+  cursor: pointer;
+  transition: transform var(--duration-base) var(--ease-spring), filter var(--duration-base) ease;
+}
+.anime-card .poster-music-badge:hover {
+  transform: scale(1.08);
+  filter: brightness(1.1);
+}
+/* 批量模式下左上角是勾选框，别叠在一起 */
+.poster-wrap:has(.card-check) .poster-music-badge {
+  display: none;
+}
+
 /* 批量选择框 */
 .card-check {
   position: absolute;
@@ -1065,6 +1101,17 @@
 
 .anime-card .dim-score-value {
   color: #fff;
+}
+
+/* 「音声」维度下徽标可点：挑歌 / 播放这部番绑定的音乐 */
+.anime-card .dim-score-music {
+  background: color-mix(in srgb, var(--brand-primary) 44%, transparent);
+  border-color: color-mix(in srgb, var(--brand-primary) 68%, transparent);
+  transition: background var(--duration-base) ease, transform var(--duration-base) var(--ease-spring);
+}
+.anime-card .dim-score-music:hover {
+  background: color-mix(in srgb, var(--brand-primary) 62%, transparent);
+  transform: translateY(-1px);
 }
 
 /* 窄屏：卡片缩小、间距收紧 */
@@ -1658,75 +1705,6 @@
   }
 }
 
-.graph-modal-body {
-  display: flex;
-  height: 100%;
-  position: relative;
-}
-
-.graph-sidebar {
-  width: 180px;
-  min-width: 100px;
-  background: var(--bg-secondary);
-  border-right: 1px solid var(--border-primary);
-  padding: 16px 14px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-}
-
-.graph-search-input.ant-input-affix-wrapper {
-  background: var(--bg-primary) !important;
-  border-color: var(--border-primary) !important;
-}
-
-.graph-search-input.ant-input-affix-wrapper input {
-  color: var(--text-primary) !important;
-  background: var(--bg-primary) !important;
-}
-
-.graph-search-input.ant-input-affix-wrapper input::placeholder {
-  color: var(--text-muted) !important;
-}
-
-.graph-filter-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 2px;
-  cursor: pointer;
-}
-
-.graph-filter-item .ant-checkbox-inner {
-  background: var(--bg-primary);
-  border-color: var(--border-primary);
-}
-
-.graph-legend {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.graph-canvas {
-  flex: 1;
-  min-width: 0;
-}
-
-.graph-detail-panel {
-  position: absolute;
-  bottom: 0;
-  left: 280px;
-  right: 280px;
-  background: var(--bg-tertiary);
-  border-top: 1px solid var(--border-primary);
-  padding: 10px 16px;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  z-index: 10;
-}
-
 /* ── AI 分析 Modal 暗色主题覆盖 ── */
 .taste-report-modal .ant-modal-content {
   background: var(--bg-secondary) !important;
@@ -2047,6 +2025,52 @@ body.detail-mask-on::after {
   border-radius: var(--radius-sm) !important;
 }
 
+/* ── 评价的时间底纹（阅读态）──
+   有写作时间的段落铺一层很淡的底色，形似荧光笔；色相由行内 style 注入
+   --seg-hue（按写作先后从冷到暖），这里只管浓淡与过渡。
+   没铺底纹的段落 = 没有时间记录，这正是"哪里能悬停"的可发现性提示。 */
+.review-readonly {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  padding: 8px 11px;
+  min-height: 110px;
+}
+
+.review-readonly-empty {
+  color: var(--text-muted);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+}
+
+.review-seg {
+  padding: 1px 2px;
+  margin: 0 -2px;
+  border-radius: 3px;
+  background: hsl(var(--seg-hue, 330) 72% 62% / 0.07);
+  /* 跨行时段落被拆成多个行盒，clone 让每行的圆角和底色各自完整 */
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  transition: background 0.16s ease;
+}
+
+.review-seg:hover {
+  background: hsl(var(--seg-hue, 330) 72% 62% / 0.18);
+}
+
+/* 「2 刷」徽标：贴在观看时间后面，不抢正文 */
+.review-watch-badge {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--brand-primary);
+  background: color-mix(in srgb, var(--brand-primary) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brand-primary) 30%, transparent);
+}
+
 /* 批量工具下拉 */
 .tool-dropdown .ant-dropdown-menu-item {
   padding: 9px 12px !important;
@@ -2300,3 +2324,481 @@ body.detail-mask-on::after {
 .settings-modal .ant-tabs-nav {
   padding-top: 4px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   本地番剧库（设置 → 本地 / 卡片播放键 / 选集播放器）
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── 卡片顶栏播放键 ──
+   只在绑定过本地目录的卡上出现，所以位置和「已绑定音乐」胶囊是竞争关系：
+   两个都在左上角，用 :has 把音乐角标往右让开。 */
+.anime-card .card-play-btn {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 10, 14, 0.55);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  z-index: 5;
+  transition:
+    background var(--duration-base) ease,
+    transform var(--duration-base) var(--ease-spring),
+    box-shadow var(--duration-base) ease;
+}
+
+.anime-card .card-play-btn:hover {
+  background: var(--brand-primary);
+  border-color: color-mix(in srgb, var(--brand-primary) 80%, #fff);
+  transform: scale(1.1);
+  box-shadow: 0 4px 14px -6px var(--brand-primary);
+}
+
+/* 有播放键时音乐角标右移，两个不叠在一起 */
+.poster-wrap:has(.card-play-btn) .poster-music-badge {
+  left: 41px;
+}
+
+/* 批量模式下左上角是勾选框，播放键让位 */
+.poster-wrap:has(.card-check) .card-play-btn {
+  display: none;
+}
+
+/* ── 设置页「本地」── */
+.local-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-height: 62vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.local-section {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.local-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.local-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.local-section-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.local-section-actions {
+  margin-left: auto;
+}
+
+.local-add-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.local-add-row .ant-input {
+  flex: 1;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 12px;
+}
+
+.local-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 10px 12px;
+  border: 1px dashed var(--glass-border);
+  border-radius: var(--radius-md);
+}
+
+.local-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.local-source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 5px 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  border: 1px solid var(--glass-border);
+}
+
+.local-source-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.local-source-path {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 10px 0;
+}
+
+.local-folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.local-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  border: 1px solid var(--glass-border);
+  transition: border-color var(--duration-base) ease, background var(--duration-base) ease;
+}
+
+.local-folder-row.is-bound {
+  border-color: color-mix(in srgb, var(--brand-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--brand-primary) 7%, var(--bg-secondary));
+}
+
+.local-folder-cover {
+  width: 34px;
+  height: 46px;
+  flex-shrink: 0;
+  border-radius: 5px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+  font-size: 16px;
+}
+
+.local-folder-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.local-folder-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.local-folder-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-folder-title .ant-tag {
+  font-size: 10px;
+  line-height: 15px;
+  margin: 0;
+  padding: 0 5px;
+}
+
+.local-folder-id {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+}
+
+.local-folder-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.local-folder-dirname {
+  color: var(--text-muted);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-folder-reason {
+  font-size: 10.5px;
+  color: var(--color-warning);
+}
+
+.local-folder-bind {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.local-bind-select {
+  width: 170px;
+}
+
+.local-bind-select .ant-select-selection-item,
+.local-bind-select .ant-select-selection-placeholder {
+  font-size: 12px;
+}
+
+.local-suggest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.local-suggest-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  border: 1px solid var(--glass-border);
+  font-size: 12px;
+}
+
+.local-suggest-title {
+  font-weight: 600;
+  color: var(--text-primary);
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-suggest-row .ant-tag {
+  font-size: 10px;
+  line-height: 15px;
+  margin: 0;
+  padding: 0 5px;
+}
+
+.local-suggest-reason {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.local-suggest-dirs {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 选集播放器 ── */
+.local-player-modal .ant-modal-content {
+  padding-bottom: 16px;
+}
+
+.local-player-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.local-player-title-main {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-player-title-sub {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-shrink: 0;
+}
+
+.local-player-file {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-player-body {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.local-player-stage {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+}
+
+.local-player-video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: var(--radius-md);
+  outline: none;
+}
+
+.local-player-error {
+  position: absolute;
+  inset: 0 0 40px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 20px;
+  border-radius: var(--radius-md);
+  background: rgba(8, 10, 14, 0.86);
+  color: #fff;
+  font-size: 12.5px;
+  backdrop-filter: blur(4px);
+}
+
+.local-player-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.local-player-pos {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.local-player-path {
+  margin-left: auto;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  max-width: 52%;
+}
+
+.local-player-episodes {
+  width: 190px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--glass-border);
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.local-player-episodes-head {
+  padding: 7px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--glass-border);
+  flex-shrink: 0;
+}
+
+.local-player-episodes-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 8px;
+  overflow-y: auto;
+  align-content: start;
+}
+
+.local-episode-btn {
+  border: 1px solid var(--glass-border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-radius: 5px;
+  padding: 3px 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background var(--duration-base) ease, color var(--duration-base) ease;
+}
+
+.local-episode-btn:hover {
+  background: color-mix(in srgb, var(--brand-primary) 18%, var(--bg-tertiary));
+  color: var(--text-primary);
+}
+
+.local-episode-btn.is-active {
+  background: var(--brand-primary);
+  border-color: var(--brand-primary);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* 窄窗口：选集条折到视频下方，横向滚动 */
+@media (max-width: 1100px) {
+  .local-player-body {
+    flex-direction: column;
+  }
+  .local-player-episodes {
+    width: 100%;
+  }
+  .local-player-episodes-grid {
+    grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
+    max-height: 132px;
+  }
+  .local-player-path {
+    max-width: 40%;
+  }
+}
+

@@ -129,7 +129,6 @@ features/                 12 个业务模块
   character-complete/     角色补全 + 角色卡合并（4 文件）
   character-voice/        角色原声语音抓取（语音面板 + 角色卡播放条）
   image-management/       海报 / 截图 / 去白底（5 文件）
-  knowledge-graph/        力导向图
   media-complete/         数据补全面板
   ranking/                百分位排名
   search-add/             Bangumi / AniList 搜索入库
@@ -167,7 +166,6 @@ server/character-voice.ts 语音抓取：B 站搜索/下载 + ffmpeg 切片拼�
 | 已删除的死文件 | 真正生效的 |
 |---|---|
 | `features/image-management/ImageManager.tsx` | `src/components/ImageManager.tsx` |
-| `src/components/KnowledgeGraphModal.tsx` | `features/knowledge-graph/KnowledgeGraphModal.tsx` |
 | `src/components/SearchAddModal.tsx` | `features/search-add/SearchAddModal.tsx` |
 | `src/components/DimensionManager.tsx` | 早被 `src/components/TemplateManager.tsx` 取代 |
 | `src/components/EpisodeReview.tsx` | 无对应实现：分集评论 UI 从未挂载（数据层仍在，`storage-service` 的 `*EpisodeReview` 被 shift-refs 依赖） |
@@ -175,12 +173,12 @@ server/character-voice.ts 语音抓取：B 站搜索/下载 + ffmpeg 切片拼�
 另外 `src/components/TasteReportModal.tsx` 随 1.1.0 的 AI 重构一并删除
 （AI 分析已并入对话窗口）。
 
-⚠️ `src/services/` 现在只剩 3 个文件，**都是活的**：`graphService` / `imageService` / `rankingService`。
-（`aiCache` / `aiConfig` / `aiSkills` / `llmService` 已随 1.1.0 的 AI 重构删除。）
+⚠️ `src/services/` 现在只剩 2 个文件，**都是活的**：`imageService` / `rankingService`。
+（`aiCache` / `aiConfig` / `aiSkills` / `llmService` 已随 1.1.0 的 AI 重构删除，
+`graphService` 已随后续模块清理删除。）
 
-⚠️ 仍有两组**并存的两套实现**（不是副本，不同组件各用一套，别误合并）：
-`src/services/rankingService.ts` ↔ `features/ranking/ranking-service.ts`；
-`src/services/graphService.ts` ↔ `features/knowledge-graph/`。
+⚠️ 仍有一组**并存的两套实现**（不是副本，不同组件各用一套，别误合并）：
+`src/services/rankingService.ts` ↔ `features/ranking/ranking-service.ts`。
 
 **排查方法**（想再确认有没有新的死副本时用）：扫全仓库的相对 import，
 把「没有任何非测试文件引用」的源文件列出来即可。1.1.0 那次的结果就是上面 5 个。
@@ -435,7 +433,7 @@ dims = 模板.dimensions.filter(d => d.key !== 'overall')   // 排除总评自�
 **C. 全应用两位小数（1.0.46）**
 
 `core/math.ts` 的 `fmt2(n, empty='')`：最多两位、**不补零**、**保留 0**（`formatScore` 是评分语义，0 → `-`）。
-表格视图所有数字列、详情面板加权值、雷达图 tooltip、知识图谱 BGM、品味报告 σ/偏差、角色补全标题分全部走它。
+表格视图所有数字列、详情面板加权值、雷达图 tooltip、BGM、品味报告 σ/偏差、角色补全标题分全部走它。
 
 ⚠️ **两个改这块时容易踩的坑**（都有单测锁住）：
 

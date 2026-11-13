@@ -1,11 +1,41 @@
 /**
  * AppIcon — 统一图标组件
- * 默认使用 emoji 渲染，支持通过 ThemeContext.customIcons 替换为自定义图片
+ * 浅色主题优先使用内置「二次元贴纸」图标集（src/assets/icons/light），
+ * 缺图时回退 emoji；ThemeContext.customIcons 的优先级最高。
  */
 
 import React from 'react';
 import { useTheme } from './ThemeContext';
-import type { IconKey } from './types';
+import type { IconKey, ThemeMode } from './types';
+
+// ── 内置图标集：文件名即 IconKey，缺哪个就回退 emoji ──
+const toUrlMap = (mods: Record<string, unknown>): Partial<Record<IconKey, string>> => {
+  const set: Partial<Record<IconKey, string>> = {};
+  Object.entries(mods).forEach(([file, url]) => {
+    const key = file.split('/').pop()?.replace(/\.png$/i, '');
+    if (key) set[key as IconKey] = String(url);
+  });
+  return set;
+};
+
+const BUILTIN_ICONS: Record<ThemeMode, Partial<Record<IconKey, string>>> = {
+  // 浅色：粉紫描边的圆角贴纸图标
+  light: toUrlMap(
+    import.meta.glob('../assets/icons/light/*.png', {
+      eager: true,
+      query: '?url',
+      import: 'default',
+    }),
+  ),
+  // 深色：目录为空时自动回退 emoji
+  dark: toUrlMap(
+    import.meta.glob('../assets/icons/dark/*.png', {
+      eager: true,
+      query: '?url',
+      import: 'default',
+    }),
+  ),
+};
 
 // ── 默认 emoji 映射表 ──
 const EMOJI_MAP: Record<IconKey, string> = {
@@ -43,11 +73,10 @@ const EMOJI_MAP: Record<IconKey, string> = {
   'poster-save': '💾',
   'original-image': '🔍',
   'image-manager': '🖼️',
-  // 标签/图谱
+  // 标签
   'tag-manager': '🏷️',
   'smart-tag': '🤖',
   'batch-tag': '🏷️',
-  'knowledge-graph': '🕸️',
   // 设置/工具
   settings: '⚙️',
   theme: '🎨',
@@ -75,9 +104,10 @@ interface AppIconProps {
 
 const AppIcon: React.FC<AppIconProps> = ({ name, size = 16, style, className }) => {
   const { state } = useTheme();
-  const customUrl = state.customIcons[name];
+  // 自定义图标 > 当前主题内置图标 > emoji
+  const customUrl = state.customIcons[name] || BUILTIN_ICONS[state.themeMode]?.[name];
 
-  // 自定义图标：渲染 <img>
+  // 图片图标：渲染 <img>
   if (customUrl) {
     return (
       <img

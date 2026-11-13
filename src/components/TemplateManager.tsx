@@ -4,13 +4,12 @@
  *   替代旧版 DimensionManager
  */
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Modal, Input, InputNumber, Button, Tabs, List, Popconfirm, Popover, Slider, Select, Checkbox, Switch, Divider } from 'antd';
+import { message, Modal, Input, InputNumber, Button, Tabs, List, Popconfirm, Popover, Slider, Select, Checkbox, Switch, Divider } from 'antd';
 import { PlusOutlined, DeleteOutlined, SaveOutlined, ImportOutlined } from '@ant-design/icons';
 import type { Dimension, ScoreTemplate, TemplateGenre, TemplateCustomField, CategoryOverrides } from '../types';
 import { CATEGORY_CONFIG, createDefaultTemplate, DEFAULT_TEMPLATE_ID, DEFAULT_FIELD_CONFIG } from '../types';
 import type { AnimeCategory } from '../types';
 import { loadTemplates, saveTemplates } from '../../features/anime-data/template-service';
-import { catgirlMessage } from '../theme';
 import * as XLSX from 'xlsx';
 import { useAnimeContext } from '../../context/AnimeContext';
 import { appendAnimeEntry } from '../../features/anime-data/excel-service';
@@ -78,14 +77,14 @@ const TemplateManager: React.FC<TemplateManagerProps> = ({ open, onClose }) => {
       .filter((d) => d.key !== 'overall')
       .reduce((s, d) => s + d.weight, 0);
     if (Math.abs(totalWeight - 1) > 0.01 && edited.dimensions.length > 1) {
-      catgirlMessage.warning(`权重总和为 ${totalWeight.toFixed(2)}，建议调整为 1.0`);
+      message.warning(`权重总和为 ${totalWeight.toFixed(2)}，建议调整为 1.0`);
     }
     const updated = templates.map((t) =>
       t.id === edited.id ? { ...edited, updatedAt: new Date().toISOString().split('T')[0] } : t,
     );
     setTemplates(updated);
     saveTemplates(updated);
-    catgirlMessage.success('模板已保存，即时生效');
+    message.success('模板已保存，即时生效');
     onClose();
   };
 
@@ -109,17 +108,17 @@ const TemplateManager: React.FC<TemplateManagerProps> = ({ open, onClose }) => {
     setTemplates(next);
     saveTemplates(next); // 必须落盘：只改 state 的话关闭面板即丢失
     setActiveId(newTemplate.id);
-    catgirlMessage.success(`已创建「${newTemplate.name}」`);
+    message.success(`已创建「${newTemplate.name}」`);
   };
 
   const handleDelete = () => {
-    if (templates.length <= 1) { catgirlMessage.warning('至少保留一个模板'); return; }
-    if (edited?.isDefault) { catgirlMessage.warning('请先将其他模板设为默认后再删除'); return; }
+    if (templates.length <= 1) { message.warning('至少保留一个模板'); return; }
+    if (edited?.isDefault) { message.warning('请先将其他模板设为默认后再删除'); return; }
     const remaining = templates.filter((t) => t.id !== activeId);
     setTemplates(remaining);
     saveTemplates(remaining); // 必须落盘：原先不落盘却提示"已删除"，关闭面板后模板会复活
     setActiveId(remaining[0].id);
-    catgirlMessage.success('模板已删除');
+    message.success('模板已删除');
   };
 
   // ── Excel 导入模板 ──
@@ -132,7 +131,7 @@ const TemplateManager: React.FC<TemplateManagerProps> = ({ open, onClose }) => {
     if (!file) return;
 
     if (!/\.xlsx?$/i.test(file.name)) {
-      catgirlMessage.warning('请选择 .xlsx 或 .xls 文件');
+      message.warning('请选择 .xlsx 或 .xls 文件');
       e.target.value = '';
       return;
     }
@@ -147,7 +146,7 @@ const TemplateManager: React.FC<TemplateManagerProps> = ({ open, onClose }) => {
         const wb = XLSX.read(data, { type: 'array', cellFormula: true });
         const sheetNames = wb.SheetNames;
         if (sheetNames.length === 0) {
-          catgirlMessage.warning('Excel 文件中没有 Sheet');
+          message.warning('Excel 文件中没有 Sheet');
           return;
         }
 
@@ -178,7 +177,7 @@ const TemplateManager: React.FC<TemplateManagerProps> = ({ open, onClose }) => {
         const mainSheet = wb.Sheets[mainSheetName];
         const rows = XLSX.utils.sheet_to_json(mainSheet, { header: 1 }) as unknown[][];
         if (rows.length < 2) {
-          catgirlMessage.warning('至少需要标题行 + 1 行数据');
+          message.warning('至少需要标题行 + 1 行数据');
           return;
         }
 
@@ -254,7 +253,7 @@ const TemplateManager: React.FC<TemplateManagerProps> = ({ open, onClose }) => {
           const weightIdx = colIdx(['权重', 'weight']);
 
           if (nameIdx < 0) {
-            catgirlMessage.warning(`未识别到维度名称列（标题：${headers.join('、')}）。请确保第一列是维度名称，或包含"名称"标题列。`);
+            message.warning(`未识别到维度名称列（标题：${headers.join('、')}）。请确保第一列是维度名称，或包含"名称"标题列。`);
             return;
           }
 
@@ -276,7 +275,7 @@ const TemplateManager: React.FC<TemplateManagerProps> = ({ open, onClose }) => {
         }
 
         if (dimensions.length === 0) {
-          catgirlMessage.warning('未解析到维度数据，请检查格式');
+          message.warning('未解析到维度数据，请检查格式');
           return;
         }
 
@@ -382,7 +381,7 @@ const TemplateManager: React.FC<TemplateManagerProps> = ({ open, onClose }) => {
               ? `，${dimensions.filter((d) => d.weight > 0).length} 个维度已从公式提取权重`
               : '';
             const entryInfo = entryCount > 0 ? `，已创建 ${entryCount} 个条目并保存` : '';
-            catgirlMessage.success(`已导入模板「${templateName}」（${dimensions.length} 个维度${weightInfo}${entryInfo}）`);
+            message.success(`已导入模板「${templateName}」（${dimensions.length} 个维度${weightInfo}${entryInfo}）`);
           };
           createEntries();
           return; // 异步处理，提前返回避免执行下面的同步 success
@@ -391,19 +390,19 @@ const TemplateManager: React.FC<TemplateManagerProps> = ({ open, onClose }) => {
         const weightInfo = dimensions.filter((d) => d.weight > 0).length > 0
           ? `，${dimensions.filter((d) => d.weight > 0).length} 个维度已从公式提取权重`
           : '';
-        catgirlMessage.success(`已导入模板「${templateName}」（${dimensions.length} 个维度${weightInfo}）`);
+        message.success(`已导入模板「${templateName}」（${dimensions.length} 个维度${weightInfo}）`);
       } catch (err) {
-        catgirlMessage.error('解析失败喵…：' + (err instanceof Error ? err.message : '文件格式错误'));
+        message.error('解析失败：' + (err instanceof Error ? err.message : '文件格式错误'));
       }
     };
-    reader.onerror = () => catgirlMessage.error('读取文件失败喵…');
+    reader.onerror = () => message.error('读取文件失败');
     reader.readAsArrayBuffer(file);
     e.target.value = '';
   };
 
   // ── 维度操作 ──
   const addDim = () => {
-    if (!newLabel.trim()) { catgirlMessage.warning('请输入维度名称'); return; }
+    if (!newLabel.trim()) { message.warning('请输入维度名称'); return; }
     if (!edited) return;
     const key = 'custom_' + newLabel.trim().toLowerCase().replace(/\s+/g, '_');
     updateEdited({ dimensions: [...edited.dimensions, { key, label: newLabel.trim(), description: newDesc.trim(), weight: newWeight }] });
@@ -438,12 +437,12 @@ const TemplateManager: React.FC<TemplateManagerProps> = ({ open, onClose }) => {
   };
 
   const addCustomField = () => {
-    if (!newFieldLabel.trim()) { catgirlMessage.warning('请输入字段名'); return; }
+    if (!newFieldLabel.trim()) { message.warning('请输入字段名'); return; }
     if (!edited) return;
     const key = 'cf_' + newFieldLabel.trim().toLowerCase().replace(/\s+/g, '_');
     const fc = edited.fieldConfig || DEFAULT_FIELD_CONFIG;
     const exists = fc.customFields?.some((f) => f.key === key);
-    if (exists) { catgirlMessage.warning('已经有了喵'); return; }
+    if (exists) { message.warning('这个字段名已经有了'); return; }
     const cf: TemplateCustomField = { key, label: newFieldLabel.trim(), type: newFieldType };
     updateEdited({ fieldConfig: { ...fc, customFields: [...(fc.customFields || []), cf] } });
     setNewFieldLabel(''); setNewFieldType('text');

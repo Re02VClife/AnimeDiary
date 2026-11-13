@@ -20,6 +20,8 @@ import type { AIPermission } from '../../core/ai-permission';
 import { canAIPropose } from '../../core/ai-permission';
 import type { AIToolSpec, AIToolCall } from '../../core/ai-tools';
 import { parseToolArguments, pickAllowedArgs } from '../../core/ai-tools';
+import type { AppToolRuntime } from '../../core/app-tools';
+import { canUseAppTool, toAIToolSpec } from '../../core/app-tools';
 import type { AIRun } from './ai-runtime';
 import { aiChat, AIError } from './llm-service';
 import type { AIMessage } from './llm-service';
@@ -75,6 +77,11 @@ export interface ChatAgentOptions {
    * 传入的集合仍会再过一遍权限 —— 它可以「缩小」，但不能越过三档权限「扩大」。
    */
   skills?: AnyAISkill[];
+  /**
+   * 应用操作工具（读写 Excel 的落地能力）。
+   * 不传就是纯分析；传了以后模型可以在分析之外真正改数据。
+   */
+  appTools?: AppToolRuntime[];
   onEvent?: (e: AgentEvent) => void;
 }
 
@@ -113,7 +120,11 @@ function serializeToolResult(output: unknown): string {
 }
 
 /** 给模型看的能力清单 + 数据概况。只给概览，具体数字一律靠工具取 */
-function buildSystemPrompt(list: AnimeEntry[], skills: readonly AnyAISkill[]): string {
+function buildSystemPrompt(
+  list: AnimeEntry[],
+  skills: readonly AnyAISkill[],
+  appTools: readonly AppToolRuntime[],
+): string {
   const scored = list.filter((a) => a.scores.some((s) => s.score > 0)).length;
   const tagCount: Record<string, number> = {};
   for (const a of list) for (const t of a.tags) tagCount[t.name] = (tagCount[t.name] || 0) + 1;
@@ -121,6 +132,9 @@ function buildSystemPrompt(list: AnimeEntry[], skills: readonly AnyAISkill[]): s
     .map(([n, c]) => `${n}(${c})`).join('、');
 
   const skillLines = skills.map((s) => `- ${toolNameOf(s.id)}：${s.description}`).join('\n');
+  const appLines = appTools
+    .map((t) => `- ${t.spec.name}：${t.spec.description}（${t.spec.effect === 'write' ? '会改数据' : '只读'}）`)
+    .join('\n');
 
   return [
     '你是 AnimeDiary 里的番剧助手，帮用户解读他自己的评分数据。',
@@ -132,6 +146,15 @@ function buildSystemPrompt(list: AnimeEntry[], skills: readonly AnyAISkill[]): s
     '',
     '【可用能力】',
     skillLines,
+    ...(appLines
+      ? [
+        '',
+        '【应用操作】这些工具会读写用户的实际数据，调用前先确认标题完整、参数准确：',
+        appLines,
+        '写操作按当前权限执行：只读档不会提供写工具；提议档会在执行前弹确认；直写档直接执行。',
+        '一次只改一部；批量操作请让用户走侧栏的批量入口，不要在这里逐部跑。',
+      ]
+      : []),
     '',
     '回答用简体中文。用 Markdown 组织（小标题、列表、必要时表格），但别堆砌——窄栏里长篇大论很难读。',
     '工具已经给过结论时不要再重复调用同一个工具。',
@@ -152,28 +175,83 @@ function toModelMessages(history: ChatRecord[]): AIMessage[] {
   });
 }
 
+/** 应用操作工具的结果摘要：卡片折叠态用，能说清改了什么 */
+function summarizeAppTool(output: unknown): string {
+  if (!output || typeof output !== 'object') return '完成';
+  const o = output as Record<string, unknown>;
+  if (Array.isArray(o.changed) && o.changed.length > 0) return `已修改 ${o.changed.length} 个字段`;
+  if (Array.isArray(o.added)) return `新增 ${o.added.length} 个标签`;
+  if (Array.isArray(o.removed)) return `移除 ${o.removed.length} 个标签`;
+  if (typeof o.total === 'number') return `返回 ${o.returned ?? o.total} 条`;
+  if (typeof o.title === 'string') return `已读取「${o.title}」`;
+  return '完成';
+}
+
 /** 执行一次工具调用，任何异常都转成工具错误回给模型，不让对话中断 */
 async function executeToolCall(
   call: AIToolCall,
   skill: AnyAISkill | undefined,
+  appTool: AppToolRuntime | undefined,
   opts: ChatAgentOptions,
 ): Promise<ToolRun> {
   const startedAt = Date.now();
 
   const fail = (error: string): ToolRun => ({
-    skillId: skill?.id || call.name,
-    title: skill?.title || call.name,
+    skillId: skill?.id || appTool?.spec.name || call.name,
+    title: skill?.title || appTool?.spec.title || call.name,
     ok: false,
     summary: error,
     error,
     durationMs: Date.now() - startedAt,
   });
 
-  if (!skill) {
-    return fail(`没有这个能力：${call.name}。可用的是：${getSkillsFor(opts.permission).map((s) => toolNameOf(s.id)).join('、')}`);  }
+  if (!skill && !appTool) {
+    const names = [
+      ...getSkillsFor(opts.permission).map((s) => toolNameOf(s.id)),
+      ...(opts.appTools ?? [])
+        .filter((t) => canUseAppTool(opts.permission, t.spec.effect))
+        .map((t) => t.spec.name),
+    ];
+    return fail(`没有这个能力：${call.name}。可用的是：${names.join('、')}`);
+  }
 
   const parsed = parseToolArguments(call.arguments);
   if (!parsed.ok) return fail(parsed.error);
+
+  // 应用操作工具：走同一条白名单过滤，但执行器换成 host 提供的那套
+  if (appTool) {
+    const args = pickAllowedArgs(parsed.value, appTool.spec.modelInputs);
+    opts.onEvent?.({ type: 'tool-start', skillId: appTool.spec.name, title: appTool.spec.title, args });
+    try {
+      const output = await appTool.run(args);
+      const run: ToolRun = {
+        skillId: appTool.spec.name,
+        title: appTool.spec.title,
+        ok: true,
+        summary: summarizeAppTool(output),
+        output,
+        durationMs: Date.now() - startedAt,
+      };
+      opts.onEvent?.({ type: 'tool-done', toolRun: run });
+      return run;
+    } catch (e) {
+      if (e instanceof AIError && e.code === 'aborted') throw e;
+      const msg = e instanceof Error ? e.message : String(e);
+      const run: ToolRun = {
+        skillId: appTool.spec.name,
+        title: appTool.spec.title,
+        ok: false,
+        summary: msg,
+        error: msg,
+        durationMs: Date.now() - startedAt,
+      };
+      opts.onEvent?.({ type: 'tool-done', toolRun: run });
+      return run;
+    }
+  }
+
+  // TypeScript 无法从「appTool 分支已 return」推断出 skill 一定存在，这里补一个守卫做收窄
+  if (!skill) return fail(`没有这个能力：${call.name}`);
 
   // 白名单过滤：模型塞进来的额外字段一律丢掉（这正是「模型碰不到数字」的落点）
   const args = pickAllowedArgs(parsed.value, skill.modelInputs);
@@ -222,11 +300,18 @@ export async function runChatAgent(opts: ChatAgentOptions): Promise<ChatAgentRes
   const skills = (opts.skills ?? getSkillsFor(opts.permission))
     .filter((s) => s.effect === 'read' || canAIPropose(opts.permission));
   const byToolName = new Map(skills.map((s) => [toolNameOf(s.id), s]));
-  const toolSpecs: AIToolSpec[] = toToolSpecs(skills);
+  // 应用操作工具同样按权限裁剪；名字与 skill 不冲突（app_ 前缀）
+  const appTools = (opts.appTools ?? [])
+    .filter((t) => canUseAppTool(opts.permission, t.spec.effect));
+  const byAppToolName = new Map(appTools.map((t) => [t.spec.name, t]));
+  const toolSpecs: AIToolSpec[] = [
+    ...toToolSpecs(skills),
+    ...appTools.map((t) => toAIToolSpec(t.spec)),
+  ];
   const maxRounds = Math.max(1, opts.maxRounds ?? 4);
 
   const messages: AIMessage[] = [
-    { role: 'system', content: buildSystemPrompt(opts.list, skills) },
+    { role: 'system', content: buildSystemPrompt(opts.list, skills, appTools) },
     ...toModelMessages(opts.history),
     { role: 'user', content: opts.userText },
   ];
@@ -280,7 +365,12 @@ export async function runChatAgent(opts: ChatAgentOptions): Promise<ChatAgentRes
 
     // 并行执行同一轮里的多个调用（模型可以一次要多个结果）
     const roundRuns = await Promise.all(
-      normalizedCalls.map((call) => executeToolCall(call, byToolName.get(call.name), opts)),
+      normalizedCalls.map((call) => executeToolCall(
+        call,
+        byToolName.get(call.name),
+        byAppToolName.get(call.name),
+        opts,
+      )),
     );
 
     for (let i = 0; i < roundRuns.length; i++) {

@@ -3,7 +3,7 @@
  *
  * ── 为什么需要这个模块 ──
  *
- * 原来的「导出 Excel」是把内存里的 AnimeEntry 按**内部存储列序**（43 列）平铺成一张表：
+ * 原来的「导出 Excel」是把内存里的 AnimeEntry 按**内部存储列序**（44 列）平铺成一张表：
  *
  *   1. 番剧、角色卡、自定义模板的记录全混在同一个「番剧列表」里，靠列空不空去猜类型；
  *   2. 非默认模板（角色卡/自定义模板）的分只存在于「模板JSON」列里，
@@ -14,7 +14,7 @@
  *   5. 源表里名字为空的行（程序加载时静默丢弃）会原样带出去。
  *
  * 现在的做法：**按记录类型分表，每张表只放自己有效的列，分和自定义字段都拆成真列。**
- * 同时做到「导出 ↑ 导入」闭环 —— `parseTransferWorkbook` 能把导出的文件读回内部 43 列格式，
+ * 同时做到「导出 ↑ 导入」闭环 —— `parseTransferWorkbook` 能把导出的文件读回内部 44 列格式，
  * 所以「导入 Excel」既能吃新格式，也继续吃旧格式。
  */
 import * as XLSX from 'xlsx';
@@ -326,6 +326,7 @@ export function buildTransferWorkbook(opts: BuildExportOptions): XLSX.WorkBook {
     总集数: numKeepZero(row[EXCEL_COL.EPISODES]),
     当前集: numKeepZero(row[EXCEL_COL.CURRENT_EP]),
     海报URL: str(row[EXCEL_COL.POSTER_URL]),
+    评价元数据: str(row[EXCEL_COL.REVIEW_META]),
   });
 
   // ── 1) 番剧表 ──
@@ -579,11 +580,11 @@ export function rebuildOverallFormula(
   return result;
 }
 
-// ── 导入：新格式 → 内部 43 列工作簿 ──
+// ── 导入：新格式 → 内部 44 列工作簿 ──
 
-/** 内部 43 列表头（对应 EXCEL_COL，与 electron/excel-template.js 保持一致） */
+/** 内部 44 列表头（对应 EXCEL_COL，与 electron/excel-template.js 保持一致） */
 const INTERNAL_HEADERS: string[] = (() => {
-  const h: string[] = Array(43).fill('');
+  const h: string[] = Array(44).fill('');
   const set = (col: number, name: string) => { h[col] = name; };
   set(EXCEL_COL.SEARCH_ALIAS, '检索名');
   set(EXCEL_COL.TITLE, '名字');
@@ -627,11 +628,12 @@ const INTERNAL_HEADERS: string[] = (() => {
   set(EXCEL_COL.EPISODES, '总集数');
   set(EXCEL_COL.CURRENT_EP, '当前集');
   set(EXCEL_COL.TEMPLATE_JSON, '模板JSON');
+  set(EXCEL_COL.REVIEW_META, '评价元数据');
   return h;
 })();
 
 export interface ParsedTransfer {
-  /** 内部 43 列格式的工作簿，可直接落盘替换数据源 */
+  /** 内部 44 列格式的工作簿，可直接落盘替换数据源 */
   workbook: XLSX.WorkBook;
   /** 识别到的数据行数（不含表头） */
   count: number;
@@ -642,11 +644,11 @@ export interface ParsedTransfer {
 }
 
 function blankRow(): (string | number)[] {
-  return Array(43).fill('');
+  return Array(44).fill('');
 }
 
 /**
- * 把导出格式（或旧格式）的工作簿读回**内部 43 列格式**。
+ * 把导出格式（或旧格式）的工作簿读回**内部 44 列格式**。
  *
  * 关键点：导入**不能**直接拿上传的文件覆盖数据源 —— 那样丢的正是导出表里没有的东西
  * （公式列「赋分/偏差值」、其余工作表）。旧实现就是把原文件整个写进去，
@@ -693,6 +695,7 @@ export function parseTransferWorkbook(wb: XLSX.WorkBook, existingTemplates?: Sco
     row[EXCEL_COL.EPISODES] = numKeepZero(rec['总集数']);
     row[EXCEL_COL.CURRENT_EP] = numKeepZero(rec['当前集']);
     row[EXCEL_COL.POSTER_URL] = str(rec['海报URL']);
+    row[EXCEL_COL.REVIEW_META] = str(rec['评价元数据']);
     const watch = str(rec['首刷时间']);
     row[EXCEL_COL.FIRST_WATCH] = watch ? (dateToSerial(watch) ?? watch) : '';
   };

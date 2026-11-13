@@ -9,8 +9,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Button, Segmented, Progress, Checkbox, Tag as AntTag, Alert, Empty, Input } from 'antd';
-import { catgirlMessage } from '../theme';
+import { message, Modal, Button, Segmented, Progress, Checkbox, Tag as AntTag, Alert, Empty, Input } from 'antd';
 import { getAIPermission } from '../../features/ai-analysis';
 import { canAIPropose, AI_PERMISSION_INFO } from '../../core/ai-permission';
 import { planBatchTagTargets, runBatchTag, buildTaggedEntry, summarizeBatchTag } from '../../features/ai-analysis/batch-tag';
@@ -80,11 +79,11 @@ const BatchTagModal: React.FC<BatchTagModalProps> = ({ open, onClose, animeList,
 
   const start = useCallback(async () => {
     if (!allowed) {
-      catgirlMessage.warning(`当前是「${permInfo.label}」权限，不能应用标签。去 AI 设置里改成「提议后确认」`);
+      message.warning(`当前是「${permInfo.label}」权限，不能应用标签。去 AI 设置里改成「提议后确认」`);
       return;
     }
     if (targets.length === 0) {
-      catgirlMessage.info('这个范围里没有可处理的条目');
+      message.info('这个范围里没有可处理的条目');
       return;
     }
 
@@ -124,8 +123,8 @@ const BatchTagModal: React.FC<BatchTagModalProps> = ({ open, onClose, animeList,
 
     const aborted = controller.signal.aborted;
     const s = summarizeBatchTag(result);
-    if (aborted) catgirlMessage.info(`已停止，保留了已完成的 ${s.done} 部`);
-    else if (s.failed > 0) catgirlMessage.warning(`生成完成，${s.failed} 部失败（可重试）`);
+    if (aborted) message.info(`已停止，保留了已完成的 ${s.done} 部`);
+    else if (s.failed > 0) message.warning(`生成完成，${s.failed} 部失败（可重试）`);
   }, [allowed, permInfo.label, targets]);
 
   const stop = useCallback(() => {
@@ -151,7 +150,7 @@ const BatchTagModal: React.FC<BatchTagModalProps> = ({ open, onClose, animeList,
       jobs.push({ entry, names });
     }
     if (jobs.length === 0) {
-      catgirlMessage.info('没有勾选任何标签');
+      message.info('没有勾选任何标签');
       return;
     }
 
@@ -164,17 +163,17 @@ const BatchTagModal: React.FC<BatchTagModalProps> = ({ open, onClose, animeList,
         // 没有任何实际新增的条目不用发，省一次无谓的整表写
         .filter((entry, i) => entry !== jobs[i].entry);
       if (chosen.length === 0) {
-        catgirlMessage.info('勾选的标签都已经存在了');
+        message.info('勾选的标签都已经存在了');
         setApplying(false);
         return;
       }
       const written = await updateAnimeEntries(chosen);
       const tagTotal = jobs.reduce((n, j) => n + j.names.length, 0);
-      catgirlMessage.success(`已给 ${written} 部番剧补上 ${tagTotal} 个标签（一次写入，可整批回退）`);
+      message.success(`已给 ${written} 部番剧补上 ${tagTotal} 个标签（一次写入，可整批回退）`);
       onApplied();
       onClose();
     } catch (e) {
-      catgirlMessage.error(`写入失败：${e instanceof Error ? e.message : String(e)}`);
+      message.error(`写入失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setApplying(false);
     }

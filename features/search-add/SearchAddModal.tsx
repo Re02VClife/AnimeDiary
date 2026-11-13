@@ -162,7 +162,7 @@ const SearchAddModal: React.FC<SearchAddModalProps> = ({ open, onClose, onAdd, a
       )}
 
       {!searching && searched && results.length === 0 && (
-        <Empty description="找不到喵~">
+        <Empty description="没有找到匹配的番剧">
           {keyword.trim() && (
             <Button type="primary" onClick={handleManualAdd}>
               手动添加「{keyword.trim()}」

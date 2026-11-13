@@ -14,6 +14,7 @@ import { saveImage } from '../image-management/image-service';
 import { excelSerialToDate, dateToExcelSerial, parseReleaseDate, parseNumber } from '../../core/date';
 import { parseTagString } from '../../core/text';
 import { round2 } from '../../core/math';
+import { parseReviewMeta, serializeReviewMeta } from '../../core/review-timeline';
 
 // ── API 基础路径 ──
 const API_BASE = '/api/excel';
@@ -141,6 +142,7 @@ function mapRowToAnime(row: unknown[], rowIndex: number): AnimeEntry | null {
     watchDate: excelSerialToDate(parseNumber(row[EXCEL_COL.WATCH_DATE])) || undefined,
     link: String(row[EXCEL_COL.LINK] || '').trim() || undefined,
     review: reviewText || undefined,
+    reviewMeta: parseReviewMeta(String(row[EXCEL_COL.REVIEW_META] || '')),
     notes: String(row[EXCEL_COL.NOTES] || '').trim() || undefined,
     createdAt: excelSerialToDate(parseNumber(row[EXCEL_COL.FIRST_WATCH])),
     updatedAt: new Date().toISOString().split('T')[0],
@@ -196,6 +198,16 @@ function mapAnimeToUpdates(entry: AnimeEntry): ExcelUpdate[] {
 
   if (entry.review !== undefined) {
     updates.push({ sheetName: MAIN_SHEET, rowIndex: rowIdx, colIndex: EXCEL_COL.REVIEW, value: entry.review });
+  }
+
+  // 评价元数据（分段时间戳 + 多刷）。空则写空串，覆盖掉旧值
+  if (entry.reviewMeta !== undefined) {
+    updates.push({
+      sheetName: MAIN_SHEET,
+      rowIndex: rowIdx,
+      colIndex: EXCEL_COL.REVIEW_META,
+      value: serializeReviewMeta(entry.reviewMeta),
+    });
   }
 
   if (entry.tags) {
@@ -279,6 +291,23 @@ function mapAnimeToUpdates(entry: AnimeEntry): ExcelUpdate[] {
   const expectedTitle = entry.excelTitleSnapshot ?? entry.title;
   if (rowIdx !== undefined && expectedTitle) {
     for (const u of updates) u.expectedTitle = expectedTitle;
+  }
+
+  /**
+   * 「评价元数据」是后加的列，用户现有的 Excel 里 AR 列表头是空的。
+   * 这里顺带补一次（值恒定，重复写无副作用）。
+   *
+   * 必须放在上面那个 expectedTitle 循环**之后**：表头行没有番剧标题，
+   * 一旦被带上 expectedTitle，服务端会把它当成"行号错位的数据行"去全表找同名标题，
+   * 找得到就把写入重定向到那一行，反而写坏数据。
+   */
+  if (entry.reviewMeta !== undefined) {
+    updates.push({
+      sheetName: MAIN_SHEET,
+      rowIndex: 0,
+      colIndex: EXCEL_COL.REVIEW_META,
+      value: '评价元数据',
+    });
   }
 
   return updates;
@@ -668,6 +697,7 @@ function mapAnimeToRow(entry: AnimeEntry): Record<number, string | number> {
   row[EXCEL_COL.SEARCH_ALIAS] = entry.searchAlias || '';
   row[EXCEL_COL.STUDIO] = entry.studio || '';
   row[EXCEL_COL.REVIEW] = entry.review || '';
+  row[EXCEL_COL.REVIEW_META] = serializeReviewMeta(entry.reviewMeta);
   row[EXCEL_COL.RELEASE_DATE] = entry.releaseDate || '';
   row[EXCEL_COL.BGM_SCORE] = entry.bangumiScore ? round2(entry.bangumiScore) : '';
   row[EXCEL_COL.TAG] = entry.tags.map((t) => t.name).join('/');

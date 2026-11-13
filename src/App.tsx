@@ -18,7 +18,6 @@ import TemplateManager from './components/TemplateManager';
 import ExcelEditor from './components/ExcelEditor';
 import { loadTemplates } from '../features/anime-data/template-service';
 import { getVisibleCategories } from './types';
-import KnowledgeGraphModal from '../features/knowledge-graph/KnowledgeGraphModal';
 import AppIcon from './theme/AppIcon';
 import AISettings from '../features/ai-analysis/AISettings';
 import AIChatDrawer from './components/AIChatDrawer';
@@ -30,7 +29,13 @@ import PosterFlipOverlay from './components/PosterFlipOverlay';
 import TitleBar from './components/TitleBar';
 import UpdateToast from './components/UpdateToast';
 import SettingsModal from './components/SettingsModal';
+import BangumiSyncModal from './features/bangumi-sync/BangumiSyncModal';
+import LocalPlayerModal from './features/local-library/LocalPlayerModal';
+import { refreshLocalLibrary } from './features/local-library/local-store';
 import ScreenCapture from './components/ScreenCapture';
+import MusicPicker from '../features/music/MusicPicker';
+import PlayerBar from '../features/music/PlayerBar';
+import type { AnimeEntry } from './types';
 import type { QuickActionId } from './features/quick-actions/quick-actions';
 import './App.css';
 
@@ -47,6 +52,23 @@ const App: React.FC = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** 顶栏快捷栏「录制 GIF」：独立打开录制面板，保存到 images/快捷截图/ */
   const [gifRecorderOpen, setGifRecorderOpen] = useState(false);
+  /** 「同步 Bangumi」面板：账号绑定 / 条目匹配 / 评分上传 */
+  const [bangumiSyncOpen, setBangumiSyncOpen] = useState(false);
+  /** 音乐候选框针对哪部番（null = 关闭） */
+  const [musicPickerAnime, setMusicPickerAnime] = useState<AnimeEntry | null>(null);
+  /** 本地选集播放器针对哪部番（null = 关闭） */
+  const [localPlayerAnime, setLocalPlayerAnime] = useState<AnimeEntry | null>(null);
+
+  /**
+   * 启动时把本地番剧库读进内存。
+   *
+   * 不带 identify：只扫磁盘、不请求 Bangumi（那步留给「设置 → 本地」现场触发）。
+   * 不预加载的话，刷新页面后 store 里的 bindings 是空的，
+   * 卡片上的播放键要等用户打开一次设置页才会冒出来。
+   */
+  useEffect(() => {
+    void refreshLocalLibrary({});
+  }, []);
 
   /**
    * 顶栏快捷动作分发。
@@ -62,6 +84,9 @@ const App: React.FC = () => {
       case 'ai-chat':
         dispatch({ type: 'OPEN_MODAL', modal: 'aiChat' });
         break;
+      case 'bangumi-sync':
+        setBangumiSyncOpen(true);
+        break;
       case 'taste-report':
         dispatch({ type: 'OPEN_MODAL', modal: 'tasteReport' });
         break;
@@ -73,9 +98,6 @@ const App: React.FC = () => {
         break;
       case 'cutout':
         setCharacterCutoutOpen(true);
-        break;
-      case 'knowledge-graph':
-        dispatch({ type: 'OPEN_MODAL', modal: 'knowledgeGraph' });
         break;
       case 'excel':
         dispatch({ type: 'OPEN_MODAL', modal: 'excel' });
@@ -123,7 +145,6 @@ const App: React.FC = () => {
     handleBatchSavePosters,
     handleFixSearchAlias,
     handleOpenExcel,
-    handleCreateRelation,
     handleRenameTag,
     handleDeleteTag,
     handleBatchAddTags,
@@ -147,7 +168,6 @@ const App: React.FC = () => {
     searchOpen,
     dimManagerOpen,
     templateManagerOpen,
-    knowledgeGraphOpen,
     aiSettingsOpen,
     tasteReportOpen,
     aiChatOpen,
@@ -446,6 +466,8 @@ const App: React.FC = () => {
             onBatchAnimeChange={(ids) => dispatch({ type: 'SET_BATCH_ANIME', payload: ids })}
             templateDims={activeTemplateDims}
             scoreFocus={state.scoreFocus}
+            onOpenMusic={setMusicPickerAnime}
+            onPlayLocal={setLocalPlayerAnime}
           />
 
           {batchMode && (
@@ -487,6 +509,7 @@ const App: React.FC = () => {
         }}
         onSave={handleSaveAnime}
         editMode={detailEditMode}
+        onOpenMusic={(entry) => setMusicPickerAnime(entry)}
         onNavigate={(target) => {
           // 前后番剧切换：直接替换当前选中番剧，保持详情面板打开
           dispatch({ type: 'OPEN_MODAL', modal: 'detail', anime: target });
@@ -511,6 +534,16 @@ const App: React.FC = () => {
           dispatch({ type: 'SET_ANIME_POSTER', animeId, posterUrl });
         }}
       />
+
+      {/* 音乐候选框：从卡片的「音声」徽标或详情面板的 ♪ 打开 */}
+      <MusicPicker
+        open={musicPickerAnime !== null}
+        anime={musicPickerAnime}
+        onClose={() => setMusicPickerAnime(null)}
+      />
+
+      {/* 底部悬浮播放条：关掉候选框/详情后还接着放 */}
+      <PlayerBar />
 
       <SearchAddModal
         open={searchOpen}
@@ -552,7 +585,21 @@ const App: React.FC = () => {
       />
 
       {/* 全应用设置：以前铺在侧栏底部（滚 3 屏才够得着），现在收进分页弹窗 */}
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onOpenBangumiSync={() => { setSettingsOpen(false); setBangumiSyncOpen(true); }}
+      />
+
+      {/* Bangumi 同步：绑账号 → 对条目 → 传评分 */}
+      <BangumiSyncModal open={bangumiSyncOpen} onClose={() => setBangumiSyncOpen(false)} />
+
+      {/* 本地选集播放（卡片顶栏的播放键打开；没绑定本地目录的番不会有这个键） */}
+      <LocalPlayerModal
+        open={!!localPlayerAnime}
+        anime={localPlayerAnime}
+        onClose={() => setLocalPlayerAnime(null)}
+      />
 
       {/* 快捷栏「录制 GIF」：独立打开录制面板，不依赖某部番的图片管理 */}
       {gifRecorderOpen && (
@@ -567,17 +614,6 @@ const App: React.FC = () => {
       <ExcelEditor
         open={excelOpen}
         onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'excel' })}
-      />
-
-      <KnowledgeGraphModal
-        open={knowledgeGraphOpen}
-        onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'knowledgeGraph' })}
-        animeList={state.animeList.filter((a) => !a.templateId || a.templateId === 'default')}
-        onAnimeClick={(anime) => {
-          dispatch({ type: 'CLOSE_MODAL', modal: 'knowledgeGraph' });
-          handleAnimeClick(anime);
-        }}
-        onCreateRelation={handleCreateRelation}
       />
 
       <AISettings
@@ -602,6 +638,7 @@ const App: React.FC = () => {
         open={aiChatOpen}
         onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'aiChat' })}
         animeList={state.animeList}
+        onSaveAnime={handleSaveAnime}
         onOpenSettings={() => dispatch({ type: 'OPEN_MODAL', modal: 'aiSettings' })}
       />
 

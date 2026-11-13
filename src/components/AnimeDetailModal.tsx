@@ -1,12 +1,11 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Modal, InputNumber, Input, Tag, Descriptions, Button, Space, Tooltip, Select, Popover, Image, Typography, Checkbox, Slider, Segmented, DatePicker, Popconfirm } from 'antd';
-import { SaveOutlined, PlusOutlined, EditOutlined, LeftOutlined, RightOutlined, PictureOutlined, ImportOutlined, ThunderboltOutlined, TagOutlined, SearchOutlined, DeleteOutlined } from '@ant-design/icons';
+import { message, Modal, InputNumber, Input, Tag, Descriptions, Button, Space, Tooltip, Select, Popover, Image, Typography, Checkbox, Slider, Segmented, DatePicker, Popconfirm } from 'antd';
+import { SaveOutlined, PlusOutlined, EditOutlined, LeftOutlined, RightOutlined, PictureOutlined, ImportOutlined, ThunderboltOutlined, TagOutlined, SearchOutlined, DeleteOutlined, CustomerServiceOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
-import type { AnimeEntry, AnimeTag, DimensionScore, DimensionReview, AnimeCategory, BangumiSearchItem, Dimension, DetailLayoutConfig } from '../types';
+import type { AnimeEntry, AnimeTag, DimensionScore, DimensionReview, AnimeCategory, BangumiSearchItem, Dimension, DetailLayoutConfig, ReviewMeta, ReviewTimeline } from '../types';
 import { DEFAULT_DIMENSIONS, DIMENSION_LABEL_MAP, CATEGORY_CONFIG, DEFAULT_FIELD_CONFIG, DEFAULT_DETAIL_LAYOUT, CHARACTER_TEMPLATE_ID } from '../types';
 import { getTemplate, loadTemplates, updateTemplate, parsePosterFocus } from '../../features/anime-data/template-service';
-import { catgirlMessage } from '../theme';
 import type { TemplateFieldConfig } from '../types';
 import { fetchPoster, savePosterUrlToExcel } from '../../features/anime-data/excel-service';
 import { loadImages, saveImage as saveImageToLocal } from '../services/imageService';
@@ -23,6 +22,9 @@ import ScoreSlider from '../../features/anime-detail/ScoreSlider';
 import { useCutoutIndex } from '../../features/image-management/use-cutout-index';
 import { applyCutout, fallbackPosterUrl } from '../../features/image-management/cutout-service';
 import { workTitleSimilarity } from '../../core/character';
+import { alignReviewSegments, nowReviewTime, normalizeWatchCount, reviewFallbackTime, splitReviewParagraphs, reviewAnchor } from '../../core/review-timeline';
+import ReviewTimelineView from './ReviewTimeline';
+import { useReviewDisplayPrefs } from '../features/review-timeline/review-display-prefs';
 import CharacterVoiceBar from '../../features/character-voice/CharacterVoiceBar';
 
 const { TextArea } = Input;
@@ -47,7 +49,7 @@ interface AnimeDetailModalProps {
   anime: AnimeEntry | null;
   open: boolean;
   onClose: () => void;
-  onSave: (entry: AnimeEntry) => Promise<void>;
+  onSave: (entry: AnimeEntry, keepModal?: boolean) => Promise<void>;
   onNavigate?: (anime: AnimeEntry) => void;
   /** 从列表移除该条目（软删除：只加进本地黑名单，Excel 数据不动） */
   onDelete?: (animeId: string) => void;
@@ -68,6 +70,8 @@ interface AnimeDetailModalProps {
   posterHidden?: boolean;
   /** Modal 内容淡入控制：捕获阶段隐藏，捕获后开始淡入（与克隆飞入同步） */
   contentHidden?: boolean;
+  /** 点「音声」那一行的 ♪ → 打开音乐候选框 */
+  onOpenMusic?: (anime: AnimeEntry) => void;
 }
 
 /**
@@ -88,19 +92,24 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   editMode = false, radarMode = 'percentile', radarMin,
   posterHidden = false,
   contentHidden = false,
+  onOpenMusic,
 }) => {
   const [scores, setScores] = useState<DimensionScore[]>([]);
   const [review, setReview] = useState('');
+  /** 看过几遍（1 = 只看过一遍）。评价区的分段时间也与它一起存进「评价元数据」列 */
+  const [watchCount, setWatchCount] = useState(1);
   const [tags, setTags] = useState<AnimeTag[]>([]);
   const [dimReviews, setDimReviews] = useState<DimensionReview[]>([]);
   const [category, setCategory] = useState<AnimeCategory>('watched');
   const [saving, setSaving] = useState(false);
+  /** 评价时间底纹 / 悬停气泡的显示偏好（存 localStorage，设置面板里改） */
+  const { prefs: reviewDisplayPrefs } = useReviewDisplayPrefs();
   const [tagInput, setTagInput] = useState('');
   const [showTagPicker, setShowTagPicker] = useState(false);
   /**
    * 角色名列表（Excel 的 AA/AD/AG/AJ 四列）。
    * 以前这里没有录入入口 —— 段落在 `characters.length > 0` 时才渲染，
-   * 而内容只能在 Excel 里手填或用知识图谱的连线功能加，导致「想建角色卡却没有角色名」。
+   * 而内容只能去 Excel 里手填，导致「想建角色卡却没有角色名」。
    */
   const [characters, setCharacters] = useState<string[]>([]);
   const [charInput, setCharInput] = useState('');
@@ -403,7 +412,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   /** 执行单番深度分析 */
   const handleAIAnalysis = async () => {
     if (!anime || !hasAIConfig()) {
-      catgirlMessage.warning('请先在侧栏 AI 设置中配置 API Key');
+      message.warning('请先在侧栏 AI 设置中配置 API Key');
       return;
     }
     setAiAnalysisLoading(true);
@@ -422,7 +431,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   /** 执行智能打 Tag */
   const handleAutoTag = async () => {
     if (!anime || !hasAIConfig()) {
-      catgirlMessage.warning('请先在侧栏 AI 设置中配置 API Key');
+      message.warning('请先在侧栏 AI 设置中配置 API Key');
       return;
     }
     setAutoTagLoading(true);
@@ -431,7 +440,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       const result = await autoTag(anime);
       setAutoTagResult(result);
     } catch (e) {
-      catgirlMessage.error(e instanceof Error ? e.message : '打标签失败');
+      message.error(e instanceof Error ? e.message : '打标签失败');
     } finally {
       setAutoTagLoading(false);
     }
@@ -440,7 +449,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   /** 采纳建议标签 */
   const adoptTag = (name: string) => {
     if (tags.some((t) => t.name === name)) {
-      catgirlMessage.warning('标签已存在');
+      message.warning('标签已存在');
       return;
     }
     setTags((prev) => [...prev, { name, highlighted: true }]);
@@ -451,7 +460,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
         suggestedTags: prev.suggestedTags.filter((t) => t.name !== name),
       };
     });
-    catgirlMessage.success(`已添加标签「${name}」`);
+    message.success(`已添加标签「${name}」`);
   };
 
   /** 当前生效的 AI 写权限（三档）——决定「全部采纳」出不出现、要不要确认 */
@@ -466,13 +475,13 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       .filter((t) => !existing.has(t.name))
       .map((t) => ({ name: t.name, highlighted: true }));
     if (additions.length === 0) {
-      catgirlMessage.warning('这些标签都已存在');
+      message.warning('这些标签都已存在');
       setAutoTagResult(null);
       return;
     }
     setTags((prev) => [...prev, ...additions]);
     setAutoTagResult(null);
-    catgirlMessage.success(`已采纳 ${additions.length} 个建议标签`);
+    message.success(`已采纳 ${additions.length} 个建议标签`);
   };
 
   /**
@@ -543,7 +552,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       setReSearchResults(allResults);
     } catch {
       setReSearchResults([]);
-      catgirlMessage.info('搜索暂不可用');
+      message.info('搜索暂不可用');
     } finally {
       setReSearching(false);
     }
@@ -594,7 +603,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
     setImportItem(null);
     setShowReSearch(false);
     setReSearchResults([]);
-    catgirlMessage.success(`已导入「${name}」的信息`);
+    message.success(`已导入「${name}」的信息`);
   };
   const handleSavePoster = async () => {
     if (!anime) return;
@@ -623,9 +632,9 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       onPosterChange?.(anime.id, entry.dataUrl);
       // 同步写入 Excel
       savePosterUrlToExcel({ ...anime, posterUrl: entry.dataUrl }).catch(() => {});
-      catgirlMessage.success(`封面已保存到本地：${entry.fileName}`);
+      message.success(`封面已保存到本地：${entry.fileName}`);
     } catch (e) {
-      catgirlMessage.error('保存封面失败');
+      message.error('保存封面失败');
     } finally {
       setSavingPoster(false);
     }
@@ -680,6 +689,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
     if (anime) {
       setScores([...anime.scores]);
       setReview(anime.review || '');
+      setWatchCount(normalizeWatchCount(anime.reviewMeta?.watchCount));
       setTags([...anime.tags]);
       setCharacters([...(anime.characters || [])]);
       setCharInput('');
@@ -872,7 +882,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       const trimmed = prev.trimEnd();
       return trimmed ? `${trimmed}\n${lines.join('\n')}` : lines.join('\n');
     });
-    catgirlMessage.success(`已导入 ${lines.length} 个维度评分到评价`);
+    message.success(`已导入 ${lines.length} 个维度评分到评价`);
   };
 
   // ── 可选标签：从全部番剧中收集，排除已在当前番剧的，按使用次数排序 ──
@@ -898,7 +908,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
     const name = tagInput.trim();
     if (name) {
       // 有输入内容 → 直接添加
-      if (tags.some((t) => t.name === name)) { catgirlMessage.warning('标签已存在'); return; }
+      if (tags.some((t) => t.name === name)) { message.warning('标签已存在'); return; }
       setTags((prev) => [...prev, { name, highlighted: true }]);
       setTagInput('');
     } else {
@@ -909,7 +919,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
 
   /** 从标签选择器中点选标签 */
   const selectTagFromPicker = (name: string) => {
-    if (tags.some((t) => t.name === name)) { catgirlMessage.warning('标签已存在'); return; }
+    if (tags.some((t) => t.name === name)) { message.warning('标签已存在'); return; }
     setTags((prev) => [...prev, { name, highlighted: true }]);
     setShowTagPicker(false);
   };
@@ -925,7 +935,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
     if (!name) return;
     if (characters.includes(name)) { setCharInput(''); return; }
     if (characters.length >= MAX_CHARACTER_SLOTS) {
-      catgirlMessage.warning(`最多记录 ${MAX_CHARACTER_SLOTS} 个角色（Excel 只有 4 列角色名）`);
+      message.warning(`最多记录 ${MAX_CHARACTER_SLOTS} 个角色（Excel 只有 4 列角色名）`);
       return;
     }
     setCharacters((prev) => [...prev, name]);
@@ -947,14 +957,35 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
     });
   };
 
+  /**
+   * 老评价（从没记录过写作时间）的兜底时间：观看日中午 12 点。
+   * 用它补录，界面上会标成「约 ...（按观看日补录）」，不会被当成真实记录。
+   */
+  const reviewFallback = reviewFallbackTime(anime?.watchDate || anime?.createdAt);
+
   // 保存
   const handleSave = async () => {
     setSaving(true);
     try {
+      /**
+       * 评价的时间线：用上一版正文做锚点对齐，只有真正新增的段落才打当前时间。
+       * 老条目按观看日 12 点补录（标记为估算），而不是整篇打上"今天"。
+       */
+      const segments = alignReviewSegments({
+        prevReview: anime?.review || '',
+        prevTimeline: anime?.reviewMeta?.timeline,
+        newReview: review,
+        now: nowReviewTime(),
+        fallbackTime: reviewFallback,
+      });
+      const nextMeta: ReviewMeta = { v: 1 };
+      if (watchCount > 1) nextMeta.watchCount = watchCount;
+      if (segments.length > 0) nextMeta.timeline = { snapshot: review, segments };
+
       await onSave({
         ...anime!,
         title: editTitle.trim() || anime!.title,
-        scores, review, tags, dimensionReviews: dimReviews, category, posterUrl,
+        scores, review, reviewMeta: nextMeta, tags, dimensionReviews: dimReviews, category, posterUrl,
         characters,
         templateId, customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
         link: link.trim() || undefined,
@@ -971,12 +1002,47 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
         searchAlias: editSearchAlias || undefined,
         bangumiId: editBangumiId,
       });
-      catgirlMessage.success('已保存到 Excel');
+      message.success('已保存到 Excel');
       setEditing(false);
     } catch (e) {
-      catgirlMessage.error('保存失败：' + (e instanceof Error ? e.message : '未知错误'));
+      message.error('保存失败：' + (e instanceof Error ? e.message : '未知错误'));
     } finally {
       setSaving(false);
+    }
+  };
+
+  /**
+   * 阅读态在时间气泡里改备注（「二刷」「剧透预警」）时直接写回 Excel，
+   * 不必先进编辑模式。只动「评价元数据」这一格，其余字段按当前 anime 原样带回。
+   *
+   * 老评价还没有时间线：按兜底时间（观看日中午）现造一份，
+   * 否则气泡里的输入框看起来能写、写完却什么都不发生。
+   */
+  const handleSegmentNoteChange = async (index: number, note: string) => {
+    if (!anime) return;
+    const timeline = anime.reviewMeta?.timeline;
+
+    const nextTimeline: ReviewTimeline = timeline
+      ? {
+          ...timeline,
+          segments: timeline.segments.map((s, i) => (i === index ? { ...s, note: note || undefined } : s)),
+        }
+      : {
+          snapshot: anime.review || '',
+          segments: splitReviewParagraphs(anime.review || '').map((p, i) => ({
+            anchor: reviewAnchor(p),
+            ...(reviewFallback ? { time: reviewFallback, estimated: true } : {}),
+            ...(i === index && note ? { note } : {}),
+          })),
+        };
+
+    try {
+      await onSave({
+        ...anime,
+        reviewMeta: { ...anime.reviewMeta, v: 1, timeline: nextTimeline },
+      }, true);
+    } catch (e) {
+      message.error('备注保存失败：' + (e instanceof Error ? e.message : '未知错误'));
     }
   };
 
@@ -1119,17 +1185,40 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       )}
       <Descriptions.Item label={isCharacterCard ? '诞生时间' : '观看时间'}>
         {editing ? (
-          <DatePicker
-            size="small"
-            value={editWatchDate}
-            onChange={setEditWatchDate}
-            format="YYYY-MM-DD"
-            placeholder="选择观看日期"
-            disabledDate={disabledFutureDay}
-            style={{ width: 140 }}
-            className="theme-datepicker"
-          />
-        ) : (anime.watchDate || anime.createdAt || '-')}
+          <Space size={6}>
+            <DatePicker
+              size="small"
+              value={editWatchDate}
+              onChange={setEditWatchDate}
+              format="YYYY-MM-DD"
+              placeholder="选择观看日期"
+              disabledDate={disabledFutureDay}
+              style={{ width: 140 }}
+              className="theme-datepicker"
+            />
+            {!isCharacterCard && (
+              <Tooltip title="看过几遍。二刷及以后可以在评价里分段记录，时间会跟着段落走">
+                <InputNumber
+                  size="small"
+                  min={1}
+                  max={99}
+                  step={1}
+                  value={watchCount}
+                  onChange={(v) => setWatchCount(normalizeWatchCount(v))}
+                  style={{ width: 76 }}
+                  addonAfter="刷"
+                />
+              </Tooltip>
+            )}
+          </Space>
+        ) : (
+          <Space size={6}>
+            <span>{anime.watchDate || anime.createdAt || '-'}</span>
+            {!isCharacterCard && watchCount > 1 && (
+              <span className="review-watch-badge">{watchCount} 刷</span>
+            )}
+          </Space>
+        )}
       </Descriptions.Item>
       {templateCfg.showBangumiId && (
         <Descriptions.Item label="Bangumi">
@@ -1713,6 +1802,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                     setEditBangumiId(anime.bangumiId);
                     setScores([...anime.scores]);
                     setReview(anime.review || '');
+                    setWatchCount(normalizeWatchCount(anime.reviewMeta?.watchCount));
                     setTags([...anime.tags]);
                     setDimReviews(anime.dimensionReviews || []);
                     setCategory(anime.category);
@@ -1953,6 +2043,18 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                         {dim.label}
                       </span>
                     </Tooltip>
+                    {dim.key === 'audio' && onOpenMusic && (
+                      <Tooltip title="绑定 / 播放这部番的音乐">
+                        <span
+                          data-music-entry="detail"
+                          title="绑定 / 播放这部番的音乐"
+                          onClick={(e) => { e.stopPropagation(); if (anime) onOpenMusic(anime); }}
+                          style={{ cursor: 'pointer', color: 'var(--brand-primary)', fontSize: 12, lineHeight: 1 }}
+                        >
+                          <CustomerServiceOutlined />
+                        </span>
+                      </Tooltip>
+                    )}
                     <InputNumber size="small" min={0} max={15}
                       step={dim.key === 'vibe' ? 0.01 : 0.1}
                       value={score ? round2(score) : null} onChange={(v) => handleScoreChange(dim.key, v)}
@@ -2141,10 +2243,34 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
               </div>
             )}
             <span style={{ fontWeight: 600, fontSize: 14, display: 'block', marginBottom: 6 }}>📝 评价</span>
-            <TextArea value={review} onChange={(e) => setReview(e.target.value)}
-              placeholder="写下你对这部番的评价…" rows={5}
-              readOnly={!editing}
-              style={{ background: editing ? 'var(--bg-tertiary)' : 'var(--bg-secondary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
+            {editing ? (
+              <>
+                <TextArea value={review} onChange={(e) => setReview(e.target.value)}
+                  placeholder="写下你对这部番的评价…多刷时另起一段，保存后每段会记下自己的写作时间"
+                  rows={5}
+                  style={{ background: 'var(--bg-tertiary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }} />
+                {/* 老评价没有历史时间可补，第一次保存按观看日中午补录，说清楚免得以为没生效 */}
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                  {anime?.reviewMeta?.timeline
+                    ? `已有 ${anime.reviewMeta.timeline.segments.length} 段记录了写作时间；改动保留原时间，新写的段落记当下`
+                    : reviewFallback
+                      ? `保存后，这篇老评价按观看日 ${reviewFallback.slice(0, 10)} 12:00 补录（界面上标「约」），之后新写的段落记当下`
+                      : '保存后，新写的段落会记下写作时间'}
+                </div>
+              </>
+            ) : anime?.review?.trim() ? (
+              <div className="review-readonly">
+                <ReviewTimelineView
+                  review={anime.review}
+                  timeline={anime.reviewMeta?.timeline}
+                  prefs={reviewDisplayPrefs}
+                  fallbackTime={reviewFallback}
+                  onNoteChange={handleSegmentNoteChange}
+                />
+              </div>
+            ) : (
+              <div className="review-readonly review-readonly-empty">还没有写评价</div>
+            )}
           </div>
         </div>
 
@@ -2308,7 +2434,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
           {/* 角色（按模板配置显示）
               查看模式：有角色名才显示（空段落没意义）
               编辑模式：始终显示，否则「一个角色名都没有」时根本没有录入入口
-                        —— 以前只能去 Excel 手填或用知识图谱连线 */}
+                        —— 以前只能去 Excel 手填 */}
           {templateCfg.showCharacters && (characters.length > 0 || editing || relatedCards.length > 0) && (
             <div
               data-section-key="characters"

@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Segmented, Input, Button, Popconfirm } from 'antd';
+import { message, Segmented, Input, Button, Popconfirm } from 'antd';
 import { PlusOutlined, EditOutlined, CloseOutlined } from '@ant-design/icons';
 import type { AnimeEntry, Dimension } from '../types';
 import { getTemplate } from '../../features/anime-data/template-service';
+import { calcOverall as computeOverall } from '../../core/overall';
 import { rankByDimension } from '../../features/ranking/ranking-service';
 import type { ScoreRange } from '../../features/ranking/score-distribution';
 import { findScoreRangeIndex } from '../../features/ranking/score-distribution';
@@ -13,7 +14,6 @@ import { groupTagNames, normalizeTagName, sameTagName, findLikelyDuplicates } fr
 
 /** 计数小于这个值的标签默认收起（批量打标签会把标签数推到上百） */
 const TAG_COLLAPSE_THRESHOLD = 5;
-import { catgirlMessage } from '../theme';
 import AppIcon from '../theme/AppIcon';
 import ScoreDistribution from './ScoreDistribution';
 
@@ -66,7 +66,6 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false, onOpenSettings }) 
   const [showAllRanked, setShowAllRanked] = useState(false);
   const [showTags, setShowTags] = useState(true);
   const [tagEditMode, setTagEditMode] = useState(false); // Tag 编辑模式开关
-  const [showGraph, setShowGraph] = useState(false); // 知识图谱折叠
   const [showAI, setShowAI] = useState(false); // AI 分析折叠
 
   // ── 分数分布图 ──
@@ -177,7 +176,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false, onOpenSettings }) 
     setTagPresets(updated);
     saveTagPresets(updated);
     setEditingTag(null);
-    catgirlMessage.success(`已重命名「${editingTag}」→「${newName}」`);
+    message.success(`已重命名「${editingTag}」→「${newName}」`);
   }, [editingTag, editValue, tagPresets, handleRenameTag]);
 
   /** 把「疑似重复」里用得少的那个并进用得多的（走同一条重命名链路） */
@@ -191,7 +190,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false, onOpenSettings }) 
     ));
     setTagPresets(updated);
     saveTagPresets(updated);
-    catgirlMessage.success(`已把「${from}」并入「${to}」`);
+    message.success(`已把「${from}」并入「${to}」`);
   }, [handleRenameTag, tagPresets, saveTagPresets]);
 
   // 删除标签
@@ -207,30 +206,18 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false, onOpenSettings }) 
   const addTagPreset = useCallback(() => {
     const name = newTagName.trim();
     if (!name) return;
-    if (tagPresets.some((p) => sameTagName(p, name))) { catgirlMessage.warning('标签已存在'); return; }
+    if (tagPresets.some((p) => sameTagName(p, name))) { message.warning('标签已存在'); return; }
     const updated = [...tagPresets, name];
     setTagPresets(updated);
     saveTagPresets(updated);
     setNewTagName('');
-    catgirlMessage.success(`已添加标签「${name}」`);
+    message.success(`已添加标签「${name}」`);
   }, [newTagName, tagPresets]);
 
   /** 动态计算条目的加权总评（根据条目自身模板的维度和权重） */
-  const calcOverall = useCallback((entry: AnimeEntry): number => {
-    const allDims = getTemplate(entry.templateId).dimensions
-      .filter((d) => d.key !== 'overall');
-    if (allDims.length === 0) return 0;
-    const hasWeights = allDims.some((d) => d.weight > 0);
-    const effectiveDims = hasWeights
-      ? allDims.filter((d) => d.weight > 0)
-      : allDims.map((d) => ({ ...d, weight: 1 / allDims.length }));
-    let tw = 0, ws = 0;
-    for (const d of effectiveDims) {
-      const s = entry.scores.find((sc) => sc.dimensionKey === d.key)?.score ?? 0;
-      if (s > 0) { ws += s * d.weight; tw += d.weight; }
-    }
-    return tw > 0 ? ws / tw : 0;
-  }, []);
+  const calcOverall = useCallback((entry: AnimeEntry): number => (
+    computeOverall(entry.scores, getTemplate(entry.templateId).dimensions)
+  ), []);
 
   // 按当前维度排序（仅含当前模板类型的条目）
   const allRanked = useMemo(() => {
@@ -718,61 +705,6 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false, onOpenSettings }) 
             </div>
             )}
           </>
-        )}
-      </div>
-
-      {/* ── 知识图谱 ── */}
-      <div className="sidebar-section">
-        <div
-          className="section-title"
-          onClick={() => setShowGraph(!showGraph)}
-          style={{ cursor: 'pointer', userSelect: 'none' }}
-        >
-          {showGraph ? '▼' : '▶'} 🔗 知识图谱
-        </div>
-        {showGraph && (
-          <div style={{ padding: '4px 0' }}>
-            <div
-              onClick={() => dispatch({ type: 'OPEN_MODAL', modal: 'knowledgeGraph' })}
-              style={{
-                height: 160,
-                background: 'var(--bg-secondary)',
-                borderRadius: 8,
-                border: '1px solid #30363d',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                transition: 'border-color 0.2s, background 0.2s',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = 'var(--brand-primary)';
-                e.currentTarget.style.background = 'var(--bg-tertiary)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = 'var(--border-primary)';
-                e.currentTarget.style.background = 'var(--bg-secondary)';
-              }}
-            >
-              <div style={{ fontSize: 28, marginBottom: 4, opacity: 0.6 }}>🕸️</div>
-              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 2 }}>
-                番剧关系网络
-              </div>
-              <div
-                style={{
-                  fontSize: 10,
-                  color: 'var(--brand-primary)',
-                  background: 'rgba(251,114,153,0.1)',
-                  padding: '2px 10px',
-                  borderRadius: 10,
-                  border: '1px solid rgba(251,114,153,0.2)',
-                }}
-              >
-                全屏查看
-              </div>
-            </div>
-          </div>
         )}
       </div>
 

@@ -11,7 +11,7 @@
  *     行号不错位、海报覆盖与其它行不受影响，而且可以撤销
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Modal, Button, Space, Typography, Tag, Radio, Table, Checkbox, Alert, Empty, Tooltip, Segmented } from 'antd';
+import { message, Modal, Button, Space, Typography, Tag, Radio, Table, Checkbox, Alert, Empty, Tooltip, Segmented } from 'antd';
 import { MergeCellsOutlined, UndoOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { AnimeEntry, DimensionScore } from '../../src/types';
@@ -19,7 +19,6 @@ import { CHARACTER_TEMPLATE_ID } from '../../src/types';
 import { saveCharacterCardData } from '../anime-data/excel-service';
 import { addToWatchingDeleted, removeFromWatchingDeleted, loadDimReviews, saveDimReviews } from '../anime-data/storage-service';
 import { getTemplate } from '../anime-data/template-service';
-import { catgirlMessage } from '../../src/theme';
 import {
   buildDuplicateGroups, computeMergedCard, removedCards, cardRichness,
 } from './merge-duplicates';
@@ -70,7 +69,7 @@ const CharacterMergeModal: React.FC<CharacterMergeModalProps> = ({ open, onClose
   /** 合并选中的组 */
   const handleMerge = async () => {
     const targets = selectedPlans;
-    if (targets.length === 0) { catgirlMessage.warning('先勾选要合并的重复组'); return; }
+    if (targets.length === 0) { message.warning('先勾选要合并的重复组'); return; }
     setBusy(true);
     const mergedLog: { keptTitle: string; removedIds: string[] }[] = [];
     let okCount = 0, failCount = 0;
@@ -130,7 +129,7 @@ const CharacterMergeModal: React.FC<CharacterMergeModalProps> = ({ open, onClose
 
     setBusy(false);
     setLastMerged(mergedLog);
-    catgirlMessage.success(
+    message.success(
       `已合并 ${okCount} 组、移除 ${mergedLog.reduce((n, m) => n + m.removedIds.length, 0)} 张重复卡`
       + (dimReviewMoved > 0 ? `，迁移 ${dimReviewMoved} 条维度专项评价` : '')
       + (failCount > 0 ? `；${failCount} 组失败（详见控制台）` : '')
@@ -148,7 +147,7 @@ const CharacterMergeModal: React.FC<CharacterMergeModalProps> = ({ open, onClose
     let n = 0;
     for (const m of lastMerged) for (const id of m.removedIds) { removeFromWatchingDeleted(id); n++; }
     setLastMerged(null);
-    catgirlMessage.success(`已恢复 ${n} 张卡片（合并写入的资料未回退，评分等仍以保留卡为准）`);
+    message.success(`已恢复 ${n} 张卡片（合并写入的资料未回退，评分等仍以保留卡为准）`);
     onApplied();
     rebuild();
   };

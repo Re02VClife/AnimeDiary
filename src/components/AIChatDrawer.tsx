@@ -9,9 +9,8 @@
  * 不能只留好看的那几条 —— 少一条 role:'tool' 模型就会重复调用同一个工具。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Tooltip, Select, Popconfirm } from 'antd';
+import { message, Modal, Button, Tooltip, Select, Popconfirm } from 'antd';
 import { SendOutlined, PlusOutlined, CloseOutlined, StopOutlined, DeleteOutlined } from '@ant-design/icons';
-import { catgirlMessage } from '../theme';
 import Markdown from './Markdown';
 import { hasAIConfig, getAIPermission } from '../../features/ai-analysis';
 import { AI_PERMISSION_INFO } from '../../core/ai-permission';
@@ -19,6 +18,7 @@ import { createAIRun } from '../../features/ai-analysis/ai-runtime';
 import type { AIRun } from '../../features/ai-analysis/ai-runtime';
 import { runChatAgent } from '../../features/ai-analysis/chat-agent';
 import type { ChatRecord } from '../../features/ai-analysis/chat-agent';
+import { createAppTools } from '../../features/ai-analysis/app-tools';
 import { recordsToItems, firstUserTitle } from '../../features/ai-analysis/chat-transcript';
 import type { ChatItem } from '../../features/ai-analysis/chat-transcript';
 import {
@@ -37,6 +37,8 @@ interface AIChatDrawerProps {
   onClose: () => void;
   animeList: AnimeEntry[];
   onOpenSettings: () => void;
+  /** AI 写操作的落点：必须走 AnimeContext.handleSaveAnime（Excel 原子写 + 快照） */
+  onSaveAnime: (updated: AnimeEntry, keepModal?: boolean) => Promise<void>;
 }
 
 const WIDTH_KEY = 'anime_diary_ai_chat_width';
@@ -68,7 +70,7 @@ function nextId(prefix: string): string {
   return `${prefix}-${itemSeq}`;
 }
 
-const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, onOpenSettings }) => {
+const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, onOpenSettings, onSaveAnime }) => {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -175,6 +177,14 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
   const sessionsRef = useRef<ChatSession[]>([]);
   useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
 
+  /**
+   * 最新列表快照。
+   * 工具在一个回合里可能连续改同一部（先加标签再改分类），如果每次都读发送时的
+   * animeList，后一次写入会把前一次的改动覆盖回去。所以执行器通过 getter 取实时值。
+   */
+  const listRef = useRef<AnimeEntry[]>(animeList);
+  useEffect(() => { listRef.current = animeList; }, [animeList]);
+
   /** 切到某个会话：把它的记录还原成界面 */
   const switchSession = useCallback((id: string) => {
     const target = sessionsRef.current.find((s) => s.id === id);
@@ -243,7 +253,7 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
     sessionsRef.current = list;
     setSessions(list);
     if (!saveSessions(list)) {
-      catgirlMessage.warning('会话保存失败（本地存储可能已满），这一轮记录没能存下来');
+      message.warning('会话保存失败（本地存储可能已满），这一轮记录没能存下来');
     }
   }, [activeId]);
 
@@ -256,7 +266,7 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
     const question = text.trim();
     if (!question || busy) return;
     if (!hasAIConfig()) {
-      catgirlMessage.warning('请先在 AI 设置里配置服务商与 API Key');
+      message.warning('请先在 AI 设置里配置服务商与 API Key');
       return;
     }
 
@@ -295,6 +305,35 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
     setBusy(true);
     clearStream();
 
+    // 应用操作工具：读走实时列表，写统一回到 handleSaveAnime（Excel 原子写 + 快照）
+    const appTools = createAppTools({
+      get list() { return listRef.current; },
+      saveAnime: (updated) => onSaveAnime(updated, true),
+      approve: (spec, args) => new Promise<boolean>((resolve) => {
+        Modal.confirm({
+          title: `允许 AI 执行「${spec.title}」？`,
+          width: 480,
+          content: (
+            <div style={{ fontSize: 12 }}>
+              <div style={{ color: 'var(--text-secondary)', marginBottom: 6 }}>
+                这是写操作，会直接写入 Excel（写前自动留快照）。
+              </div>
+              <pre style={{
+                margin: 0, padding: 8, background: 'var(--bg-primary)',
+                border: '1px solid var(--border-primary)', borderRadius: 6,
+                maxHeight: 220, overflow: 'auto', fontSize: 11,
+                whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+              }}>{JSON.stringify(args, null, 2)}</pre>
+            </div>
+          ),
+          okText: '允许',
+          cancelText: '取消',
+          onOk: () => resolve(true),
+          onCancel: () => resolve(false),
+        });
+      }),
+    }, permission);
+
     try {
       const result = await runChatAgent({
         list: animeList,
@@ -302,6 +341,7 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
         userText: question,
         run,
         permission,
+        appTools,
         signal: controller.signal,
         stream: true,
         onEvent: (e) => {
@@ -353,7 +393,7 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
       setBusy(false);
       clearStream();
     }
-  }, [animeList, busy, permission, persistSession]);
+  }, [animeList, busy, permission, persistSession, onSaveAnime]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -609,7 +649,7 @@ const AIChatDrawer: React.FC<AIChatDrawerProps> = ({ open, onClose, animeList, o
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
             <span style={{ fontSize: 10, color: 'var(--text-muted)', flex: 1 }}>
-              {permInfo.short}模式 · 数字由本地工具计算
+              {permInfo.short}模式 · 写操作按权限执行 · 数字由本地工具计算
             </span>
             {busy ? (
               <Button size="small" danger icon={<StopOutlined />} onClick={stop}>停止</Button>

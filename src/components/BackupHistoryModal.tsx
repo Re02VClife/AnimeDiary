@@ -11,9 +11,8 @@
  *   2. 恢复要过 Popconfirm，且明确提示「会覆盖当前数据源」
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { Modal, Button, Tag, Empty, Spin, Popconfirm, Tabs, Tooltip } from 'antd';
+import { message, Modal, Button, Tag, Empty, Spin, Popconfirm, Tabs, Tooltip } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
-import { catgirlMessage } from '../theme';
 import { hasPreImportSnapshot, rollbackLastImport } from '../../features/anime-data/storage-service';
 import {
   fetchSnapshots,
@@ -50,7 +49,7 @@ const BackupHistoryModal: React.FC<BackupHistoryModalProps> = ({ open, onClose, 
       setKeep(snap.keep || 10);
       setOperations(ops);
     } catch (e) {
-      catgirlMessage.error('读取存档失败：' + (e instanceof Error ? e.message : '未知错误'));
+      message.error('读取存档失败：' + (e instanceof Error ? e.message : '未知错误'));
     } finally {
       setLoading(false);
     }
@@ -69,14 +68,14 @@ const BackupHistoryModal: React.FC<BackupHistoryModalProps> = ({ open, onClose, 
     try {
       const { restored, removed, skipped } = rollbackLastImport();
       setPreImport(false);
-      catgirlMessage.success(
+      message.success(
         `已回滚导入前的本地设置：恢复 ${restored} 项`
         + (removed ? `，移除 ${removed} 项` : '')
         + (skipped ? `，跳过 ${skipped} 项` : '')
         + '。刷新页面后生效',
       );
     } catch (e) {
-      catgirlMessage.error('回滚失败：' + (e instanceof Error ? e.message : '未知错误'));
+      message.error('回滚失败：' + (e instanceof Error ? e.message : '未知错误'));
     }
   }, []);
 
@@ -84,7 +83,7 @@ const BackupHistoryModal: React.FC<BackupHistoryModalProps> = ({ open, onClose, 
     setRestoring(name);
     try {
       const result = await restoreSnapshot(name);
-      catgirlMessage.success(
+      message.success(
         result.revertTo
           ? '已恢复。恢复前的状态也存了一份，退错了可以再退回来'
           : '已恢复',
@@ -92,7 +91,7 @@ const BackupHistoryModal: React.FC<BackupHistoryModalProps> = ({ open, onClose, 
       onRestored?.();
       await loadAll();
     } catch (e) {
-      catgirlMessage.error('恢复失败：' + (e instanceof Error ? e.message : '未知错误'));
+      message.error('恢复失败：' + (e instanceof Error ? e.message : '未知错误'));
     } finally {
       setRestoring(null);
     }

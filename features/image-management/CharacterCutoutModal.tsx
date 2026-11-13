@@ -15,11 +15,10 @@
  * AI 更是先落 cover-nobg.preview.png，确认后才改名转正，随时可撤销。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Button, Progress, Checkbox, Tag, Alert, Tooltip, Empty, Segmented, Space } from 'antd';
+import { message, Modal, Button, Progress, Checkbox, Tag, Alert, Tooltip, Empty, Segmented, Space } from 'antd';
 import { BgColorsOutlined, UndoOutlined, ThunderboltOutlined, ExperimentOutlined } from '@ant-design/icons';
 import type { AnimeEntry } from '../../src/types';
 import { CHARACTER_TEMPLATE_ID } from '../../src/types';
-import { catgirlMessage } from '../../src/theme';
 import {
   createCutout,
   saveCutout,
@@ -124,7 +123,7 @@ const CharacterCutoutModal: React.FC<CharacterCutoutModalProps> = ({ open, onClo
 
   /** 逐张处理。洪泛是同步像素运算、AI 是本地 HTTP，每张之间都让出主线程让进度条能动 */
   const handleRun = useCallback(async () => {
-    if (items.length === 0) { catgirlMessage.warning('没有可处理的角色卡'); return; }
+    if (items.length === 0) { message.warning('没有可处理的角色卡'); return; }
     /**
      * 勾了谁就只处理谁（勾几张抠几张）；一张没勾才退回「当前筛选下的全部」。
      *
@@ -136,9 +135,9 @@ const CharacterCutoutModal: React.FC<CharacterCutoutModalProps> = ({ open, onClo
       : items.filter((it) => filter === 'all' || (filter === 'suspect'
         ? (states[it.id]?.result?.hints.length ?? 1) > 0
         : savedNames.has(it.dir)));
-    if (targets.length === 0) { catgirlMessage.warning('当前筛选下没有要处理的条目'); return; }
+    if (targets.length === 0) { message.warning('当前筛选下没有要处理的条目'); return; }
     if (engine === 'ai' && !aiStatus?.ready) {
-      catgirlMessage.warning('AI 运行时未就绪，已切回白底洪泛');
+      message.warning('AI 运行时未就绪，已切回白底洪泛');
       setEngine('flood');
       return;
     }
@@ -174,14 +173,14 @@ const CharacterCutoutModal: React.FC<CharacterCutoutModalProps> = ({ open, onClo
     setPhase('idle');
     const stopped = cancelRef.current;
     cancelRef.current = false;
-    catgirlMessage.success(
+    message.success(
       `${engine === 'ai' ? 'AI 抠图' : '去底'}完成：自动勾选 ${autoSelect.size} 张干净的${stopped ? '（已提前停止）' : ''}`,
     );
   }, [items, filter, states, savedNames, engine, aiStatus, selected]);
 
   const handleSave = useCallback(async () => {
     const targets = items.filter((it) => selected.has(it.id) && (states[it.id]?.aiResult || states[it.id]?.result));
-    if (targets.length === 0) { catgirlMessage.warning('还没有勾选任何要应用的角色'); return; }
+    if (targets.length === 0) { message.warning('还没有勾选任何要应用的角色'); return; }
     setPhase('saving');
     let ok = 0;
     let fail = 0;
@@ -206,7 +205,7 @@ const CharacterCutoutModal: React.FC<CharacterCutoutModalProps> = ({ open, onClo
     await loadCutoutIndex(true);
     setSavedNames(new Set(getCachedCutoutIndex()));
     setPhase('idle');
-    catgirlMessage.success(fail === 0 ? `已应用 ${ok} 张去底立绘` : `应用 ${ok} 张，失败 ${fail} 张`);
+    message.success(fail === 0 ? `已应用 ${ok} 张去底立绘` : `应用 ${ok} 张，失败 ${fail} 张`);
   }, [items, selected, states]);
 
   const handleUndo = useCallback(async (item: CutoutItem) => {
@@ -219,9 +218,9 @@ const CharacterCutoutModal: React.FC<CharacterCutoutModalProps> = ({ open, onClo
         if (next[item.id]) next[item.id] = { ...next[item.id], status: 'ok' };
         return next;
       });
-      catgirlMessage.success(`已撤销「${item.title}」的去底`);
+      message.success(`已撤销「${item.title}」的去底`);
     } catch (e) {
-      catgirlMessage.error(e instanceof Error ? e.message : '撤销失败');
+      message.error(e instanceof Error ? e.message : '撤销失败');
     }
   }, []);
 
@@ -234,9 +233,9 @@ const CharacterCutoutModal: React.FC<CharacterCutoutModalProps> = ({ open, onClo
         delete next[item.id];
         return next;
       });
-      catgirlMessage.success(`已丢弃「${item.title}」的 AI 结果`);
+      message.success(`已丢弃「${item.title}」的 AI 结果`);
     } catch (e) {
-      catgirlMessage.error(e instanceof Error ? e.message : '丢弃失败');
+      message.error(e instanceof Error ? e.message : '丢弃失败');
     }
   }, []);
 

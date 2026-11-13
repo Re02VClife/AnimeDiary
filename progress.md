@@ -6,7 +6,7 @@
 > 📌 这是**历史存档**，记录当时那轮重构，不再更新。
 > 当前进度、发版流程、踩坑清单与待办见 [`HANDOVER.md`](HANDOVER.md)。
 
-## 完成清单（16/16 步）
+## 完成清单（15/15 步）
 
 | 步骤 | 内容 | 验证 |
 |------|------|------|
@@ -18,14 +18,13 @@
 | 6 | features/anime-data/ 数据持久层 | ✅ |
 | 7 | features/ranking/ 排名服务 | ✅ |
 | 8 | **features/ai-analysis/ AI模块拆分**（1478行→13文件） | ✅ |
-| 9 | features/knowledge-graph/ 知识图谱 | ✅ |
-| 10 | features/watch-calendar/ image-management/ search-add/ | ✅ |
-| 11 | context/AnimeContext.tsx（useReducer + Provider） | ✅ |
-| 12 | App.tsx 改用 Context（616行→120行） | ✅ |
-| 13 | Sidebar 消费 Context（29 props→0） | ✅ |
-| 14 | 提取 ScoreSlider 独立组件（AnimeDetailModal -200行） | ✅ |
-| 15 | 集成测试（ranking 8 + graph 9 = **17 个**） | ✅ 76/76 |
-| 16 | specs/ 文档（6份）+ tsconfig 路径别名（@core/* @features/*） | ✅ |
+| 9 | features/watch-calendar/ image-management/ search-add/ | ✅ |
+| 10 | context/AnimeContext.tsx（useReducer + Provider） | ✅ |
+| 11 | App.tsx 改用 Context（616行→120行） | ✅ |
+| 12 | Sidebar 消费 Context（29 props→0） | ✅ |
+| 13 | 提取 ScoreSlider 独立组件（AnimeDetailModal -200行） | ✅ |
+| 14 | 集成测试（ranking 8 = **8 个**） | ✅ 67/67 |
+| 15 | specs/ 文档（6份）+ tsconfig 路径别名（@core/* @features/*） | ✅ |
 
 ## 测试覆盖
 
@@ -36,25 +35,23 @@
 | tests/core/text.test.ts | 16 |
 | tests/core/date.test.ts | 15 |
 | tests/features/ranking/ranking-service.test.ts | 8 |
-| tests/features/knowledge-graph/graph-engine.test.ts | 9 |
-| **总计** | **76** |
+| **总计** | **67** |
 
 ## 最终架构
 
 ```
 AnimeDiary/
 ├── core/                     (4 文件)  纯工具函数
-├── features/                 (28 文件) 8 个业务模块
+├── features/                 (25 文件) 7 个业务模块
 │   ├── ai-analysis/          (13 文件) AI 分析套件
 │   ├── anime-data/           (4 文件)  数据持久层
 │   ├── anime-detail/         (1 文件)  ScoreSlider
 │   ├── image-management/     (2 文件)  图片管理
-│   ├── knowledge-graph/      (3 文件)  知识图谱
 │   ├── ranking/              (1 文件)  排名服务
 │   ├── search-add/           (1 文件)  搜索添加
 │   └── watch-calendar/       (1 文件)  追番日历
 ├── context/                  (1 文件)  React 状态管理
-├── tests/                    (6 文件)  76 个测试
+├── tests/                    (5 文件)  67 个测试
 ├── specs/                    (6 文件)  需求文档
 └── src/                      (12 文件) 精简应用层
 ```
@@ -63,7 +60,7 @@ AnimeDiary/
 
 | 指标 | 重构前 | 重构后 |
 |------|--------|--------|
-| 测试数量 | 0 | **76** |
+| 测试数量 | 0 | **67** |
 | 最大文件 | aiSkills.ts 1540行 | preference-profile.ts ~315行 |
 | App.tsx | 616行 | **120行** (-80%) |
 | Sidebar props | 29个 | **0个** |

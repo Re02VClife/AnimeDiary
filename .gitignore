@@ -16,6 +16,15 @@ bangumi_cache.json
 jp_name_cache.json
 images/
 audio/
+# 本地番剧库：含本机绝对路径（如 E:\kazhumi Anime），只在本机有意义
+local-library.json
+# 抽帧/张数检测的样本数据（137MB，非源码）
+张数检测/
+# 音乐绑定（本机选择）与歌单缓存（抓来的 QQ 音乐歌单），同样不该进 git
+music-links.json
+music_cache.json
+# 张数检测的样本视频/截图（130MB+），只留脚本
+张数检测/测试文件/
 
 # ── 本地配置 ──
 .env

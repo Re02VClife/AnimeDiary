@@ -54,8 +54,8 @@ export const ICON_KEYS = [
   'review', 'taste-report',
   // 海报/图片
   'poster', 'poster-save', 'original-image', 'image-manager',
-  // 标签/图谱
-  'tag-manager', 'smart-tag', 'batch-tag', 'knowledge-graph',
+  // 标签
+  'tag-manager', 'smart-tag', 'batch-tag',
   // 设置/工具
   'settings', 'theme', 'template', 'dimension-manager',
   'user-data-export', 'user-data-import', 'fix-search',
@@ -72,8 +72,6 @@ export interface ThemeState {
   themeMode: ThemeMode;
   /** 用户自定义颜色覆盖（只保存与预设不同的值） */
   customColors: Partial<ThemeColors>;
-  /** 猫娘模式开关 */
-  catgirlMode: boolean;
   /** 自定义图标映射（图标 key → 图片 URL/dataURL） */
   customIcons: Partial<Record<IconKey, string>>;
 }

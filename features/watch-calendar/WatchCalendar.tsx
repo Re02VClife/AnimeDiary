@@ -67,7 +67,7 @@ const WatchTimeline: React.FC<WatchTimelineProps> = ({ animeList, onAnimeClick }
   if (timelineData.length === 0) {
     return (
       <div style={{ padding: '20px 10px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-        暂无追番时间数据喵
+        暂无追番时间数据
       </div>
     );
   }

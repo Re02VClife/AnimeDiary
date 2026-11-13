@@ -17,6 +17,7 @@ import {
   useQuickActionIds,
   type QuickActionId,
 } from '../features/quick-actions/quick-actions';
+import AppIcon from '../theme/AppIcon';
 
 interface TopBarProps {
   activeCategory: AnimeCategory;
@@ -51,7 +52,7 @@ interface TopBarProps {
  *
  * 数据层里五个分类共用品牌粉，一排 tab 全激活时看不出区别；
  * 这里给每个状态一个语义色（在看=生机绿、想看=期待蓝、搁置=琥珀、看过=粉、抛弃=灰），
- * 只作用于顶栏，不动 Excel 与知识图谱的颜色来源。
+ * 只作用于顶栏，不动 Excel 的颜色来源。
  */
 const CATEGORY_TINT: Record<AnimeCategory, string> = {
   watching: '#3ddc97',
@@ -182,13 +183,13 @@ const TopBar: React.FC<TopBarProps> = ({
         */}
         <button
           type="button"
-          className="brand-trigger"
+          className="brand-trigger has-icon"
           title="打开侧栏"
           aria-label="打开侧栏"
           onMouseEnter={onExpandSidebar}
           onClick={onExpandSidebar}
         >
-          <span className="brand-glyph">A</span>
+          <AppIcon name="anime" size={34} className="brand-icon" />
           <span className="brand-spark" aria-hidden />
         </button>
 

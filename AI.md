@@ -53,7 +53,8 @@
   "timeoutMs": 180000,
   "jsonMode": true,                       // 是否请求 response_format=json_object
   "thinking": "auto",                     // auto | off（off 只在支持该参数的预设上生效）
-  "deepMode": false                       // 深度偏好分析开关
+  "deepMode": false,                      // 深度偏好分析开关
+  "permission": "confirm"                 // AI 写权限：read / confirm / write
 }
 ```
 
@@ -103,7 +104,8 @@ UI 与对话窗口都读它：
   必须由 `run()` 内部用真实数据重算 —— 让模型传就等于允许它编。
 - **`resolveEntry()` 是保守的**：精确 → 忽略大小写 → 唯一包含匹配，命中多处直接返回 null。
   宁可让用户重选，也不猜错一部番。
-- **`effect` 目前全是 `read`**。将来加写能力必须标 `write`，`getSkillsFor(permission)` 会按三档权限过滤。
+- **skill 层目前全是 `read`**。写能力放在 `app-tools`（见第六节），不混进只读 skill；
+  将来新增写 skill 必须标 `write`，`getSkillsFor(permission)` 会按三档权限过滤。
 - `toToolSpecs()` 把清单翻译成 OpenAI 风格的 tools（id 里的 `-` 换成 `_`），对话窗口接工具调用时直接用。
 
 registry 是**薄包装**：底层 6 个函数的签名与实现没动，`live.test.ts` 与详情面板照旧直接用它们。
@@ -141,6 +143,22 @@ registry 是**薄包装**：底层 6 个函数的签名与实现没动，`live.t
 - 改动提议的数据结构在 `core/ai-proposal.ts`：`createTagProposal` 生成、`checkProposalStale` 在落库前比对
   `before` 值（提议与落库之间用户可能自己改过，对不上就拒绝，不用过期提议覆盖新数据）。
 - AI 来源的写操作通过请求头 `X-Op-Source: ai` 打到 Excel 路由，落进 `operations.jsonl` 的来源字段。
+
+### 应用操作工具（`core/app-tools.ts` + `features/ai-analysis/app-tools.ts`）
+
+三档权限真正有写动作的地方。工具清单、参数、错误码、给 AI 看的操作手册见
+[`docs/AI-OPERATIONS.md`](docs/AI-OPERATIONS.md)。
+
+- **定义与执行位置解耦**：`AppToolSpec` 在 `core/app-tools.ts`，执行器现在跑在渲染进程
+  （`createAppTools`），写操作统一回调 `host.saveAnime` → `AnimeContext.handleSaveAnime`，
+  不新增第二条 Excel 写路径。将来接主进程 / 插件时沿用同一套 spec。
+- **权限在注册阶段就裁剪**：`read` 档连写工具的定义都不给模型看；`confirm` 档执行前走
+  `host.approve`（AI 对话里是 Modal 确认）；`write` 档直接执行，写前仍有快照。
+- **和只读 skill 分开**：skill（analysis）与 app tool（application）各一张注册表，
+  工具名用 `app_` 前缀区分，`runChatAgent({ appTools })` 合并进同一轮工具调用。
+
+当前工具：`app_anime_list` / `app_anime_get` / `app_tag_stats`（只读），
+`app_anime_update` / `app_tag_add` / `app_tag_remove`（写，单条）。批量仍走独立流程。
 
 ## 七、对话窗口与会话
 

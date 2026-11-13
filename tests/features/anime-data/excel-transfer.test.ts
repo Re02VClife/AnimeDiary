@@ -220,7 +220,7 @@ describe('buildTransferWorkbook — 按类型分表', () => {
 });
 
 describe('parseTransferWorkbook — 导出文件能导回来', () => {
-  it('新格式回读：内部 43 列表头正确，行数对得上', () => {
+  it('新格式回读：内部 44 列表头正确，行数对得上', () => {
     const wb = buildTransferWorkbook({
       rows: [['表头'], animeRow(), characterRow(), customRow('template-game')],
       templates: TEMPLATES,
@@ -231,9 +231,30 @@ describe('parseTransferWorkbook — 导出文件能导回来', () => {
     expect(rows).toHaveLength(4);
     expect(rows[0][EXCEL_COL.TITLE]).toBe('名字');
     expect(rows[0][EXCEL_COL.TEMPLATE_JSON]).toBe('模板JSON');
+    expect(rows[0][EXCEL_COL.REVIEW_META]).toBe('评价元数据');
     expect(parsed.summary.map((s) => s.sheet)).toEqual(
       expect.arrayContaining([SHEET_ANIME, SHEET_CHARACTER, '模板_手游评分']),
     );
+  });
+
+  it('评价元数据在导出 → 导入后原样保留', () => {
+    const meta = JSON.stringify({
+      v: 1,
+      watchCount: 2,
+      timeline: {
+        snapshot: '好看',
+        segments: [{ anchor: '好看', time: '2025-05-04 21:30', note: '二刷' }],
+      },
+    });
+    const parsed = parseTransferWorkbook(
+      buildTransferWorkbook({
+        rows: [['表头'], animeRow({ [EXCEL_COL.REVIEW_META]: meta })],
+        templates: TEMPLATES,
+      }),
+      TEMPLATES,
+    );
+    const row = sheetAoa(parsed.workbook, '番剧列表')[1] as unknown[];
+    expect(row[EXCEL_COL.REVIEW_META]).toBe(meta);
   });
 
   it('番剧的分、tag、海报、角色名写回内部列；首刷时间回到序列号', () => {

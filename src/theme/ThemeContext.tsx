@@ -1,6 +1,6 @@
 /**
  * ThemeProvider + useTheme hook
- * 管理主题模式、自定义配色、猫娘模式、自定义图标，全部持久化到 localStorage
+ * 管理主题模式、自定义配色、自定义图标，全部持久化到 localStorage
  */
 
 import React, {
@@ -20,7 +20,6 @@ import { mergeColors, colorsToCSSVariables } from './presets';
 const DEFAULT_STATE: ThemeState = {
   themeMode: 'dark',
   customColors: {},
-  catgirlMode: false,
   customIcons: {},
 };
 
@@ -40,9 +39,6 @@ interface ThemeContextValue {
   /** 重置自定义颜色为预设 */
   resetCustomColors: () => void;
 
-  /** 切换猫娘模式 */
-  toggleCatgirlMode: () => void;
-
   /** 设置自定义图标 */
   setCustomIcons: (icons: Partial<Record<IconKey, string>>) => void;
 }
@@ -58,7 +54,6 @@ const loadState = (): ThemeState => {
       return {
         themeMode: parsed.themeMode || 'dark',
         customColors: parsed.customColors || {},
-        catgirlMode: !!parsed.catgirlMode,
         customIcons: parsed.customIcons || {},
       };
     }
@@ -159,10 +154,6 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setState((prev) => ({ ...prev, customColors: {} }));
   }, []);
 
-  const toggleCatgirlMode = useCallback(() => {
-    setState((prev) => ({ ...prev, catgirlMode: !prev.catgirlMode }));
-  }, []);
-
   const setCustomIcons = useCallback(
     (icons: Partial<Record<IconKey, string>>) => {
       setState((prev) => ({
@@ -180,10 +171,9 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       setThemeMode,
       setCustomColors,
       resetCustomColors,
-      toggleCatgirlMode,
       setCustomIcons,
     }),
-    [state, colors, setThemeMode, setCustomColors, resetCustomColors, toggleCatgirlMode, setCustomIcons],
+    [state, colors, setThemeMode, setCustomColors, resetCustomColors, setCustomIcons],
   );
 
   return (

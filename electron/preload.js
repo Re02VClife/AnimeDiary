@@ -25,6 +25,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openDataDir: () => ipcRenderer.invoke('data:openDir'),
 
   /**
+   * 选一个本地番剧目录（设置 → 本地 → 导入存储地址）。
+   * 取消时返回 null；只给路径，扫描仍走 /api/local/library。
+   */
+  pickLocalDir: () => ipcRenderer.invoke('local:pickDir'),
+
+  /**
    * 同步标题栏右上角系统按钮的配色。
    * 那块区域由 Electron 独立绘制，CSS 变量影响不到它 —— 不主动同步的话，
    * 切到浅色主题后右上角会留一块深色（#161b22）补丁。

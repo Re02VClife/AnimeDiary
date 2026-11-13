@@ -21,12 +21,16 @@ import { createMediaClient, isAllowedCoverHost, isPublicHttpUrl, describeError }
 import type { FetchLike, MediaSource } from './media-sources';
 import { createCharacterClient } from './character-sources';
 import { createVoiceClient } from './character-voice';
+import { createBangumiAccount } from './bangumi-account';
 import { sanitizeVoiceName } from '../core/voice-clips';
 import { createBgRemover } from './bg-removal';
 import { decodeImage, encodePng } from './image-codec';
 import { registerAIRoutes } from './ai-routes';
 import { createOperationLog } from './operations-log';
 import type { OperationSource } from './operations-log';
+import { createMusicClient } from './music-qq';
+import { createLocalLibrary } from './local-library';
+import { Readable } from 'stream';
 
 /** 数据根目录 */
 export interface ApiContext {
@@ -63,10 +67,26 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
   /** 写操作日志：每次写 Excel / 导入 / 恢复都追加一条，带写前快照文件名 */
   const ops = createOperationLog(DATA_DIR);
   /**
+   * QQ 音乐（只读）：歌单 / 歌曲详情 / 搜索 / vkey 拉流。
+   * 绑定写进 DATA_DIR/music-links.json，歌单缓存进 music_cache.json —— 都不碰 Excel。
+   */
+  const music = createMusicClient({ DATA_DIR });
+  /**
+   * 本地番剧库：用户导入的番剧存储地址 + 卡片绑定 + 视频流。
+   * 与 music 同样的取舍 —— 只写 {DATA_DIR}/local-library.json，绝不碰 Excel。
+   */
+  const localLib = createLocalLibrary({ DATA_DIR, fetchImpl });
+  /**
    * 番剧元数据/封面获取客户端。
    * 传入宿主注入的 fetchImpl，使请求走上与页面一致（且遵守系统代理）的网络栈。
    */
   const media = createMediaClient({ fetchImpl });
+  /**
+   * Bangumi 账号：OAuth 绑定 + 写收藏。
+   * 与上面的 media 各管一段 —— media 只做匿名只读（搜索/详情），
+   * 这里只做需要 token 的写操作，避免把登录态渗进缓存与只读链路。
+   */
+  const bangumiAccount = createBangumiAccount({ DATA_DIR, fetchImpl });
   /**
    * AI 抠图（isnet-anime）。模型与 onnxruntime-node 都在 {DATA_DIR} 下，
    * 不进安装包也不进热更新包 —— 详见 server/bg-removal.ts 顶部说明。
@@ -98,6 +118,26 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
       routes.push({ prefix, handler });
     },
   };
+
+  /**
+   * 读 JSON 请求体。解析失败返回 null（调用方自己决定回 400 还是当空对象）。
+   * 只给新加的 Bangumi 账号路由用；老路由各自内联着 chunks 循环，不去动它们。
+   */
+  function readJsonBody(req: any): Promise<any> {
+    return new Promise((resolve) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c: Buffer) => chunks.push(c));
+      req.on('end', () => {
+        try {
+          const text = Buffer.concat(chunks).toString('utf-8');
+          resolve(text ? JSON.parse(text) : {});
+        } catch {
+          resolve(null);
+        }
+      });
+      req.on('error', () => resolve(null));
+    });
+  }
 
   // AI 分析：模型调用全部走本地网关（浏览器直连第三方会被 CORS 拦下）
   registerAIRoutes(router, { DATA_DIR, fetchImpl });
@@ -662,6 +702,86 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
           } catch (e) {
             res.statusCode = 500;
             res.end(JSON.stringify({ error: String(e) }));
+          }
+        });
+
+        // ── Bangumi 账号：OAuth 绑定 + 写收藏 ──
+        // 读取类接口（搜索/详情/角色）走下面的匿名链路，这里只处理需要 token 的部分。
+        // 授权流程：前端 POST login 拿到授权页 URL → 系统浏览器打开 →
+        // Bangumi 重定向回本机固定端口 → 这里换 token 并落盘，前端轮询 GET 即可看到已登录。
+        const bangumiReply = (res: any, code: number, data: unknown) => {
+          res.statusCode = code;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(data));
+        };
+
+        router.use('/api/bangumi/account', async (req, res) => {
+          const url = new URL(req.url!, 'http://localhost');
+          const action = url.pathname.replace(/^\/api\/bangumi\/account\/?/, '').replace(/\/$/, '');
+          try {
+            if (req.method === 'GET' && action === '') {
+              bangumiReply(res, 200, bangumiAccount.state());
+              return;
+            }
+            if (req.method === 'POST' && action === 'credentials') {
+              const body = await readJsonBody(req);
+              if (!body) { bangumiReply(res, 400, { error: '请求体不是合法 JSON' }); return; }
+              bangumiReply(res, 200, bangumiAccount.saveCredentials({
+                clientId: typeof body.clientId === 'string' ? body.clientId : undefined,
+                clientSecret: typeof body.clientSecret === 'string' ? body.clientSecret : undefined,
+                redirectUri: typeof body.redirectUri === 'string' ? body.redirectUri : undefined,
+              }));
+              return;
+            }
+            if (req.method === 'POST' && action === 'login') {
+              const started = await bangumiAccount.startLogin();
+              bangumiReply(res, 200, { url: started.url, ...bangumiAccount.state() });
+              return;
+            }
+            if (req.method === 'POST' && action === 'logout') {
+              bangumiReply(res, 200, bangumiAccount.logout());
+              return;
+            }
+            bangumiReply(res, 404, { error: '未知的账号接口' });
+          } catch (e) {
+            // 凭据没填全、端口被占、回调地址不合法都在这里变成可读提示
+            bangumiReply(res, 400, { error: e instanceof Error ? e.message : String(e) });
+          }
+        });
+
+        // 单条收藏写入。批量上传由前端串行调用，逐条拿结果（失败一条不影响其余）。
+        router.use('/api/bangumi/collection', async (req, res) => {
+          const url = new URL(req.url!, 'http://localhost');
+          const matched = url.pathname.match(/^\/api\/bangumi\/collection\/(\d+)\/?$/);
+          if (!matched) {
+            bangumiReply(res, 400, { error: '路径应为 /api/bangumi/collection/{subject_id}' });
+            return;
+          }
+          const subjectId = Number(matched[1]);
+          try {
+            if (req.method === 'POST') {
+              const body = await readJsonBody(req);
+              if (!body) { bangumiReply(res, 400, { error: '请求体不是合法 JSON' }); return; }
+              const rate = typeof body.rate === 'number' ? Math.round(body.rate) : undefined;
+              if (rate !== undefined && (rate < 0 || rate > 10)) {
+                // 0 是「清除评分」，不是低分；越界直接拒绝，别悄悄写坏
+                bangumiReply(res, 400, { error: 'rate 必须在 0-10 之间' });
+                return;
+              }
+              const result = await bangumiAccount.uploadCollection(subjectId, {
+                type: typeof body.type === 'number' ? body.type : undefined,
+                rate,
+                comment: typeof body.comment === 'string' ? body.comment : undefined,
+                tags: Array.isArray(body.tags) ? body.tags.filter((t: unknown) => typeof t === 'string') : undefined,
+                private: typeof body.private === 'boolean' ? body.private : undefined,
+                epStatus: typeof body.epStatus === 'number' ? body.epStatus : undefined,
+              });
+              bangumiReply(res, result.ok ? 200 : 502, result);
+              return;
+            }
+            bangumiReply(res, 405, { error: 'Method Not Allowed' });
+          } catch (e) {
+            bangumiReply(res, 500, { error: e instanceof Error ? e.message : String(e) });
           }
         });
 
@@ -3004,6 +3124,307 @@ pre{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;o
           }
         });
       });
+
+  // ── QQ 音乐绑定（番剧卡片的「音声」维度） ──
+  //
+  // 三条链路都只读，且都不需要登录：
+  //   - 歌单页 / 歌曲详情页是 SSR，解析 HTML 里的 __INITIAL_DATA__（见 core/music-links.ts）；
+  //   - 搜索走 smartbox（musicu 的搜索接口匿名调用已经返回空列表）；
+  //   - 播放地址走 vkey，免费曲拿得到 purl，VIP 曲拿到 104003 —— 不做绕过，前端引导跳转。
+  router.use('/api/music/playlist', async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    try {
+      const url = new URL(req.url!, 'http://localhost');
+      const source = (url.searchParams.get('source') || '').trim();
+      const force = url.searchParams.get('refresh') === '1';
+      const store = music.readStore();
+      const list = await music.playlist(source || store.settings.playlistUrl, force);
+      res.end(JSON.stringify({ playlist: list, settings: store.settings }));
+    } catch (e) {
+      res.statusCode = 502;
+      res.end(JSON.stringify({ error: describeError(e) }));
+    }
+  });
+
+  /** GET /api/music/search?q=恋爱循环 — smartbox 到底，只回少量精确结果 */
+  router.use('/api/music/search', async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    try {
+      const url = new URL(req.url!, 'http://localhost');
+      const query = (url.searchParams.get('q') || '').trim();
+      if (!query) { res.end(JSON.stringify({ tracks: [] })); return; }
+      const tracks = await music.search(query.slice(0, 60));
+      res.end(JSON.stringify({ tracks }));
+    } catch (e) {
+      res.statusCode = 502;
+      res.end(JSON.stringify({ error: describeError(e) }));
+    }
+  });
+
+  /** POST /api/music/resolve  body: { url } — 粘贴的 QQ 音乐链接 → 曲目信息 */
+  router.use('/api/music/resolve', (req, res) => {
+    if (req.method !== 'POST') {
+      res.statusCode = 405;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+      return;
+    }
+    void readJsonBody(req).then(async (body) => {
+      res.setHeader('Content-Type', 'application/json');
+      try {
+        const track = await music.resolveSong(String(body?.url ?? ''));
+        res.end(JSON.stringify({ track }));
+      } catch (e) {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ error: describeError(e) }));
+      }
+    });
+  });
+
+  /** GET/POST /api/music/store — 绑定表与歌单设置（整份读写，单机单用户够用） */
+  router.use('/api/music/store', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.method === 'GET') {
+      res.end(JSON.stringify({ store: music.readStore() }));
+      return;
+    }
+    if (req.method !== 'POST') {
+      res.statusCode = 405;
+      res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+      return;
+    }
+    void readJsonBody(req).then((body) => {
+      try {
+        const store = music.writeStore({
+          version: 1,
+          updatedAt: new Date().toISOString(),
+          settings: { playlistUrl: String(body?.settings?.playlistUrl ?? '') },
+          bindings: body?.bindings && typeof body.bindings === 'object' ? body.bindings : {},
+        });
+        res.end(JSON.stringify({ store }));
+      } catch (e) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: describeError(e) }));
+      }
+    });
+  });
+
+  /**
+   * GET /api/music/playurl?mid=xxx — 先问清楚「能不能在应用里播」，
+   * 再决定是挂 <audio> 还是跳 QQ 音乐。避免前端直接拉流拿到 404 再猜原因。
+   */
+  router.use('/api/music/playurl', async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    const url = new URL(req.url!, 'http://localhost');
+    const mid = (url.searchParams.get('mid') || '').trim();
+    try {
+      res.end(JSON.stringify(await music.playUrl(mid)));
+    } catch (e) {
+      res.statusCode = 502;
+      res.end(JSON.stringify({ playable: false, vip: false, reason: describeError(e) }));
+    }
+  });
+
+  /**
+   * GET /api/music/stream?mid=xxx — 音频代理。
+   *
+   * 必须服务端转一手：vkey 给的地址有防盗链（缺 Referer 就 403），而 <audio>
+   * 没法带自定义头。Range 要原样透传，否则拖动进度条只能从头播。
+   */
+  router.use('/api/music/stream', async (req, res) => {
+    const url = new URL(req.url!, 'http://localhost');
+    const mid = (url.searchParams.get('mid') || '').trim();
+    if (!/^[0-9A-Za-z]{8,20}$/.test(mid)) { res.statusCode = 400; res.end('songmid 不合法'); return; }
+    try {
+      const target = await music.streamUrl(mid);
+      if (!target) { res.statusCode = 404; res.end('拿不到播放地址（这首多半需要 QQ 音乐会员）'); return; }
+
+      const controller = new AbortController();
+      res.on('close', () => controller.abort());
+      const headers: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        Referer: 'https://y.qq.com/',
+        Accept: '*/*',
+      };
+      if (req.headers.range) headers.Range = String(req.headers.range);
+
+      const upstream = await fetch(target, { headers, signal: controller.signal });
+      if (!upstream.ok && upstream.status !== 206) {
+        res.statusCode = 502;
+        res.end(`音源拉取失败：${upstream.status}`);
+        return;
+      }
+
+      res.statusCode = upstream.status === 206 ? 206 : 200;
+      res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/mp4');
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Cache-Control', 'no-store');
+      for (const name of ['content-length', 'content-range']) {
+        const value = upstream.headers.get(name);
+        if (value) res.setHeader(name, value);
+      }
+      if (!upstream.body) { res.end(); return; }
+
+      const stream = Readable.fromWeb(upstream.body as any);
+      stream.on('error', () => { try { res.destroy(); } catch { /* 已断开 */ } });
+      stream.pipe(res);
+    } catch (e) {
+      if (!res.headersSent) {
+        res.statusCode = 502;
+        res.end(describeError(e));
+      }
+    }
+  });
+
+  /**
+   * ── 本地番剧库 ──────────────────────────────────────────────────────────
+   *
+   * 番剧文件放在用户自己的硬盘上（Kazumi 的下载目录等），这里只做四件事：
+   * 管理存储地址、扫描出「一部番 = 一个目录 + 若干集」、存绑定关系、把视频流出去。
+   *
+   * 为什么播放不走 file://：dev 模式页面在 http://localhost:5173，
+   * 浏览器不会把 file:// 交给 <video> 解码；统一走 /api 才能同时拿到
+   * Range 拖动进度条的能力，以及「只能读已导入目录」的校验。
+   */
+
+  /** GET /api/local/library?identify=1&force=1 — 扫描 + （可选）Bangumi 识别 */
+  router.use('/api/local/library', (req, res) => {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    if (req.method !== 'GET') {
+      res.statusCode = 405;
+      res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+      return;
+    }
+    const url = new URL(req.url!, 'http://localhost');
+    const wantIdentify = url.searchParams.get('identify') === '1';
+    const force = url.searchParams.get('force') === '1';
+
+    void (async () => {
+      const folders = localLib.scanAll();
+      if (wantIdentify) await localLib.identify(folders, force);
+      res.end(JSON.stringify({
+        sources: localLib.listSources(),
+        folders,
+        bindings: localLib.getBindings(),
+      }));
+    })().catch((e) => {
+      if (res.headersSent) return;
+      res.statusCode = 500;
+      res.end(JSON.stringify({ error: describeError(e) }));
+    });
+  });
+
+  /** GET / POST /api/local/sources — 存储地址列表 / 增删 */
+  router.use('/api/local/sources', (req, res) => {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    if (req.method === 'GET') {
+      res.end(JSON.stringify({ sources: localLib.listSources() }));
+      return;
+    }
+    if (req.method !== 'POST') {
+      res.statusCode = 405;
+      res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+      return;
+    }
+    void readJsonBody(req).then((body) => {
+      const action = String(body?.action || 'add');
+      const target = String(body?.path || '');
+      if (action === 'remove') {
+        const result = localLib.removeSource(target);
+        res.statusCode = result.ok ? 200 : 400;
+        res.end(JSON.stringify({ ...result, sources: localLib.listSources() }));
+        return;
+      }
+      const result = localLib.addSource(target);
+      res.statusCode = result.ok ? 200 : 400;
+      res.end(JSON.stringify({ ...result, sources: localLib.listSources() }));
+    });
+  });
+
+  /** POST /api/local/bind — { key, dirPaths } 设置某部番绑定的目录（空数组=解绑） */
+  router.use('/api/local/bind', (req, res) => {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    if (req.method !== 'POST') {
+      res.statusCode = 405;
+      res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+      return;
+    }
+    void readJsonBody(req).then((body) => {
+      try {
+        const key = String(body?.key || '').trim();
+        if (!key) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: '缺少 key' }));
+          return;
+        }
+        const dirPaths = Array.isArray(body?.dirPaths) ? body.dirPaths.map(String) : [];
+        res.end(JSON.stringify({ bindings: localLib.setBinding(key, dirPaths) }));
+      } catch (e) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: describeError(e) }));
+      }
+    });
+  });
+
+  /** POST /api/local/progress — { key, episode } 记住看到第几集 */
+  router.use('/api/local/progress', (req, res) => {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    if (req.method !== 'POST') {
+      res.statusCode = 405;
+      res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+      return;
+    }
+    void readJsonBody(req).then((body) => {
+      const key = String(body?.key || '').trim();
+      const episode = Number(body?.episode);
+      if (!key || !Number.isFinite(episode)) {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ error: '缺少 key 或 episode' }));
+        return;
+      }
+      const binding = localLib.setProgress(key, episode);
+      res.statusCode = binding ? 200 : 404;
+      res.end(JSON.stringify({ binding }));
+    });
+  });
+
+  /**
+   * GET /api/local/stream?dir=<番剧目录>&rel=<相对路径> — 视频流（支持 Range）
+   *
+   * dir / rel 都要过白名单校验：只有**已导入的存储地址**下的目录能读，
+   * 且 rel 不允许跳出该目录 —— 否则这个路由就是个任意文件读取器。
+   */
+  router.use('/api/local/stream', (req, res) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.statusCode = 405;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+      return;
+    }
+    try {
+      const url = new URL(req.url!, 'http://localhost');
+      const resolved = localLib.resolveEpisode(
+        url.searchParams.get('dir') || '',
+        url.searchParams.get('rel') || '',
+      );
+      if ('error' in resolved) {
+        res.statusCode = resolved.status;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ error: resolved.error }));
+        return;
+      }
+      if (req.method === 'HEAD') {
+        res.setHeader('Content-Type', 'video/mp4');
+        res.end();
+        return;
+      }
+      localLib.streamFile(req, res, resolved.filePath);
+    } catch (e) {
+      if (res.headersSent) return;
+      res.statusCode = 500;
+      res.end(JSON.stringify({ error: describeError(e) }));
+    }
+  });
 
   return function apiHandler(req: any, res: any, next: () => void) {
     const pathname = String(req.url || '').split('?')[0];

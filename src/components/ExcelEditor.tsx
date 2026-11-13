@@ -16,12 +16,11 @@
  *      `updateAnimeEntry` 路径，白名单 + 写前校验 + 原子写 + 快照全部复用。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Table, Input, InputNumber, Tooltip, Button, Space, Alert, Tag, Spin } from 'antd';
+import { message, Modal, Table, Input, InputNumber, Tooltip, Button, Space, Alert, Tag, Spin } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { SaveOutlined, UndoOutlined, ReloadOutlined, LockOutlined } from '@ant-design/icons';
 import { useAnimeContext } from '../../context/AnimeContext';
 import { readRawRows } from '../../features/anime-data/excel-service';
-import { catgirlMessage } from '../theme';
 import {
   TABLE_COLUMNS, ROW_NUMBER_COL, CATEGORY_COL,
   displayValue, parseInput, applyEdits, buildRows, sortEditorRows, isNumericCol,
@@ -63,7 +62,7 @@ const ExcelEditor: React.FC<ExcelEditorProps> = ({ open, onClose }) => {
     try {
       setRawRows(await readRawRows());
     } catch (e) {
-      catgirlMessage.error('读取数据源失败：' + (e instanceof Error ? e.message : '未知错误'));
+      message.error('读取数据源失败：' + (e instanceof Error ? e.message : '未知错误'));
       setRawRows(undefined);
     } finally {
       setLoadingRaw(false);
@@ -147,10 +146,10 @@ const ExcelEditor: React.FC<ExcelEditorProps> = ({ open, onClose }) => {
     setSaving(false);
     if (failed.length === 0) {
       setEdits({});
-      catgirlMessage.success(`已写回 Excel：${ok} 条`);
+      message.success(`已写回 Excel：${ok} 条`);
       await loadRaw(); // 公式列（赋分/偏差值）会随新分重算，重新取一遍
     } else {
-      catgirlMessage.error(`${failed.length} 条保存失败：${failed.slice(0, 2).join('；')}`);
+      message.error(`${failed.length} 条保存失败：${failed.slice(0, 2).join('；')}`);
       // 成功的那些已经落盘，失败的重载后会以文件为准，避免界面显示未落盘的值
       await refreshAnimeList();
       await loadRaw();

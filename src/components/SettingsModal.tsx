@@ -5,31 +5,35 @@
  * 而侧栏又是 hover 展开的 —— 鼠标稍微偏出去就收起，改个显示设置的成功率很低。
  *
  * 这里把它们收进一个分页弹窗：
- *   外观（主题/猫娘/配色/图片高度/雷达范围）
+ *   外观（主题/配色/图片高度/雷达范围）
  *   数据（导入导出/表格视图/海报/备份）
+ *   本地（番剧存储地址/目录识别/卡片绑定/选集播放）
  *   工具（修正检索名/重建总评列/维度管理）
  *   关于（版本/热更新/更新源/数据目录）
  *
  * 侧栏只留「浏览与筛选」，长度砍掉一大半。
  */
 import React, { useState } from 'react';
-import { Modal, Tabs, Segmented, Switch, Button, Slider, InputNumber, ColorPicker, Typography, Checkbox } from 'antd';
+import { message, Modal, Tabs, Segmented, Switch, Button, Slider, InputNumber, ColorPicker, Typography, Checkbox } from 'antd';
 import { useAnimeContext } from '../../context/AnimeContext';
 import { useTheme } from '../theme/ThemeContext';
 import type { ThemeColors } from '../theme/types';
 import UpdatePanel from './UpdatePanel';
 import PosterFixModal from './PosterFixModal';
-import { catgirlMessage } from '../theme';
+import LocalLibrarySettings from '../features/local-library/LocalLibrarySettings';
 import {
   QUICK_ACTIONS,
   MAX_QUICK_ACTIONS,
   useQuickActionIds,
   type QuickActionId,
 } from '../features/quick-actions/quick-actions';
+import { useReviewDisplayPrefs } from '../features/review-timeline/review-display-prefs';
 
 interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
+  /** 打开「同步到 Bangumi」面板（该面板是独立 Modal，由 App 持有） */
+  onOpenBangumiSync: () => void;
 }
 
 /** 一行设置：左侧标题 + 可选说明，右侧放控件 */
@@ -55,7 +59,7 @@ const Group: React.FC<{ title: string; children: React.ReactNode }> = ({ title, 
   </div>
 );
 
-const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose }) => {
+const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose, onOpenBangumiSync }) => {
   const {
     state, dispatch,
     handleImportExcel, handleExportExcel, handleOpenExcel,
@@ -64,7 +68,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose }) => {
   } = useAnimeContext();
   const { imgHeight, radarMode, radarMin, animeList } = state;
 
-  const { state: themeState, colors, setThemeMode, toggleCatgirlMode, setCustomColors, resetCustomColors } = useTheme();
+  const { state: themeState, colors, setThemeMode, setCustomColors, resetCustomColors } = useTheme();
   const [themeEditorOpen, setThemeEditorOpen] = useState(false);
   const [editingColors, setEditingColors] = useState<Partial<ThemeColors>>({});
   /** 批量补全海报（搜索后人工确认，不自动写入） */
@@ -72,9 +76,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose }) => {
 
   // 顶栏快捷栏配置（与 TopBar 通过 localStorage + 事件同步）
   const { ids: quickActionIds, toggle: toggleQuickAction } = useQuickActionIds();
+  // 评价时间底纹的显示偏好（与详情面板通过 localStorage + 事件同步）
+  const { prefs: reviewDisplay, update: updateReviewDisplay } = useReviewDisplayPrefs();
   const handleToggleQuickAction = (id: QuickActionId) => {
     const result = toggleQuickAction(id);
-    if (!result.ok) catgirlMessage.warning(`顶栏最多放 ${MAX_QUICK_ACTIONS} 个快捷按钮`);
+    if (!result.ok) message.warning(`顶栏最多放 ${MAX_QUICK_ACTIONS} 个快捷按钮`);
   };
 
   const hasCustomColors = Object.keys(themeState.customColors).length > 0;
@@ -94,9 +100,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose }) => {
               { value: 'light', label: '☀ 浅色' },
             ]}
           />
-        </Row>
-        <Row title="🐱 猫娘模式" hint="界面文案换成猫娘口癖">
-          <Switch size="small" checked={themeState.catgirlMode} onChange={toggleCatgirlMode} />
         </Row>
         <Row title="🎨 配色" hint={hasCustomColors ? '已改动预设配色' : '使用预设'}>
           <div style={{ display: 'flex', gap: 6 }}>
@@ -143,6 +146,31 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose }) => {
             value={radarMin}
             onChange={(v) => dispatch({ type: 'SET_RADAR_MIN', payload: v ?? 0 })}
             style={{ width: 70 }}
+          />
+        </Row>
+      </Group>
+
+      <Group title="评价">
+        <Row title="🖍 段落时间底纹" hint="给记下过写作时间的评价段落铺一层淡色底纹">
+          <Switch
+            size="small"
+            checked={reviewDisplay.tint}
+            onChange={(v) => updateReviewDisplay({ tint: v })}
+          />
+        </Row>
+        <Row title="🌈 底纹按时间取色" hint="越往后写的段落颜色越暖；关闭则统一用品牌色">
+          <Switch
+            size="small"
+            checked={reviewDisplay.multicolor}
+            disabled={!reviewDisplay.tint}
+            onChange={(v) => updateReviewDisplay({ multicolor: v })}
+          />
+        </Row>
+        <Row title="💬 悬停显示写作时间" hint="鼠标移到有底纹的段落上，浮出时间并可随手写备注">
+          <Switch
+            size="small"
+            checked={reviewDisplay.hoverTime}
+            onChange={(v) => updateReviewDisplay({ hoverTime: v })}
           />
         </Row>
       </Group>
@@ -199,6 +227,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose }) => {
       <Group title="备份与恢复">
         <Row title="🗄 存档与回退" hint="快照列表 + 操作记录" onClick={() => dispatch({ type: 'OPEN_MODAL', modal: 'backupHistory' })} />
         <Row title="💾 导出用户数据" hint="模板、标签、配色等打包成 zip" onClick={handleExportUserData} />
+        <Row title="📤 同步到 Bangumi" hint="绑定账号后把加权总评映射上传到收藏" onClick={onOpenBangumiSync} />
         <Row
           title="📂 导入用户数据"
           onClick={() => {
@@ -262,6 +291,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose }) => {
           items={[
             { key: 'appearance', label: '外观', children: appearance },
             { key: 'data', label: '数据', children: data },
+            { key: 'local', label: '📁 本地', children: <LocalLibrarySettings animeList={animeList} /> },
             { key: 'tools', label: '工具', children: tools },
             { key: 'about', label: '关于', children: about },
           ]}

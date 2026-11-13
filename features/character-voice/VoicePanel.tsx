@@ -10,8 +10,7 @@
  * 生成完不自动关窗：用户要能立刻试听，不满意就往上再挑一个源。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Empty, Input, Modal, Popconfirm, Spin, Tag, Tooltip } from 'antd';
-import { catgirlMessage } from '../../src/theme';
+import { message, Alert, Button, Empty, Input, Modal, Popconfirm, Spin, Tag, Tooltip } from 'antd';
 import { formatClipDuration } from '../../core/voice-clips';
 import type { FfmpegStatus, VoiceCandidate, VoiceInfo } from './voice-service';
 import {
@@ -122,9 +121,9 @@ const VoicePanel: React.FC<VoicePanelProps> = ({ open, characterName, workTitle,
       setInfo(built);
       onSaved(built);
       if (built.seconds < 30) {
-        catgirlMessage.warning(`这个源里只找到 ${Math.round(built.seconds)} 秒人声，不够 30 秒，建议换一个视频`);
+        message.warning(`这个源里只找到 ${Math.round(built.seconds)} 秒人声，不够 30 秒，建议换一个视频`);
       } else {
-        catgirlMessage.success(`已生成 ${Math.round(built.seconds)} 秒角色语音`);
+        message.success(`已生成 ${Math.round(built.seconds)} 秒角色语音`);
       }
     } catch (e) {
       if (!aliveRef.current) return;
@@ -140,7 +139,7 @@ const VoicePanel: React.FC<VoicePanelProps> = ({ open, characterName, workTitle,
       if (!aliveRef.current) return;
       setInfo(null);
       onSaved(null);
-      catgirlMessage.success('已删除这个角色的语音');
+      message.success('已删除这个角色的语音');
     } catch (e) {
       setError(e instanceof Error ? e.message : '删除失败');
     }

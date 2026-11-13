@@ -10,7 +10,7 @@
  *   找到作品 → 拉角色列表（立刻显示立绘）→ 按小批抓详情（进度条按角色推进）
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Button, Table, Tag, Space, Typography, Select, Checkbox, Progress, Alert, Tooltip, Empty, Input, Radio } from 'antd';
+import { message, Modal, Button, Table, Tag, Space, Typography, Select, Checkbox, Progress, Alert, Tooltip, Empty, Input, Radio } from 'antd';
 import { CloudDownloadOutlined, ReloadOutlined, UserAddOutlined, PictureOutlined, SearchOutlined, MergeCellsOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { AnimeEntry, ScoreTemplate, TemplateGenre } from '../../src/types';
@@ -18,7 +18,6 @@ import { CHARACTER_TEMPLATE_ID, DEFAULT_TEMPLATE_ID } from '../../src/types';
 import { LOW_CONFIDENCE } from '../../core/character';
 import { fmt2 } from '../../core/math';
 import { appendAnimeEntry, saveCharacterNames, saveCharacterCardData } from '../anime-data/excel-service';
-import { catgirlMessage } from '../../src/theme';
 import {
   resolveWork, fetchCharacterList, fetchCharacterDetails, mergeDetailIntoListed,
   downloadPortrait, matchRecordedNames, buildCharacterCardEntry, mergeCharacterCardData,
@@ -193,7 +192,7 @@ const CharacterCompleteModal: React.FC<CharacterCompleteModalProps> = ({
 
   const handleResolve = async () => {
     const targets = rows.filter((r) => selectedKeys.includes(r.entry.id));
-    if (targets.length === 0) { catgirlMessage.warning('先勾选要解析的作品'); return; }
+    if (targets.length === 0) { message.warning('先勾选要解析的作品'); return; }
     cancelledRef.current = false;
     setResolving(true);
     const startedAll = Date.now();
@@ -308,7 +307,7 @@ const CharacterCompleteModal: React.FC<CharacterCompleteModalProps> = ({
 
     setProgress({ worksDone: targets.length, worksTotal: targets.length, phase: '', detailDone: 0, detailTotal: 0 });
     setResolving(false);
-    catgirlMessage.success(`解析完成，用时 ${((Date.now() - startedAll) / 1000).toFixed(1)} 秒`);
+    message.success(`解析完成，用时 ${((Date.now() - startedAll) / 1000).toFixed(1)} 秒`);
   };
 
   // ── 勾选与排序 ──
@@ -368,7 +367,7 @@ const CharacterCompleteModal: React.FC<CharacterCompleteModalProps> = ({
   // ── 生成 / 合并 ──
 
   const handleGenerate = async () => {
-    if (pickCount === 0) { catgirlMessage.warning('还没有勾选任何角色'); return; }
+    if (pickCount === 0) { message.warning('还没有勾选任何角色'); return; }
     setWriting(true);
     cancelledRef.current = false;
     let done = 0, created = 0, merged = 0, mergedFields = 0, skipped = 0, failed = 0, namesWritten = 0, slotFull = 0;
@@ -447,7 +446,7 @@ const CharacterCompleteModal: React.FC<CharacterCompleteModalProps> = ({
 
     setWriting(false);
     setProgress(null);
-    catgirlMessage.success(
+    message.success(
       `新建 ${created} 张、合并 ${merged} 张`
       + (mergedFields > 0 ? `（补齐 ${mergedFields} 个字段）` : '')
       + (skipped > 0 ? `、跳过 ${skipped} 个` : '')
@@ -487,7 +486,7 @@ const CharacterCompleteModal: React.FC<CharacterCompleteModalProps> = ({
    *      所以先抓详情（主角优先、命中即提前停），再用同一套 core 匹配。
    */
   const handleBackfill = async () => {
-    if (incompleteCards.length === 0) { catgirlMessage.info('没有缺图或缺资料的卡片'); return; }
+    if (incompleteCards.length === 0) { message.info('没有缺图或缺资料的卡片'); return; }
     setBackfilling(true);
     cancelledRef.current = false;
     let fixedPoster = 0, fixedFields = 0, failed = 0, unmatched = 0;
@@ -577,7 +576,7 @@ const CharacterCompleteModal: React.FC<CharacterCompleteModalProps> = ({
 
     setBackfilling(false);
     setProgress(null);
-    catgirlMessage.success(
+    message.success(
       `补齐完成：${fixedPoster} 张补上立绘、${fixedFields} 个字段被填充`
       + (unmatched > 0 ? `；${unmatched} 张没能可信地找到对应角色（已跳过，未写入）` : '')
       + (failed > 0 ? `；${failed} 项失败（详见控制台）` : ''),

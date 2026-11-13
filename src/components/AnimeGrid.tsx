@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Popconfirm } from 'antd';
-import { DeleteOutlined } from '@ant-design/icons';
+import { DeleteOutlined, CaretRightFilled } from '@ant-design/icons';
 import type { AnimeEntry, Dimension } from '../types';
 import { loadPosterPositions } from '../../features/anime-data/storage-service';
 import { getTemplate, getPosterObjectPosition } from '../../features/anime-data/template-service';
+import { calcOverall as computeOverall } from '../../core/overall';
 import { searchPoster } from '../../features/anime-data/excel-service';
 import { formatReleaseDateCn } from '../../core/date';
 import { formatScore } from '../../core/math';
@@ -11,6 +12,9 @@ import { useCutoutIndex } from '../../features/image-management/use-cutout-index
 import { applyCutout, fallbackPosterUrl } from '../../features/image-management/cutout-service';
 import type { ScoreFocus } from '../../features/ranking/score-distribution';
 import { findScoreRangeIndex } from '../../features/ranking/score-distribution';
+import { animeKeyFor } from '../../core/music-links';
+import { ensureMusicBindings, useMusicBindings } from '../../features/music/music-store';
+import { useLocalBindingMap, episodesForKey } from '../features/local-library/local-store';
 
 interface AnimeGridProps {
   animeList: AnimeEntry[];
@@ -24,16 +28,31 @@ interface AnimeGridProps {
   templateDims?: Dimension[];
   /** 侧栏分布图点选的分数段：把网格滑到该分数段第一张卡 */
   scoreFocus?: ScoreFocus | null;
+  /** 点卡片上的「音声」徽标 → 打开音乐候选框 */
+  onOpenMusic?: (anime: AnimeEntry) => void;
+  /** 点卡片上的播放键 → 打开本地选集播放器（只有绑定了本地目录的卡才有这个键） */
+  onPlayLocal?: (anime: AnimeEntry) => void;
 }
 
 const AnimeGrid: React.FC<AnimeGridProps> = ({
   animeList, onAnimeClick, activeDim, onDeleteFromWatching,
   batchMode, selectedBatchAnime, onBatchAnimeChange,
-  templateDims, scoreFocus,
+  templateDims, scoreFocus, onOpenMusic, onPlayLocal,
 }) => {
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
   /** 已有去底立绘的目录集合；卡片据此决定用原图还是 cover-nobg.png */
   const cutoutNames = useCutoutIndex();
+  /** 哪部番绑了几首歌（绑定变化很少，不会跟着播放进度重渲染） */
+  const musicBindings = useMusicBindings();
+  /**
+   * 哪部番绑了本地番剧目录。
+   * 只能在这里订阅、不能塞进每张卡的 map 里 —— hooks 不能在循环中调用。
+   */
+  const localBindings = useLocalBindingMap();
+
+  useEffect(() => {
+    void ensureMusicBindings();
+  }, []);
 
   /**
    * 卡片海报自动补图（仅本次会话的内存，**不写库、不写 Excel**）
@@ -86,23 +105,9 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
   }, [scoreFocus, activeDim, animeList]);
 
   /** 动态计算条目的加权总评（根据条目自身模板的维度和权重） */
-  const calcOverall = useCallback((entry: AnimeEntry): number => {
-    const allDims = getTemplate(entry.templateId).dimensions
-      .filter((d) => d.key !== 'overall');
-    if (allDims.length === 0) return 0;
-
-    const hasWeights = allDims.some((d) => d.weight > 0);
-    const effectiveDims = hasWeights
-      ? allDims.filter((d) => d.weight > 0)
-      : allDims.map((d) => ({ ...d, weight: 1 / allDims.length }));
-
-    let tw = 0, ws = 0;
-    for (const d of effectiveDims) {
-      const s = entry.scores.find((sc) => sc.dimensionKey === d.key)?.score ?? 0;
-      if (s > 0) { ws += s * d.weight; tw += d.weight; }
-    }
-    return tw > 0 ? ws / tw : 0;
-  }, []);
+  const calcOverall = useCallback((entry: AnimeEntry): number => (
+    computeOverall(entry.scores, getTemplate(entry.templateId).dimensions)
+  ), []);
 
   /** 串行消费搜索队列：避免一次滚动就并发几十个请求把 AniList 打挂 */
   const drainQueue = useCallback(async () => {
@@ -243,6 +248,19 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
         /** 容器比例也跟随模板（番剧模板是 3/4，与 CSS 默认一致；角色模板是 1/2） */
         const posterAspect = getTemplate(anime.templateId).layoutConfig?.posterAspectRatio;
 
+        /** 这部番绑了几首歌（角标） */
+        const boundCount = (musicBindings.map[animeKeyFor(anime)] ?? []).length;
+        /**
+         * 这部番绑定的本地集数。
+         * 没绑本地目录 → 数组为空 → 不渲染播放键（用户没绑就不该看见这个按钮）。
+         */
+        const localEpisodes = localBindings[animeKeyFor(anime)] ? episodesForKey(animeKeyFor(anime)) : [];
+        /**
+         * 只有「音声」维度下、且这条真的有音声分时，徽标才可点。
+         * 否则徽标显示的是退回的总评/BGM，点开音乐候选框会像点错了东西。
+         */
+        const audioCta = activeDim === 'audio' && !!dimScore && !!onOpenMusic;
+
         return (
           <div
             key={anime.id}
@@ -294,6 +312,30 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
               {/* 自动搜到的图给个小角标，避免误以为是自己保存的 */}
               {isAuto && <div className="poster-auto-badge">自动</div>}
 
+              {/* 绑定过本地文件：顶栏播放键，点开选集播放 */}
+              {onPlayLocal && localEpisodes.length > 0 && (
+                <div
+                  className="card-play-btn"
+                  title={`本地播放 · 共 ${localEpisodes.length} 集`}
+                  aria-label="本地播放"
+                  onClick={(e) => { e.stopPropagation(); onPlayLocal(anime); }}
+                >
+                  <CaretRightFilled />
+                </div>
+              )}
+
+              {/* 已绑定音乐：海报左上角的小角标，点一下能直接听 */}
+              {boundCount > 0 && onOpenMusic && (
+                <div
+                  className="poster-music-badge"
+                  data-music-entry="card"
+                  title={`已绑定 ${boundCount} 首音乐`}
+                  onClick={(e) => { e.stopPropagation(); onOpenMusic(anime); }}
+                >
+                  ♪ {boundCount}
+                </div>
+              )}
+
               {/* 悬停时从海报底部滑出的标签 */}
               {anime.tags.length > 0 && (
                 <div className="card-tags" aria-hidden>
@@ -333,8 +375,15 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
                   <span className="card-watch" title={`观看时间 ${watchLabel}`}>{watchLabel}</span>
                 ) : null}
                 {cardScore ? (
-                  <span className="dim-score" title={cardScore}>
-                    <span className="dim-score-label">{cardScore.split(' ')[0]}</span>
+                  <span
+                    className={`dim-score${audioCta ? ' dim-score-music' : ''}`}
+                    title={audioCta ? '点一下挑歌 / 播放这部番的音乐' : cardScore}
+                    onClick={audioCta ? (e) => { e.stopPropagation(); onOpenMusic!(anime); } : undefined}
+                    style={audioCta ? { cursor: 'pointer' } : undefined}
+                  >
+                    <span className="dim-score-label">
+                      {audioCta ? `♪ ${cardScore.split(' ')[0]}` : cardScore.split(' ')[0]}
+                    </span>
                     <span className="dim-score-value">{cardScore.split(' ').slice(1).join(' ') || '—'}</span>
                   </span>
                 ) : null}

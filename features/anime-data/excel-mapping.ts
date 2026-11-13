@@ -47,6 +47,9 @@ export const EXCEL_COL = {
   //    已在真实数据中覆盖掉 13 行的「列1」原始值（不可逆）。
   //    现迁至 42（AQ，实测该列及之后完全空闲）；旧值仅由 LEGACY_TEMPLATE_JSON_COL 读取兼容。
   TEMPLATE_JSON: 42,  // AQ - 扩展评分 JSON（非默认模板的评分序列化）
+  // AR 实测整列空闲（表头只有 43 列，且该列及之后无任何内容）。
+  // 存评价的分段时间戳 / 多刷次数，不碰「评价」列本身。
+  REVIEW_META: 43,    // AR - 评价元数据 JSON
   TEMPLATE_ID: 38,    // AM - 模板 ID
   LINK: 39,           // AN - 外部链接
   EPISODES: 40,       // AO - 总集数
@@ -113,6 +116,7 @@ export const EDITABLE_COLS: number[] = [
   EXCEL_COL.LINK,
   EXCEL_COL.EPISODES,
   EXCEL_COL.CURRENT_EP,
+  EXCEL_COL.REVIEW_META,
   // 角色名（原先只读不写，"添加角色"刷新即丢），角色卡模板依赖这几列
   EXCEL_COL.CHAR1_NAME,
   EXCEL_COL.CHAR2_NAME,

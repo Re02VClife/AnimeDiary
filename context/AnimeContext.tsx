@@ -3,13 +3,14 @@
  *   用 useReducer 替代 prop drilling
  */
 import React, { createContext, useContext, useReducer, useEffect, useCallback, useMemo, useRef } from 'react';
-import { catgirlMessage } from '../src/theme';
+import { message } from 'antd';
 import type { AnimeCategory, AnimeEntry, AnimeTag } from '../src/types';
 import { loadAnimeList, updateAnimeEntry, updateAnimeEntries, appendAnimeEntry, batchSaveAllPosters, deleteExcelRow, readRawRows, rebuildOverallColumn } from '../features/anime-data/excel-service';
 import { saveCategory, addToWatchingDeleted, removeFromWatchingDeleted, loadImgHeight, saveImgHeight, exportAllUserData, importUserData, shiftLocalRefsAfterRowDelete, loadWatchingDeleted } from '../features/anime-data/storage-service';
 import { migrateLegacyDimensions, loadTemplates } from '../features/anime-data/template-service';
 import { buildTransferWorkbook, parseTransferWorkbook, exportFileName, mergeImportedTemplates, SHEET_ANIME } from '../features/anime-data/excel-transfer';
 import { getVisibleCategories, DEFAULT_TEMPLATE_ID } from '../src/types';
+import { calcOverall as computeOverall } from '../core/overall';
 import { sameTagName } from '../core/tag-name';
 import { rankByDimension } from '../features/ranking/ranking-service';
 import type { ScoreRange, ScoreFocus } from '../features/ranking/score-distribution';
@@ -23,9 +24,9 @@ import { searchCandidates, pickBestMatch, LOW_CONFIDENCE } from '../features/med
 function reportWriteResults(results: PromiseSettledResult<unknown>[], successText: string): void {
   const failed = results.filter((r) => r.status === 'rejected').length;
   if (failed > 0) {
-    catgirlMessage.error(`${failed}/${results.length} 条写回 Excel 失败：界面已更新但文件未同步，刷新后会还原`);
+    message.error(`${failed}/${results.length} 条写回 Excel 失败：界面已更新但文件未同步，刷新后会还原`);
   } else {
-    catgirlMessage.success(successText);
+    message.success(successText);
   }
 }
 
@@ -61,7 +62,6 @@ export interface AnimeState {
   searchOpen: boolean;
   dimManagerOpen: boolean;
   templateManagerOpen: boolean;
-  knowledgeGraphOpen: boolean;
   aiSettingsOpen: boolean;
   tasteReportOpen: boolean;
   /** AI 对话抽屉 */
@@ -142,7 +142,6 @@ const initialState: AnimeState = {
   searchOpen: false,
   dimManagerOpen: false,
   templateManagerOpen: false,
-  knowledgeGraphOpen: false,
   aiSettingsOpen: false,
   tasteReportOpen: false,
   aiChatOpen: false,
@@ -363,7 +362,6 @@ interface AnimeContextValue {
   handleFixSearchAlias: () => Promise<void>;
   /** 按模板权重重建 Excel 的「综合(观感)」D 列（公式 + 值） */
   handleRebuildOverallColumn: () => Promise<void>;
-  handleCreateRelation: (animeId: string, targetType: 'tag' | 'studio' | 'character', targetName: string) => void;
   // Excel 导入导出
   handleImportExcel: () => void;
   handleFileChange: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
@@ -447,19 +445,8 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (state.sortByDim) {
       if (state.sortByDim === 'overall') {
         // 总评是计算值，不存于 scores 中，需单独处理
-        const calcOv = (entry: AnimeEntry): number => {
-          const dims = (activeTemplate?.dimensions || [])
-            .filter((d) => d.key !== 'overall');
-          if (dims.length === 0) return 0;
-          const hasWeights = dims.some((d) => d.weight > 0);
-          const eff = hasWeights ? dims.filter((d) => d.weight > 0) : dims.map((d) => ({ ...d, weight: 1 / dims.length }));
-          let tw = 0, ws = 0;
-          for (const d of eff) {
-            const s = entry.scores.find((sc) => sc.dimensionKey === d.key)?.score ?? 0;
-            if (s > 0) { ws += s * d.weight; tw += d.weight; }
-          }
-          return tw > 0 ? ws / tw : 0;
-        };
+        const calcOv = (entry: AnimeEntry): number =>
+          computeOverall(entry.scores, activeTemplate?.dimensions || []);
         list = [...list]
           .map((a) => ({ entry: a, ov: calcOv(a) }))
           .filter((x) => x.ov > 0)
@@ -559,7 +546,7 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // 只存在于内存里的条目（手工建的角色卡 char-...）没有 Excel 行可删
     if (typeof target.excelRowIndex !== 'number') {
       dispatch({ type: 'REMOVE_ANIME', payload: animeId });
-      catgirlMessage.success('已移除（该条目不在 Excel 中）');
+      message.success('已移除（该条目不在 Excel 中）');
       return;
     }
 
@@ -573,12 +560,12 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         });
         const moved = await shiftLocalRefsAfterRowDelete(rowIndex);
         await refreshAnimeList();
-        catgirlMessage.success(
+        message.success(
           `已删除「${res.removedTitle}」：Excel 删掉 1 行、平移 ${res.formulasShifted} 个公式`
           + `${moved > 0 ? `、迁移 ${moved} 项本地设置` : ''}`,
         );
       } catch (e) {
-        catgirlMessage.error(e instanceof Error ? e.message : '删除失败');
+        message.error(e instanceof Error ? e.message : '删除失败');
       }
     })();
   }, [state.animeList, refreshAnimeList]);
@@ -586,9 +573,9 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const handleExportUserData = useCallback(async () => {
     try {
       await exportAllUserData();
-      catgirlMessage.success('备份已导出（含 Excel、图片与本地设置）');
+      message.success('备份已导出（含 Excel、图片与本地设置）');
     } catch (e) {
-      catgirlMessage.error('导出失败：' + (e instanceof Error ? e.message : '未知错误'));
+      message.error('导出失败：' + (e instanceof Error ? e.message : '未知错误'));
     }
   }, []);
 
@@ -601,10 +588,10 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!ok) return;
     try {
       await importUserData(file);
-      catgirlMessage.success('已导入，正在刷新…');
+      message.success('已导入，正在刷新…');
       fetchData();
     } catch (e) {
-      catgirlMessage.error('导入失败：' + (e instanceof Error ? e.message : '未知错误'));
+      message.error('导入失败：' + (e instanceof Error ? e.message : '未知错误'));
     }
   }, [fetchData]);
 
@@ -624,7 +611,7 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         throw new Error((errData as { error?: string }).error || `HTTP ${resp.status}`);
       }
     } catch (e) {
-      catgirlMessage.error('打开 Excel 失败：' + (e instanceof Error ? e.message : '请检查 Excel 文件是否存在'));
+      message.error('打开 Excel 失败：' + (e instanceof Error ? e.message : '请检查 Excel 文件是否存在'));
     }
   }, []);
 
@@ -646,35 +633,35 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       + `只影响默认模板的番剧行（角色卡/自定义模板不动）。文件会先自动留快照。\n\n确定继续？`,
     );
     if (!ok) return;
-    const hide = catgirlMessage.loading('正在重建总评列…', 0);
+    const hide = message.loading('正在重建总评列…', 0);
     try {
       const res = await rebuildOverallColumn();
       hide();
       if (res.rows === 0) {
-        catgirlMessage.warning('没有可重建的行（模板里没有带权重的维度？）');
+        message.warning('没有可重建的行（模板里没有带权重的维度？）');
         return;
       }
-      catgirlMessage.success(
+      message.success(
         `已重建 ${res.rows} 行总评公式，其中 ${res.changed} 行数值被更新`,
       );
       await refreshAnimeList();
     } catch (e) {
       hide();
-      catgirlMessage.error('重建失败：' + (e instanceof Error ? e.message : '未知错误'));
+      message.error('重建失败：' + (e instanceof Error ? e.message : '未知错误'));
     }
   }, [refreshAnimeList]);
 
   const handleBatchSavePosters = useCallback(async () => {
     const candidates = state.animeList.filter((a) => a.excelRowIndex !== undefined && a.posterUrl);
-    if (candidates.length === 0) { catgirlMessage.warning('没有需要持久化的海报'); return; }
-    const hide = catgirlMessage.loading(`正在持久化海报 (0/${candidates.length})…`, 0);
+    if (candidates.length === 0) { message.warning('没有需要持久化的海报'); return; }
+    const hide = message.loading(`正在持久化海报 (0/${candidates.length})…`, 0);
     try {
       await batchSaveAllPosters(candidates);
       hide();
-      catgirlMessage.success(`已持久化 ${candidates.length} 张海报到 Excel`);
+      message.success(`已持久化 ${candidates.length} 张海报到 Excel`);
     } catch (e) {
       hide();
-      catgirlMessage.error('持久化失败：' + (e instanceof Error ? e.message : '未知错误'));
+      message.error('持久化失败：' + (e instanceof Error ? e.message : '未知错误'));
     }
   }, [state.animeList]);
 
@@ -700,8 +687,8 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }));
     // 一次写回：重命名一个高频标签可能牵动几十行，逐条写会把快照窗口挤满
     void updateAnimeEntries(affected)
-      .then((n) => catgirlMessage.success(`已将「${oldName}」重命名为「${newName}」，影响 ${n} 部`))
-      .catch((e) => catgirlMessage.error(`重命名失败：${e instanceof Error ? e.message : String(e)}`));
+      .then((n) => message.success(`已将「${oldName}」重命名为「${newName}」，影响 ${n} 部`))
+      .catch((e) => message.error(`重命名失败：${e instanceof Error ? e.message : String(e)}`));
   }, [state.animeList]);
 
   const handleDeleteTag = useCallback((tagName: string) => {
@@ -713,13 +700,13 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         tags: a.tags.filter((t) => !sameTagName(t.name, tagName)),
       }));
     void updateAnimeEntries(affected)
-      .then((n) => catgirlMessage.success(`已全局删除标签「${tagName}」，影响 ${n} 部`))
-      .catch((e) => catgirlMessage.error(`删除失败：${e instanceof Error ? e.message : String(e)}`));
+      .then((n) => message.success(`已全局删除标签「${tagName}」，影响 ${n} 部`))
+      .catch((e) => message.error(`删除失败：${e instanceof Error ? e.message : String(e)}`));
   }, [state.animeList]);
 
   const handleBatchAddTags = useCallback(() => {
     if (state.selectedBatchTags.length === 0 || state.selectedBatchAnime.length === 0) {
-      catgirlMessage.warning('请至少选择一个标签和一部番剧');
+      message.warning('请至少选择一个标签和一部番剧');
       return;
     }
     dispatch({
@@ -762,9 +749,9 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const candidates = state.animeList.filter(
       (a) => a.excelRowIndex !== undefined && (!a.templateId || a.templateId === DEFAULT_TEMPLATE_ID),
     );
-    if (candidates.length === 0) { catgirlMessage.warning('没有可修正的番剧'); return; }
+    if (candidates.length === 0) { message.warning('没有可修正的番剧'); return; }
 
-    const hide = catgirlMessage.loading(`正在修正检索名 (0/${candidates.length})…`, 0);
+    const hide = message.loading(`正在修正检索名 (0/${candidates.length})…`, 0);
     let filled = 0;       // 写入成功
     let kept = 0;         // 原值已经等于原名，无需改动
     let unsure = 0;       // 匹配分数不够 → 跳过（宁可不写，也不写错）
@@ -805,42 +792,11 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const summary = `写入 ${filled} 条，已正确 ${kept} 条，拿不准跳过 ${unsure} 条`;
     if (writeFailed > 0) {
-      catgirlMessage.error(`检索名修正完成：${summary}；其中 ${writeFailed} 条写回 Excel 失败`);
+      message.error(`检索名修正完成：${summary}；其中 ${writeFailed} 条写回 Excel 失败`);
     } else {
-      catgirlMessage.success(`检索名修正完成：${summary}`);
+      message.success(`检索名修正完成：${summary}`);
     }
   }, [state.animeList]);
-
-  const handleCreateRelation = useCallback(
-    (animeId: string, targetType: 'tag' | 'studio' | 'character', targetName: string) => {
-      if (!targetName.trim()) return;
-      const anime = state.animeList.find((a) => a.id === animeId);
-      if (!anime) return;
-      const now = new Date().toISOString().split('T')[0];
-      let updated: AnimeEntry;
-      if (targetType === 'tag') {
-        if (anime.tags.some((t) => t.name === targetName)) return;
-        updated = { ...anime, tags: [...anime.tags, { name: targetName, highlighted: true }], updatedAt: now };
-      } else if (targetType === 'studio') {
-        updated = { ...anime, studio: targetName, updatedAt: now };
-      } else {
-        const chars = anime.characters || [];
-        if (chars.includes(targetName)) return;
-        updated = { ...anime, characters: [...chars, targetName], updatedAt: now };
-      }
-      dispatch({ type: 'UPDATE_ANIME_IN_LIST', payload: updated });
-      const label = targetType === 'tag' ? '标签' : targetType === 'studio' ? '制作公司' : '角色';
-      const successText = `已将「${targetName}」${targetType === 'studio' ? '设为' : '添加到'}「${anime.title}」的${label}`;
-      if (anime.excelRowIndex !== undefined) {
-        void updateAnimeEntry(updated)
-          .then(() => catgirlMessage.success(successText))
-          .catch(() => catgirlMessage.error(`「${anime.title}」写回 Excel 失败，仅界面已更新`));
-      } else {
-        catgirlMessage.success(successText);
-      }
-    },
-    [state.animeList],
-  );
 
   // Excel 导入导出
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -892,13 +848,13 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         throw new Error((err as { error?: string }).error || `HTTP ${resp.status}`);
       }
       const detail = parsed.summary.map((s) => `${s.sheet} ${s.count}`).join('、');
-      catgirlMessage.success(
+      message.success(
         `已导入 ${parsed.count} 条（${detail}）`
         + `${addedTemplates > 0 ? `，并补回 ${addedTemplates} 个模板定义` : ''}`,
       );
       await fetchData();
     } catch (err) {
-      catgirlMessage.error('导入失败：' + (err instanceof Error ? err.message : '文件格式错误'));
+      message.error('导入失败：' + (err instanceof Error ? err.message : '文件格式错误'));
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, [fetchData]);
@@ -926,11 +882,11 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const fileName = exportFileName();
       XLSX.writeFile(wb, fileName);
       const sheetCount = wb.SheetNames.length;
-      catgirlMessage.success(
+      message.success(
         `已导出到「${fileName}」：${sheetCount} 张表（源表 ${rows.length - 1} 行）`,
       );
     } catch (e) {
-      catgirlMessage.error('导出失败：' + (e instanceof Error ? e.message : '未知错误'));
+      message.error('导出失败：' + (e instanceof Error ? e.message : '未知错误'));
     }
   }, []);
 
@@ -955,7 +911,6 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     handleCancelBatch,
     handleFixSearchAlias,
     handleRebuildOverallColumn,
-    handleCreateRelation,
     handleImportExcel,
     handleFileChange,
     handleExportExcel,

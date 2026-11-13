@@ -15,7 +15,7 @@ const MAIN_SHEET = '番剧列表';
 /** 其余工作表：保持与原项目一致，便于「张数统计」等功能正常 */
 const EXTRA_SHEETS = ['张数统计', '玩法', '游戏区', '角色排名', '乱葬岗'];
 
-/** 43 列表头（索引即列号，与 EXCEL_COL 对应） */
+/** 44 列表头（索引即列号，与 EXCEL_COL 对应） */
 const HEADERS = [];
 HEADERS[0] = '检索名';
 HEADERS[1] = '名字';
@@ -60,6 +60,7 @@ HEADERS[39] = '链接';
 HEADERS[40] = '总集数';
 HEADERS[41] = '当前集';
 HEADERS[42] = '模板JSON';
+HEADERS[43] = '评价元数据';
 
 /**
  * 确保 Excel 数据文件存在；不存在则创建空白表。

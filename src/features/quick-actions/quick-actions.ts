@@ -13,10 +13,10 @@ import { useCallback, useEffect, useState } from 'react';
 export type QuickActionId =
   | 'gif'
   | 'ai-chat'
+  | 'bangumi-sync'
   | 'complete-data'
   | 'complete-characters'
   | 'cutout'
-  | 'knowledge-graph'
   | 'taste-report'
   | 'excel'
   | 'backup'
@@ -37,11 +37,11 @@ export interface QuickActionDef {
 export const QUICK_ACTIONS: QuickActionDef[] = [
   { id: 'gif', label: '录制 GIF', hint: '打开屏幕录制 / 截图面板，录完直接转 GIF', icon: '🎞️' },
   { id: 'ai-chat', label: 'AI 对话', hint: '右侧抽屉，问评分、找番、让它改数据', icon: '💬' },
+  { id: 'bangumi-sync', label: '同步 Bangumi', hint: '绑定账号，把加权总评映射后推到收藏', icon: '📤' },
   { id: 'taste-report', label: '品味分析', hint: '用 AI 生成偏好画像与品味报告', icon: '📊' },
   { id: 'complete-data', label: '数据补全', hint: '从 Bangumi / Bilibili 批量补元数据与封面', icon: '☁️' },
   { id: 'complete-characters', label: '角色补全', hint: '搜立绘 / 声优 / 生日，生成角色卡', icon: '🧑‍🎤' },
   { id: 'cutout', label: '去白底', hint: '把角色立绘的白底变透明（可撤销）', icon: '🪄' },
-  { id: 'knowledge-graph', label: '知识图谱', hint: '全屏查看番剧关系网络', icon: '🕸️' },
   { id: 'excel', label: '表格视图', hint: '在应用内直接改列表原始数据', icon: '📋' },
   { id: 'backup', label: '存档回退', hint: '快照列表 + 操作记录', icon: '🗄️' },
   { id: 'template-manager', label: '维度管理', hint: '编辑评分模板的维度、权重与字段', icon: '📐' },

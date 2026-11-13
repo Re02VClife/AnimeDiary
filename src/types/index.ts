@@ -1,3 +1,7 @@
+import type { ReviewMeta } from '../../core/review-timeline';
+
+export type { ReviewMeta, ReviewTimeline, ReviewSegmentMeta } from '../../core/review-timeline';
+
 /** 番剧分类 */
 export type AnimeCategory = 'watching' | 'wantToWatch' | 'onHold' | 'watched' | 'dropped';
 
@@ -66,6 +70,13 @@ export interface AnimeEntry {
   watchDate?: string;
   /** 全局评价 */
   review?: string;
+  /**
+   * 评价的附加信息：每段写下时间、手写注释、看过的遍数。
+   *
+   * 单独存一列而不是写进 review 正文 —— 正文是用户自己要读、要同步到 Bangumi 的文字，
+   * 塞时间戳进去会两边都脏。
+   */
+  reviewMeta?: ReviewMeta;
   /** 备注 */
   notes?: string;
   /** 维度专项评价 */

@@ -8,12 +8,11 @@
  * 想永久写进 Excel 的话，之后再点「持久化所有海报」。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Button, List, Tag, Progress, Empty } from 'antd';
+import { message, Modal, Button, List, Tag, Progress, Empty } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import type { AnimeEntry } from '../types';
 import { searchPoster } from '../../features/anime-data/excel-service';
 import { loadPosterBlacklist, savePosterOverride } from '../../features/anime-data/storage-service';
-import { catgirlMessage } from '../theme';
 
 type ItemStatus = 'pending' | 'searching' | 'found' | 'notfound' | 'applied' | 'skipped';
 
@@ -112,7 +111,7 @@ const PosterFixModal: React.FC<PosterFixModalProps> = ({ open, onClose, animeLis
         n++;
       }
     });
-    if (n > 0) catgirlMessage.success(`已采用 ${n} 张搜索结果`);
+    if (n > 0) message.success(`已采用 ${n} 张搜索结果`);
   }, [apply]);
 
   const stats = useMemo(() => {

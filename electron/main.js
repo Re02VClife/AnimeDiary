@@ -560,6 +560,23 @@ app.whenReady().then(async () => {
     return dataDir;
   });
 
+  /**
+   * 7.1 选择本地番剧目录（设置 → 本地 → 导入存储地址）
+   *
+   * 为什么放在主进程：渲染进程拿不到系统对话框。用户在 Windows 上点
+   * 「选择文件夹」比手打 `E:\kazhumi Anime` 可靠得多（反斜杠、空格都容易打错）。
+   * 只返回路径，不读文件 —— 扫描仍然走 /api/local/library，保持一份实现。
+   */
+  ipcMain.handle('local:pickDir', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择番剧存储目录',
+      buttonLabel: '导入这个目录',
+      properties: ['openDirectory'],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+
   // 7.5 窗口外观：标题栏右上角的系统按钮是独立绘制的，颜色必须由主进程改
   ipcMain.on('window:set-titlebar-overlay', (_event, payload) => {
     applyTitleBarOverlay(payload && payload.mode, payload && payload.colors);

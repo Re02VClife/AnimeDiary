@@ -78,7 +78,7 @@ with sync_playwright() as p:
 
     # 浅色主题
     page.evaluate(
-        "localStorage.setItem('anime_diary_theme', JSON.stringify({themeMode:'light',customColors:{},catgirlMode:false,customIcons:{}}))"
+        "localStorage.setItem('anime_diary_theme', JSON.stringify({themeMode:'light',customColors:{},customIcons:{}}))"
     )
     page.reload(wait_until="networkidle")
     page.wait_for_timeout(4200)
