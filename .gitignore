@@ -23,6 +23,8 @@ local-library.json
 # 音乐绑定（本机选择）与歌单缓存（抓来的 QQ 音乐歌单），同样不该进 git
 music-links.json
 music_cache.json
+# QQ 音乐登录态（浏览器 Cookie），属于账号凭据，绝不入库
+music-login.json
 # 张数检测的样本视频/截图（130MB+），只留脚本
 张数检测/测试文件/
 

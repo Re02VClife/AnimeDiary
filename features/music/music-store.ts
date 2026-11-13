@@ -11,7 +11,11 @@
 import { useSyncExternalStore } from 'react';
 import type { MusicBinding, MusicTrack } from '../../core/music-links';
 import { MAX_BINDINGS_PER_ANIME, songPageUrl } from '../../core/music-links';
-import { checkPlayable, loadMusicStore, musicStreamUrl, saveMusicStore } from './music-service';
+import {
+  checkPlayable, clearMusicLogin, fetchMusicLogin, loadMusicStore, musicStreamUrl,
+  saveMusicLogin, saveMusicStore,
+} from './music-service';
+import type { MusicLoginStatus } from './music-service';
 
 export interface MusicPlayerState {
   track: MusicTrack | null;
@@ -27,6 +31,8 @@ export interface MusicPlayerState {
 export interface MusicBindingsState {
   map: Record<string, MusicBinding[]>;
   settings: { playlistUrl: string };
+  /** QQ 音乐登录态（VIP 曲子靠它拿播放地址） */
+  login: MusicLoginStatus;
   loaded: boolean;
   saving: boolean;
 }
@@ -39,6 +45,7 @@ const playerListeners = new Set<() => void>();
 let bindingsState: MusicBindingsState = {
   map: {},
   settings: { playlistUrl: '' },
+  login: { loggedIn: false },
   loaded: false,
   saving: false,
 };
@@ -119,11 +126,12 @@ function getAudio(): HTMLAudioElement | null {
 export function ensureMusicBindings(): Promise<void> {
   if (bindingsState.loaded) return Promise.resolve();
   if (loadPromise) return loadPromise;
-  loadPromise = loadMusicStore()
-    .then((store) => {
+  loadPromise = Promise.all([loadMusicStore(), fetchMusicLogin().catch(() => ({ loggedIn: false }))])
+    .then(([store, login]) => {
       setBindings({
         map: store.bindings ?? {},
         settings: store.settings ?? { playlistUrl: '' },
+        login,
         loaded: true,
       });
     })
@@ -133,6 +141,22 @@ export function ensureMusicBindings(): Promise<void> {
     })
     .finally(() => { loadPromise = null; });
   return loadPromise;
+}
+
+/** 保存 Cookie 后刷新登录态；失败时抛出可读原因 */
+export async function saveLogin(cookie: string): Promise<MusicLoginStatus> {
+  const login = await saveMusicLogin(cookie);
+  setBindings({ login });
+  return login;
+}
+
+export async function logoutLogin(): Promise<void> {
+  const login = await clearMusicLogin();
+  setBindings({ login });
+}
+
+export function currentLogin(): MusicLoginStatus {
+  return bindingsState.login;
 }
 
 async function persist(nextMap: Record<string, MusicBinding[]>, nextSettings = bindingsState.settings) {
@@ -214,15 +238,17 @@ export async function playTrack(track: MusicTrack): Promise<void> {
     return;
   }
 
-  if (track.vip) {
+  // 已知会员曲、又没登录：在用户手势的同一拍直接跳，保住 window.open 的授权。
+  // 登录过就不走这支——由下面的 playable 探测决定，能拿到 purl 就在应用内播。
+  if (track.vip && !bindingsState.login.loggedIn) {
     const opened = openInQQ(track);
     setPlayer({
       track: null,
       loading: false,
       playing: false,
       error: opened
-        ? `「${track.name}」需要 QQ 音乐会员，已在 QQ 音乐打开`
-        : `「${track.name}」需要 QQ 音乐会员，点行尾的 ↗ 去 QQ 音乐播放`,
+        ? `「${track.name}」是会员曲：粘一次 Cookie（候选框里的「登录」）就能在应用内播，这次先在 QQ 音乐打开`
+        : `「${track.name}」是会员曲：点候选框里的「登录」粘一次 Cookie，就能在应用内播`,
     });
     return;
   }

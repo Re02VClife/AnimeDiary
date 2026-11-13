@@ -95,4 +95,35 @@ export async function saveMusicStore(payload: MusicStorePayload): Promise<MusicS
   return data.store;
 }
 
+// ── 登录态（VIP 曲子用） ─────────────────────────────────
+
+export interface MusicLoginStatus {
+  loggedIn: boolean;
+  uinMasked?: string;
+  updatedAt?: string;
+}
+
+export async function fetchMusicLogin(): Promise<MusicLoginStatus> {
+  const resp = await fetch('/api/music/login');
+  const data = await readJson<{ login: MusicLoginStatus }>(resp);
+  return data.login ?? { loggedIn: false };
+}
+
+/** 保存浏览器粘来的 Cookie；解析失败时抛出服务端给的中文原因 */
+export async function saveMusicLogin(cookie: string): Promise<MusicLoginStatus> {
+  const resp = await fetch('/api/music/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cookie }),
+  });
+  const data = await readJson<{ login: MusicLoginStatus }>(resp);
+  return data.login ?? { loggedIn: false };
+}
+
+export async function clearMusicLogin(): Promise<MusicLoginStatus> {
+  const resp = await fetch('/api/music/login', { method: 'DELETE' });
+  const data = await readJson<{ login: MusicLoginStatus }>(resp);
+  return data.login ?? { loggedIn: false };
+}
+
 export { DEFAULT_PLAYLIST_URL };

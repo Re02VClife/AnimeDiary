@@ -3210,6 +3210,38 @@ pre{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;o
   });
 
   /**
+   * GET/POST/DELETE /api/music/login — QQ 音乐登录态（VIP 曲子靠它拿播放地址）
+   *
+   * 只接受用户从浏览器粘来的 Cookie，存在 DATA_DIR/music-login.json；
+   * 响应里永远不回 Cookie 原文，只回打码的 uin。
+   */
+  router.use('/api/music/login', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.method === 'GET') {
+      res.end(JSON.stringify({ login: music.loginStatus() }));
+      return;
+    }
+    if (req.method === 'DELETE') {
+      res.end(JSON.stringify({ login: music.logout() }));
+      return;
+    }
+    if (req.method !== 'POST') {
+      res.statusCode = 405;
+      res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+      return;
+    }
+    void readJsonBody(req).then((body) => {
+      try {
+        const login = music.login(String(body?.cookie ?? ''));
+        res.end(JSON.stringify({ login }));
+      } catch (e) {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ error: e instanceof Error ? e.message : 'Cookie 解析失败' }));
+      }
+    });
+  });
+
+  /**
    * GET /api/music/playurl?mid=xxx — 先问清楚「能不能在应用里播」，
    * 再决定是挂 <audio> 还是跳 QQ 音乐。避免前端直接拉流拿到 404 再猜原因。
    */

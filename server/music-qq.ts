@@ -42,6 +42,7 @@ import type {
   MusicStoreFile,
   MusicTrack,
 } from '../core/music-links';
+import { maskUin, parseQqCookie } from '../core/qq-cookie';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const REFERER = 'https://y.qq.com/';
@@ -75,6 +76,14 @@ export interface PlayUrlResult {
   reason?: string;
 }
 
+/** 登录态：Cookie 存在 DATA_DIR/music-login.json，只在本机使用 */
+export interface MusicLoginStatus {
+  loggedIn: boolean;
+  /** 打码后的 uin，给界面显示用 */
+  uinMasked?: string;
+  updatedAt?: string;
+}
+
 export interface MusicClient {
   /** 拉歌单（source 省略时用默认歌单）；force=true 跳过缓存 */
   playlist(source?: string, force?: boolean): Promise<MusicPlaylist>;
@@ -90,6 +99,12 @@ export interface MusicClient {
   readStore(): MusicStoreFile;
   /** 原子写绑定文件 */
   writeStore(next: MusicStoreFile): MusicStoreFile;
+  /** 保存浏览器粘来的 Cookie（VIP 曲子靠它才能拿到播放地址） */
+  login(cookieText: string): MusicLoginStatus;
+  /** 清掉登录态 */
+  logout(): MusicLoginStatus;
+  /** 当前登录态（不含 Cookie 本身） */
+  loginStatus(): MusicLoginStatus;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -131,16 +146,54 @@ function isTencentAudioHost(url: string): boolean {
 export function createMusicClient({ DATA_DIR }: MusicClientOptions): MusicClient {
   const storeFile = path.join(DATA_DIR, 'music-links.json');
   const cacheFile = path.join(DATA_DIR, 'music_cache.json');
+  const loginFile = path.join(DATA_DIR, 'music-login.json');
 
   let cache: CacheFile = readJson<CacheFile>(cacheFile, { version: 1, playlists: {}, songs: {} });
   if (!cache.playlists) cache.playlists = {};
   if (!cache.songs) cache.songs = {};
+
+  /**
+   * 登录态（用户从浏览器粘来的 Cookie）。
+   * 只落本机、只用于 vkey 请求；不进任何响应体，界面只看到打码的 uin。
+   */
+  let login: { cookie: string; uin: string; updatedAt: string } | null =
+    (() => {
+      const raw = readJson<any>(loginFile, null);
+      if (!raw || typeof raw.cookie !== 'string' || !raw.cookie) return null;
+      return {
+        cookie: String(raw.cookie),
+        uin: String(raw.uin ?? '').replace(/\D/g, ''),
+        updatedAt: String(raw.updatedAt ?? ''),
+      };
+    })();
 
   /** vkey 只用内存缓存：它本来几分钟就失效，没必要落盘 */
   const vkeyCache = new Map<string, { url: string | null; expiresAt: number; vip: boolean }>();
 
   function persistCache(): void {
     try { writeJsonAtomic(cacheFile, cache); } catch { /* 缓存写失败不影响主流程 */ }
+  }
+
+  function loginStatus(): MusicLoginStatus {
+    if (!login) return { loggedIn: false };
+    return { loggedIn: true, uinMasked: maskUin(login.uin), updatedAt: login.updatedAt };
+  }
+
+  function loginWithCookie(cookieText: string): MusicLoginStatus {
+    // 解析失败会抛 QqCookieError，由路由转成 400
+    const parsed = parseQqCookie(cookieText);
+    login = { cookie: parsed.cookie, uin: parsed.uin, updatedAt: new Date().toISOString() };
+    writeJsonAtomic(loginFile, login);
+    // 匿名与登录态拿到的 purl 不同，缓存必须整体作废
+    vkeyCache.clear();
+    return loginStatus();
+  }
+
+  function logout(): MusicLoginStatus {
+    login = null;
+    try { fs.rmSync(loginFile, { force: true }); } catch { /* 文件本来就没有 */ }
+    vkeyCache.clear();
+    return { loggedIn: false };
   }
 
   function pickSip(sip: unknown): string {
@@ -372,6 +425,7 @@ export function createMusicClient({ DATA_DIR }: MusicClientOptions): MusicClient
       return { url: cached.url, vip: cached.vip };
     }
 
+    const uinParam = login?.uin || '0';
     const body = {
       req_0: {
         module: 'vkey.GetVkeyServer',
@@ -380,12 +434,12 @@ export function createMusicClient({ DATA_DIR }: MusicClientOptions): MusicClient
           guid: GUID,
           songmid: [mid],
           songtype: [0],
-          uin: '0',
+          uin: uinParam,
           loginflag: 1,
           platform: '20',
         },
       },
-      comm: { uin: 0, format: 'json', ct: 24, cv: 0 },
+      comm: { uin: login?.uin ? Number(login.uin) : 0, format: 'json', ct: 24, cv: 0 },
     };
 
     let url: string | null = null;
@@ -393,7 +447,12 @@ export function createMusicClient({ DATA_DIR }: MusicClientOptions): MusicClient
     try {
       const resp = await fetch(MUSICU_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'User-Agent': UA, Referer: REFERER },
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': UA,
+          Referer: REFERER,
+          ...(login ? { Cookie: login.cookie } : {}),
+        },
         body: JSON.stringify(body),
       });
       const json: any = await resp.json().catch(() => null);
@@ -422,7 +481,11 @@ export function createMusicClient({ DATA_DIR }: MusicClientOptions): MusicClient
     return {
       playable: false,
       vip,
-      reason: vip ? '这首需要 QQ 音乐会员，点一下直接在 QQ 音乐里播放' : '暂时拿不到播放地址',
+      reason: vip
+        ? (login
+          ? '登录态可能过期了（QQ 音乐 Cookie 一般几周失效），重新粘一次试试'
+          : '这首是会员曲：在「换歌单」旁点「登录」，粘一次 Cookie 就能在应用内播')
+        : '暂时拿不到播放地址',
     };
   }
 
@@ -514,5 +577,8 @@ export function createMusicClient({ DATA_DIR }: MusicClientOptions): MusicClient
     return safe;
   }
 
-  return { playlist, resolveSong, search, playUrl, streamUrl, readStore, writeStore };
+  return {
+    playlist, resolveSong, search, playUrl, streamUrl, readStore, writeStore,
+    login: loginWithCookie, logout, loginStatus,
+  };
 }

@@ -15,7 +15,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Empty, Input, Modal, Popover, Segmented, Spin, Tag, Tooltip, message } from 'antd';
 import {
   CustomerServiceOutlined, DeleteOutlined, ExportOutlined, LinkOutlined, PauseCircleFilled,
-  PlayCircleFilled, ReloadOutlined, SoundOutlined,
+  PlayCircleFilled, ReloadOutlined, SoundOutlined, UserOutlined,
 } from '@ant-design/icons';
 import type { AnimeEntry } from '../../src/types';
 import type { MusicPlaylist, MusicTrack } from '../../core/music-links';
@@ -24,8 +24,8 @@ import {
 } from '../../core/music-links';
 import { fetchPlaylist, resolveMusicLink, searchMusic } from './music-service';
 import {
-  bindTrack, bindingsForKey, ensureMusicBindings, openInQQ, playTrack,
-  unbindTrack, updatePlaylistSource, useMusicBindings, useMusicPlayer,
+  bindTrack, bindingsForKey, ensureMusicBindings, logoutLogin, openInQQ, playTrack,
+  saveLogin, unbindTrack, updatePlaylistSource, useMusicBindings, useMusicPlayer,
 } from './music-store';
 
 interface MusicPickerProps {
@@ -138,6 +138,9 @@ const MusicPicker: React.FC<MusicPickerProps> = ({ open, anime, onClose }) => {
   const [resolving, setResolving] = useState(false);
   const [sourceDraft, setSourceDraft] = useState('');
   const [sourceOpen, setSourceOpen] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [cookieDraft, setCookieDraft] = useState('');
+  const [loginSaving, setLoginSaving] = useState(false);
 
   const animeKey = useMemo(() => animeKeyFor(anime), [anime]);
   const boundList = bindingsForKey(bindings.map, animeKey);
@@ -265,6 +268,7 @@ const MusicPicker: React.FC<MusicPickerProps> = ({ open, anime, onClose }) => {
   );
 
   return (
+    <>
     <Modal
       open={open}
       onCancel={onClose}
@@ -382,6 +386,22 @@ const MusicPicker: React.FC<MusicPickerProps> = ({ open, anime, onClose }) => {
             换歌单
           </Button>
         </Popover>
+        <Tooltip title={bindings.login.loggedIn
+          ? '已用你的 QQ 音乐登录态：会员曲也能在应用内播'
+          : '粘一次浏览器 Cookie，会员曲就能在应用内播，不用跳网页'}>
+          <Button
+            size="small"
+            type="text"
+            icon={<UserOutlined />}
+            onClick={() => { setLoginOpen(true); setCookieDraft(''); }}
+            style={{
+              fontSize: 12,
+              color: bindings.login.loggedIn ? 'var(--brand-primary)' : 'var(--text-secondary)',
+            }}
+          >
+            {bindings.login.loggedIn ? `已登录 ${bindings.login.uinMasked ?? ''}` : '登录'}
+          </Button>
+        </Tooltip>
       </div>
 
       {/* 内容 */}
@@ -459,6 +479,84 @@ const MusicPicker: React.FC<MusicPickerProps> = ({ open, anime, onClose }) => {
         </div>
       )}
     </Modal>
+
+    {/* 登录（粘 Cookie）：会员曲能不能在应用内播，取决于这一步 */}
+    <Modal
+      open={loginOpen}
+      onCancel={() => setLoginOpen(false)}
+      footer={null}
+      width={560}
+      title={<span><UserOutlined style={{ marginRight: 6, color: 'var(--brand-primary)' }} />QQ 音乐登录（可选）</span>}
+    >
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.8 }}>
+        <div style={{ marginBottom: 8 }}>
+          不登录也能用：免费曲直接播，会员曲跳 QQ 音乐。
+          想让会员曲<strong style={{ color: 'var(--text-primary)' }}>在应用内播</strong>，粘一次登录态即可：
+        </div>
+        <ol style={{ margin: '0 0 10px 18px', padding: 0 }}>
+          <li>浏览器打开 <a href="https://y.qq.com" target="_blank" rel="noreferrer">y.qq.com</a> 并登录（绿钻账号）</li>
+          <li>按 F12 → <b>Application / 应用</b> → Cookies → <code>https://y.qq.com</code></li>
+          <li>把 <code>qm_keyst</code> 和 <code>uin</code> 两行的值复制出来，拼成 <code>uin=…; qm_keyst=…</code></li>
+        </ol>
+        <div style={{ marginBottom: 10, color: 'var(--text-muted)' }}>
+          也可以直接在 Network 面板随便点一个 y.qq.com 的请求，整条 <code>Cookie:</code> 请求头复制过来 —— 多余的键会被丢掉。
+        </div>
+      </div>
+
+      <Input.TextArea
+        autoSize={{ minRows: 3, maxRows: 6 }}
+        value={cookieDraft}
+        onChange={(e) => setCookieDraft(e.target.value)}
+        placeholder="uin=o0123456789; qm_keyst=…; qqmusic_key=…"
+        style={{ fontFamily: 'monospace', fontSize: 11 }}
+      />
+
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10 }}>
+        <Button
+          size="small"
+          type="primary"
+          loading={loginSaving}
+          onClick={async () => {
+            if (!cookieDraft.trim()) { message.warning('先把 Cookie 粘进来'); return; }
+            setLoginSaving(true);
+            try {
+              const status = await saveLogin(cookieDraft);
+              message.success(`已登录${status.uinMasked ? `（${status.uinMasked}）` : ''}，会员曲现在能在应用内播了`);
+              setLoginOpen(false);
+            } catch (e) {
+              message.error(e instanceof Error ? e.message : '保存失败');
+            } finally {
+              setLoginSaving(false);
+            }
+          }}
+        >
+          保存并启用
+        </Button>
+        {bindings.login.loggedIn && (
+          <Button
+            size="small"
+            danger
+            onClick={async () => {
+              try {
+                await logoutLogin();
+                message.success('已退出登录，恢复成匿名播放');
+              } catch (e) {
+                message.error(e instanceof Error ? e.message : '退出失败');
+              }
+            }}
+          >
+            退出登录
+          </Button>
+        )}
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          {bindings.login.loggedIn
+            ? `当前：${bindings.login.uinMasked ?? '已登录'}`
+            : '只存在本机 music-login.json，不上传'}
+        </span>
+      </div>
+    </Modal>
+    </>
   );
 };
 

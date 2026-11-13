@@ -56,6 +56,8 @@ QQ 音乐 ←→ /api/music/* ←→ server/music-qq.ts ←→ core/music-links.
 - `xlsx` 只在服务端用；前端用 `import * as XLSX from 'xlsx'`（已配 optimizeDeps）。
 - 音乐绑定**不进 Excel**：`music-links.json`（`模板::标题` → 曲目）与 `music_cache.json`
   （歌单缓存 6h）都在 DATA_DIR；key 刻意不用 `entry.id`（=`excel-行号`，插行会串台）。
+  VIP 曲子靠 `music-login.json`（用户从浏览器粘来的 y.qq.com Cookie，只落本机、只发给 vkey），
+  没有它 vkey 对会员曲一律返回 104003 —— 这是权限校验，不做绕过。
 - 本地番剧库同理**不进 Excel**：`local-library.json`（存储地址 + 卡片绑定 + Bangumi 元数据缓存）
   在 DATA_DIR，key 与音乐共用 `animeKeyFor`（`模板::标题`）。
   识别靠目录名里的 Bangumi subject id（Kazumi 存成 `<id>_<来源站>/<集号>/video.mp4`），
