@@ -86,6 +86,14 @@ const LocalLibrarySettings: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList
     return { folders: lib.folders.length, episodes, identified };
   }, [lib.folders]);
 
+  /**
+   * 选文件夹，三层退路：
+   *   1. 新安装包 → preload 暴露的 IPC（最直接）；
+   *   2. 老安装包 + 热更新 → 服务端 /api/local/pick-dir（Electron 主进程里调 dialog）。
+   *      热更新不覆盖 preload.js，但**覆盖 server/api-routes.cjs**，所以这条路能让
+   *      已装旧版本的用户也用上对话框；
+   *   3. 浏览器 dev 模式 → 只能手动粘贴。
+   */
   const handlePickDir = useCallback(async () => {
     const api = (window as any).electronAPI as ElectronPickApi | undefined;
     if (api?.pickLocalDir) {
@@ -94,9 +102,21 @@ const LocalLibrarySettings: React.FC<{ animeList: AnimeEntry[] }> = ({ animeList
         if (dir) setPathInput(dir);
         return;
       } catch {
-        /* 落到手填 */
+        /* 落到服务端那条路 */
       }
     }
+
+    try {
+      const resp = await fetch('/api/local/pick-dir', { method: 'POST' });
+      if (resp.ok) {
+        const body = (await resp.json()) as { path?: string | null };
+        if (body.path) setPathInput(body.path);
+        return;
+      }
+    } catch {
+      /* 落到提示 */
+    }
+
     message.info('浏览器模式没法弹系统对话框，直接粘贴路径吧（桌面版有「选择文件夹」）');
   }, []);
 

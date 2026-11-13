@@ -3287,8 +3287,56 @@ pre{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;o
    * Range 拖动进度条的能力，以及「只能读已导入目录」的校验。
    */
 
-  /** GET /api/local/library?identify=1&force=1 — 扫描 + （可选）Bangumi 识别 */
-  router.use('/api/local/library', (req, res) => {
+  /**
+   * POST /api/local/pick-dir — 弹系统「选择文件夹」对话框
+   *
+   * 为什么放在服务端而不是 preload：**热更新只覆盖前端与 server/api-routes.cjs，
+   * 不覆盖 electron/preload.js**。放在这里，已经装了旧版本的桌面端也能用上
+   * 「选择文件夹」，不必为了一个路径输入框让用户重装。
+   *
+   * 只有 Electron 主进程里才拿得到 dialog：dev:web 与纯浏览器下
+   * `import('electron')` 拿到的是二进制路径字符串，没有 dialog，返回 501，
+   * 前端退化成「手动粘贴路径」。
+   */
+  router.use('/api/local/pick-dir', (req, res) => {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    if (req.method !== 'POST') {
+      res.statusCode = 405;
+      res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+      return;
+    }
+    void (async () => {
+      try {
+        /**
+         * 生产（server/api-routes.cjs 跑在 Electron 主进程里）用 require 拿 dialog 最稳；
+         * dev（vite 的 ESM 上下文）根本没有 require → 抛错 → 退化成 501。
+         * 不用 import('electron')：CJS 里它是异步的，且 Electron 模块要拆 default。
+         */
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const electron = require('electron');
+        const dialog = electron?.dialog;
+        const BrowserWindow = electron?.BrowserWindow;
+        if (!dialog?.showOpenDialog) {
+          res.statusCode = 501;
+          res.end(JSON.stringify({ error: '当前环境没有系统对话框，请直接粘贴路径' }));
+          return;
+        }
+        const win = BrowserWindow?.getFocusedWindow?.() ?? BrowserWindow?.getAllWindows?.()[0] ?? null;
+        const result = await dialog.showOpenDialog(win, {
+          title: '选择番剧存储目录',
+          buttonLabel: '导入这个目录',
+          properties: ['openDirectory'],
+        });
+        const picked = !result?.canceled && result?.filePaths?.length ? String(result.filePaths[0]) : null;
+        res.end(JSON.stringify({ path: picked }));
+      } catch {
+        res.statusCode = 501;
+        res.end(JSON.stringify({ error: '当前环境没有系统对话框，请直接粘贴路径' }));
+      }
+    })();
+  });
+
+  /** GET /api/local/library?identify=1&force=1 — 扫描 + （可选）Bangumi 识别 */  router.use('/api/local/library', (req, res) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     if (req.method !== 'GET') {
       res.statusCode = 405;
