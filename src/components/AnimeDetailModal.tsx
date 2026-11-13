@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { message, Modal, InputNumber, Input, Tag, Descriptions, Button, Space, Tooltip, Select, Popover, Image, Typography, Checkbox, Slider, Segmented, DatePicker, Popconfirm } from 'antd';
-import { SaveOutlined, PlusOutlined, EditOutlined, LeftOutlined, RightOutlined, PictureOutlined, ImportOutlined, ThunderboltOutlined, TagOutlined, SearchOutlined, DeleteOutlined, CustomerServiceOutlined } from '@ant-design/icons';
+import { SaveOutlined, PlusOutlined, EditOutlined, LeftOutlined, RightOutlined, PictureOutlined, ImportOutlined, ThunderboltOutlined, TagOutlined, SearchOutlined, DeleteOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import type { AnimeEntry, AnimeTag, DimensionScore, DimensionReview, AnimeCategory, BangumiSearchItem, Dimension, DetailLayoutConfig, ReviewMeta, ReviewTimeline } from '../types';
@@ -2020,41 +2020,54 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                 </Tooltip>
               )}
             </span>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px 10px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '6px 14px' }}>
               {displayDims.map((dim) => {
                 const score = getScore(dim.key);
                 const hasReview = getDimReview(dim.key);
                 const isSliderActive = sliderDim === dim.key;
+                /**
+                 * 「音声」这一格兼做音乐入口：♪ 直接写在标签里、标签固定宽，
+                 * 不再另起一个图标节点 —— 之前那版图标会把这格的输入框整体右移 16px，
+                 * 八格里唯独它错位，看着像没对齐。
+                 */
+                const isMusicEntry = dim.key === 'audio' && !!onOpenMusic;
                 return (
                   <div
                     key={dim.key}
                     onMouseEnter={() => handleDimEnter(dim.key, score || 0)}
                     onMouseLeave={handleDimLeave}
                     style={{
-                      display: 'flex', alignItems: 'center', gap: 4,
-                      padding: '2px 4px', borderRadius: 4,
+                      display: 'flex', alignItems: 'center', gap: 6, minWidth: 0,
+                      padding: '3px 6px', borderRadius: 6,
                       background: isSliderActive ? 'rgba(251,114,153,0.08)' : 'transparent',
                       border: isSliderActive ? '1px solid rgba(251,114,153,0.2)' : '1px solid transparent',
                       transition: 'background 0.15s, border 0.15s',
                     }}
                   >
-                    <Tooltip title={dim.description}>
-                      <span style={{ fontSize: 12, color: 'var(--text-primary)', minWidth: 36, textAlign: 'right', cursor: 'help' }}>
-                        {dim.label}
+                    <Tooltip title={isMusicEntry
+                      ? `${dim.description} · 点一下挑歌 / 播放已绑定的音乐`
+                      : dim.description}>
+                      <span
+                        data-music-entry={isMusicEntry ? 'detail' : undefined}
+                        onClick={isMusicEntry
+                          ? (e) => { e.stopPropagation(); if (anime) onOpenMusic!(anime); }
+                          : undefined}
+                        onMouseEnter={isMusicEntry
+                          ? (e) => { e.currentTarget.style.color = 'var(--brand-primary)'; }
+                          : undefined}
+                        onMouseLeave={isMusicEntry
+                          ? (e) => { e.currentTarget.style.color = 'var(--text-primary)'; }
+                          : undefined}
+                        style={{
+                          flex: '0 0 54px', width: 54, textAlign: 'right',
+                          fontSize: 12, color: 'var(--text-primary)',
+                          cursor: isMusicEntry ? 'pointer' : 'help',
+                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                        }}
+                      >
+                        {isMusicEntry ? '♪ ' : ''}{dim.label}
                       </span>
                     </Tooltip>
-                    {dim.key === 'audio' && onOpenMusic && (
-                      <Tooltip title="绑定 / 播放这部番的音乐">
-                        <span
-                          data-music-entry="detail"
-                          title="绑定 / 播放这部番的音乐"
-                          onClick={(e) => { e.stopPropagation(); if (anime) onOpenMusic(anime); }}
-                          style={{ cursor: 'pointer', color: 'var(--brand-primary)', fontSize: 12, lineHeight: 1 }}
-                        >
-                          <CustomerServiceOutlined />
-                        </span>
-                      </Tooltip>
-                    )}
                     <InputNumber size="small" min={0} max={15}
                       step={dim.key === 'vibe' ? 0.01 : 0.1}
                       value={score ? round2(score) : null} onChange={(v) => handleScoreChange(dim.key, v)}
@@ -2072,7 +2085,8 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
                       }}
                       onFocus={() => { if (editing) setSliderDim(dim.key); }}
                       style={{
-                        width: dim.key === 'vibe' ? 64 : 56,
+                        // 八格同宽：以前「电波」单独给 64px，同一排里会突出一截
+                        flex: '0 0 62px', width: 62,
                         borderColor: isSliderActive ? 'var(--brand-primary)' : undefined,
                       }} placeholder="0" />
                     {editing && (
