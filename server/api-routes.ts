@@ -29,6 +29,7 @@ import { registerAIRoutes } from './ai-routes';
 import { createOperationLog } from './operations-log';
 import type { OperationSource } from './operations-log';
 import { createMusicClient } from './music-qq';
+import { createLoginWindowRunner, LoginWindowUnavailable } from './music-login-window';
 import { createLocalLibrary } from './local-library';
 import { Readable } from 'stream';
 
@@ -71,6 +72,11 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
    * 绑定写进 DATA_DIR/music-links.json，歌单缓存进 music_cache.json —— 都不碰 Excel。
    */
   const music = createMusicClient({ DATA_DIR });
+  /**
+   * 一键登录：在生产里（主进程跑 handler）开一个 Electron 登录窗读 cookie；
+   * dev 的纯 Node 环境下 start() 会抛 LoginWindowUnavailable，路由回 501。
+   */
+  const loginWindows = createLoginWindowRunner(music);
   /**
    * 本地番剧库：用户导入的番剧存储地址 + 卡片绑定 + 视频流。
    * 与 music 同样的取舍 —— 只写 {DATA_DIR}/local-library.json，绝不碰 Excel。
@@ -3239,6 +3245,53 @@ pre{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;o
         res.end(JSON.stringify({ error: e instanceof Error ? e.message : 'Cookie 解析失败' }));
       }
     });
+  });
+
+  /**
+   * POST /api/music/login-window — 打开桌面登录窗（一键登录）
+   *
+   * 窗口在**主进程**里开，cookie 由服务端轮询后直接落盘，渲染进程拿不到原文。
+   * 返回 sessionId 后前端轮询下面的 status，避免把 HTTP 请求挂 4 分钟。
+   */
+  router.use('/api/music/login-window/status', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    const url = new URL(req.url!, 'http://localhost');
+    const id = (url.searchParams.get('id') || '').trim();
+    const state = id ? loginWindows.status(id) : null;
+    if (!state) {
+      res.statusCode = 404;
+      res.end(JSON.stringify({ error: '登录会话不存在或已过期，请重新点「一键登录」' }));
+      return;
+    }
+    res.end(JSON.stringify(state));
+  });
+
+  router.use('/api/music/login-window', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.method === 'DELETE') {
+      const url = new URL(req.url!, 'http://localhost');
+      const id = (url.searchParams.get('id') || '').trim();
+      const state = id ? loginWindows.cancel(id) : null;
+      if (!state) { res.statusCode = 404; res.end(JSON.stringify({ error: '登录会话不存在' })); return; }
+      res.end(JSON.stringify(state));
+      return;
+    }
+    if (req.method !== 'POST') {
+      res.statusCode = 405;
+      res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+      return;
+    }
+    void loginWindows.start()
+      .then(({ sessionId }) => res.end(JSON.stringify({ sessionId })))
+      .catch((e) => {
+        if (e instanceof LoginWindowUnavailable) {
+          res.statusCode = 501;
+          res.end(JSON.stringify({ error: e.message }));
+          return;
+        }
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: e instanceof Error ? e.message : '打开登录窗口失败' }));
+      });
   });
 
   /**

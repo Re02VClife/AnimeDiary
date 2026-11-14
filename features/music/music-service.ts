@@ -126,4 +126,22 @@ export async function clearMusicLogin(): Promise<MusicLoginStatus> {
   return data.login ?? { loggedIn: false };
 }
 
+/** 打开桌面登录窗；浏览器 dev 里会 501（readJson 抛出可读原因） */
+export async function startMusicLoginWindow(): Promise<{ sessionId: string }> {
+  const resp = await fetch('/api/music/login-window', { method: 'POST' });
+  return readJson<{ sessionId: string }>(resp);
+}
+
+export interface LoginWindowStatus {
+  state: 'pending' | 'done' | 'cancelled' | 'timeout' | 'error';
+  login?: MusicLoginStatus;
+  error?: string;
+}
+
+export async function pollMusicLoginWindow(sessionId: string): Promise<LoginWindowStatus> {
+  const qs = new URLSearchParams({ id: sessionId });
+  const resp = await fetch(`/api/music/login-window/status?${qs.toString()}`);
+  return readJson<LoginWindowStatus>(resp);
+}
+
 export { DEFAULT_PLAYLIST_URL };

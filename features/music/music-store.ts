@@ -150,6 +150,13 @@ export async function saveLogin(cookie: string): Promise<MusicLoginStatus> {
   return login;
 }
 
+/** 一键登录窗口已经由服务端落盘，这里只把状态同步回界面 */
+export async function refreshLogin(): Promise<MusicLoginStatus> {
+  const login = await fetchMusicLogin();
+  setBindings({ login });
+  return login;
+}
+
 export async function logoutLogin(): Promise<void> {
   const login = await clearMusicLogin();
   setBindings({ login });

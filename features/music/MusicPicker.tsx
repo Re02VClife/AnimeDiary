@@ -22,10 +22,10 @@ import type { MusicPlaylist, MusicTrack } from '../../core/music-links';
 import {
   animeKeyFor, formatTrackDuration, rankTracksForAnime,
 } from '../../core/music-links';
-import { fetchPlaylist, resolveMusicLink, searchMusic } from './music-service';
+import { fetchPlaylist, pollMusicLoginWindow, resolveMusicLink, searchMusic, startMusicLoginWindow } from './music-service';
 import {
   bindTrack, bindingsForKey, ensureMusicBindings, logoutLogin, openInQQ, playTrack,
-  saveLogin, unbindTrack, updatePlaylistSource, useMusicBindings, useMusicPlayer,
+  refreshLogin, saveLogin, unbindTrack, updatePlaylistSource, useMusicBindings, useMusicPlayer,
 } from './music-store';
 
 interface MusicPickerProps {
@@ -253,6 +253,32 @@ const MusicPicker: React.FC<MusicPickerProps> = ({ open, anime, onClose }) => {
         onOpenQQ={() => { openInQQ(track); }}
       />
     ));
+  };
+
+  const handleOneClickLogin = async () => {
+    setLoginSaving(true);
+    try {
+      const { sessionId } = await startMusicLoginWindow();
+      const deadline = Date.now() + 4.5 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1200));
+        const st = await pollMusicLoginWindow(sessionId);
+        if (st.state === 'done') {
+          await refreshLogin();
+          message.success('登录成功，会员曲现在可以在应用内播了');
+          setLoginOpen(false);
+          return;
+        }
+        if (st.state === 'cancelled') { message.info('已取消登录'); return; }
+        if (st.state === 'timeout') { message.warning('登录超时，再点一次'); return; }
+        if (st.state === 'error') { message.error(st.error || '登录窗口出错'); return; }
+      }
+      message.warning('等待超时，请重试');
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '打不开登录窗口');
+    } finally {
+      setLoginSaving(false);
+    }
   };
 
   const titleNode = (
@@ -489,9 +515,33 @@ const MusicPicker: React.FC<MusicPickerProps> = ({ open, anime, onClose }) => {
       title={<span><UserOutlined style={{ marginRight: 6, color: 'var(--brand-primary)' }} />QQ 音乐登录（可选）</span>}
     >
       <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.8 }}>
-        <div style={{ marginBottom: 8 }}>
+        <div style={{ marginBottom: 10 }}>
           不登录也能用：免费曲直接播，会员曲跳 QQ 音乐。
-          想让会员曲<strong style={{ color: 'var(--text-primary)' }}>在应用内播</strong>，粘一次登录态即可：
+          想让会员曲<strong style={{ color: 'var(--text-primary)' }}>在应用内播</strong>，登录一次即可。
+        </div>
+
+        {typeof window !== 'undefined' && window.electronAPI && (
+          <div style={{
+            padding: '10px 12px', marginBottom: 12, borderRadius: 8,
+            background: 'var(--bg-quaternary)', border: '1px solid var(--border-primary)',
+          }}>
+            <Button
+              type="primary"
+              size="small"
+              loading={loginSaving}
+              icon={<UserOutlined />}
+              onClick={() => { void handleOneClickLogin(); }}
+            >
+              一键登录（推荐）
+            </Button>
+            <span style={{ marginLeft: 10, fontSize: 11, color: 'var(--text-muted)' }}>
+              弹出窗口里扫码或登录 y.qq.com，检测到登录态会自动关窗、自动保存
+            </span>
+          </div>
+        )}
+
+        <div style={{ marginBottom: 6, color: 'var(--text-muted)' }}>
+          或手动粘贴 Cookie：
         </div>
         <ol style={{ margin: '0 0 10px 18px', padding: 0 }}>
           <li>浏览器打开 <a href="https://y.qq.com" target="_blank" rel="noreferrer">y.qq.com</a> 并登录（绿钻账号）</li>
