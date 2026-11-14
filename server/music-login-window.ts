@@ -175,6 +175,13 @@ export function createLoginWindowRunner(music: MusicClient): LoginWindowRunner {
       }
     });
 
+    // 页面加载后标题会被 y.qq.com 覆盖成「QQ音乐-千万正版音乐…」，
+    // 用户就看不出这窗是干嘛的了 —— 固定回自己的标题
+    win.on('page-title-updated', (event: any) => {
+      event.preventDefault();
+      try { win.setTitle('登录 QQ 音乐（关掉窗口 = 取消）'); } catch { /* 窗口已销毁 */ }
+    });
+
     // 加载登录页：y.qq.com 首页右上角有登录入口，扫码即可
     win.loadURL('https://y.qq.com/').catch(() => {
       // 网络挂了也别让窗口白屏：给个可点的提示
