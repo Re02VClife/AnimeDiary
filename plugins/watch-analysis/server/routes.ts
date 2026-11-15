@@ -218,7 +218,7 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
       store,
       reviewStore,
       appVersion,
-      describe: async ({ system, prompt, images, jsonMode, maxTokens, signal }) => {
+      describe: async ({ system, prompt, images, jsonMode, maxTokens, timeoutMs, signal }) => {
         const result = await getClient().chat({
           messages: [
             { role: 'system', content: system },
@@ -236,6 +236,8 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
           ],
           maxTokens,
           jsonMode,
+          // 影评要 110–180 秒，而网关默认 timeoutMs 只有 120 秒 —— 必须显式传
+          timeoutMs,
           purpose: 'watch-review',
           signal,
         })

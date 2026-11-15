@@ -40,6 +40,15 @@ const DEFAULT_MAX_SHEETS = 12
 /** 默认预算：200 万 token（和单集拉片的上限一致，影评通常只花几千） */
 const DEFAULT_BUDGET = 2_000_000
 
+/**
+ * 影评请求的超时（毫秒）。
+ *
+ * 实测一集 24 分钟的影评要 110–180 秒：输出 12000 token 是主要耗时，
+ * 而网关默认 timeoutMs 是 120000 —— 正好卡在边缘，稍微慢一点就"请求超时"。
+ * 这里显式压过默认值，不依赖用户在 AI 设置里调过。
+ */
+export const REVIEW_TIMEOUT_MS = 300_000
+
 export interface DescribeResult {
   text: string
   usage: { promptTokens: number; completionTokens: number; totalTokens: number }
@@ -56,6 +65,7 @@ export interface ReviewGeneratorOptions {
     images: string[]
     jsonMode: boolean
     maxTokens: number
+    timeoutMs: number
     signal?: AbortSignal
   }) => Promise<DescribeResult>
   appVersion: string
@@ -413,6 +423,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
         // 影评正文 + JSON 结构。实测 6000 会被截断（JSON 不完整 → 解析失败），
         // 一篇 24 分钟单集的影评正文 + 8 个维度 + 时间轴经常超 6000 token。
         maxTokens: 12000,
+        timeoutMs: REVIEW_TIMEOUT_MS,
         signal,
       })
 
