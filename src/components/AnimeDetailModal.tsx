@@ -72,6 +72,8 @@ interface AnimeDetailModalProps {
   contentHidden?: boolean;
   /** 点「音声」那一行的 ♪ → 打开音乐候选框 */
   onOpenMusic?: (anime: AnimeEntry) => void;
+  /** 点「AI 影评」→ 打开影评面板（拉片数据 + 多模态模型） */
+  onOpenAiReview?: (anime: AnimeEntry) => void;
 }
 
 /**
@@ -93,6 +95,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   posterHidden = false,
   contentHidden = false,
   onOpenMusic,
+  onOpenAiReview,
 }) => {
   const [scores, setScores] = useState<DimensionScore[]>([]);
   const [review, setReview] = useState('');
@@ -2403,6 +2406,11 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
           {/* 按钮 */}
           <div style={{ display:'flex',gap:6, flexWrap:'wrap' }}>
             <Button size="small" icon={<PictureOutlined />} onClick={()=>setImageManagerOpen(true)}>图片管理</Button>
+            {/* AI 影评：入口放在这里是因为它和海报/图片管理同属"这部番的素材"，
+                而不是评分区（评分区是用户自己的判断，影评是 AI 的判断） */}
+            {onOpenAiReview && (
+              <Button size="small" onClick={() => anime && onOpenAiReview(anime)}>🎬 AI 影评</Button>
+            )}
             {/* 保存外部封面到本地 */}
             {allImages.length > 0 && slideImage?.startsWith('http') && (
               <Button size="small" loading={savingPoster} onClick={handleSavePoster}>💾 保存封面</Button>

@@ -22,9 +22,13 @@ import type { AIUsage } from '../../../server/ai-gateway'
 import { checkDependencies } from './deps'
 import type { DependencyStatus } from './deps'
 import { createWatchStore } from './store'
+import { createReviewStore } from './review-store'
+import { createReviewGenerator, REVIEW_PROMPT_VERSION } from './review'
+import type { ReviewGenerator } from './review'
 import { createAnalyzer, resolveWorkerPath } from '../runtime/pipeline'
 import type { WatchAnalyzer } from '../runtime/pipeline'
 import type { WatchAnalyzeOptions } from '../runtime/protocol'
+import type { ReviewScope } from '../core/review-types'
 
 interface RouterLike {
   use(prefix: string, handler: (req: any, res: any) => void): void
@@ -206,6 +210,41 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
     return client
   }
 
+  // ── AI 影评 ──
+  const reviewStore = createReviewStore(opts.DATA_DIR)
+  let reviewGenerator: ReviewGenerator | null = null
+  function getReviewGenerator(): ReviewGenerator {
+    reviewGenerator ??= createReviewGenerator({
+      store,
+      reviewStore,
+      appVersion,
+      describe: async ({ system, prompt, images, jsonMode, maxTokens, signal }) => {
+        const result = await getClient().chat({
+          messages: [
+            { role: 'system', content: system },
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: prompt },
+                // 分镜图要看格子里的内容，用 high detail；low 会压成一团色块，读不出构图
+                ...images.map((url) => ({
+                  type: 'image_url' as const,
+                  image_url: { url, detail: 'high' as const },
+                })),
+              ],
+            },
+          ],
+          maxTokens,
+          jsonMode,
+          purpose: 'watch-review',
+          signal,
+        })
+        return { text: result.content, usage: result.usage, model: result.model }
+      },
+    })
+    return reviewGenerator
+  }
+
   router.use('/api/watch/ping', (_req, res) => {
     sendJson(res, 200, { ok: true, plugin: 'watch-analysis', phase: 1 })
   })
@@ -384,5 +423,143 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
     const key = query(req).get('key') || ''
     if (!key) { sendJson(res, 400, { ok: false, error: '缺少 key' }); return }
     sendJson(res, 200, { ok: true, episodes: store.listEpisodes(key) })
+  })
+
+  // ── 视频路径解析：前端点「AI 影评」时先问一句"这一集的文件在哪" ──
+  router.use('/api/watch/resolve', (req, res) => {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method Not Allowed' })
+      return
+    }
+    const params = query(req)
+    const key = params.get('key') || ''
+    const episode = Number(params.get('episode'))
+    if (!key) { sendJson(res, 400, { ok: false, error: '缺少 key' }); return }
+    if (!Number.isInteger(episode) || episode < 1) {
+      sendJson(res, 400, { ok: false, error: 'episode 必须是 ≥1 的整数' })
+      return
+    }
+    const file = opts.resolveLocalFile?.(key, episode) ?? null
+    sendJson(res, 200, { ok: true, file, bound: Boolean(file) })
+  })
+
+  // ── 影评元信息 ──
+  // **必须在 `/api/watch/review` 之前注册**：分发逻辑是"先注册先匹配"，
+  // 而 `/api/watch/review` 的前缀也会吃掉 `/api/watch/review/meta`。
+  router.use('/api/watch/review/meta', (req, res) => {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method Not Allowed' })
+      return
+    }
+    let model = 'unknown'
+    let provider = 'unknown'
+    try {
+      const cfg = getClient().publicConfig()
+      model = String((cfg as any).model ?? 'unknown')
+      provider = String((cfg as any).provider ?? 'unknown')
+    } catch {
+      // 还没配 AI 就当未知：影评面板会显示"未知"，仍能看历史结果
+    }
+    sendJson(res, 200, {
+      ok: true,
+      model,
+      provider,
+      promptVersion: REVIEW_PROMPT_VERSION,
+      budgetLimit: 2_000_000,
+    })
+  })
+
+  // ── 影评：读（GET）/ 生成（POST） ──
+  router.use('/api/watch/review', async (req, res) => {
+    // 精确路径判断：子路径 `review/meta` 已由上面那个 handler 接管
+    const pathname = String(req.url || '').split('?')[0]
+    if (pathname !== '/api/watch/review') {
+      sendJson(res, 404, { ok: false, error: 'Not Found' })
+      return
+    }
+
+    const scopeFromQuery = (): { scope: ReviewScope; key: string } => {
+      const params = query(req)
+      const key = params.get('key') || ''
+      const kind = params.get('kind') || 'series'
+      if (kind === 'episode') {
+        const episode = Number(params.get('episode'))
+        return { key, scope: { kind: 'episode', episode } }
+      }
+      return { key, scope: { kind: 'series' } }
+    }
+
+    // ── 读 ──
+    if (req.method === 'GET') {
+      const { key, scope } = scopeFromQuery()
+      if (!key) { sendJson(res, 400, { ok: false, error: '缺少 key' }); return }
+      if (scope.kind === 'episode' && (!Number.isInteger(scope.episode) || scope.episode < 1)) {
+        sendJson(res, 400, { ok: false, error: 'episode 必须是 ≥1 的整数' })
+        return
+      }
+      const review = getReviewGenerator().read({ key, scope })
+      if (!review) { sendJson(res, 404, { ok: false, error: '还没有生成过影评' }); return }
+      sendJson(res, 200, { ok: true, review })
+      return
+    }
+
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method Not Allowed' })
+      return
+    }
+
+    // ── 生成 ──
+    let body: any
+    try {
+      body = await readJsonBody(req, 8 * 1024 * 1024)
+    } catch (e) {
+      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) })
+      return
+    }
+
+    const key = typeof body?.key === 'string' ? body.key.trim() : ''
+    if (!key) { sendJson(res, 400, { ok: false, error: '缺少 key' }); return }
+
+    let scope: ReviewScope = { kind: 'series' }
+    const rawScope = body?.scope
+    if (rawScope && rawScope.kind === 'episode') {
+      const episode = Number(rawScope.episode)
+      if (!Number.isInteger(episode) || episode < 1) {
+        sendJson(res, 400, { ok: false, error: 'scope.episode 必须是 ≥1 的整数' })
+        return
+      }
+      scope = { kind: 'episode', episode }
+    }
+
+    // 生成要调多模态模型（30–180 秒），别让默认请求超时把连接掐掉
+    if (typeof res.setTimeout === 'function') res.setTimeout(0)
+    if (typeof req.setTimeout === 'function') req.setTimeout(0)
+
+    // 客户端断开（用户点了取消/关了面板）时要能中止调用，别白烧 token
+    const controller = new AbortController()
+    let closed = false
+    res.on('close', () => {
+      if (!closed) controller.abort()
+    })
+
+    try {
+      const { review, cached } = await getReviewGenerator().generate({
+        key,
+        scope,
+        userContext: body?.userContext && typeof body.userContext === 'object' ? body.userContext : undefined,
+        options: body?.options && typeof body.options === 'object' ? body.options : undefined,
+      }, controller.signal)
+      closed = true
+      sendJson(res, 200, { ok: true, review, cached })
+    } catch (e) {
+      closed = true
+      const message = e instanceof Error ? e.message : String(e)
+      // 用户主动取消不算错误，回 499 让前端安静收尾
+      if (controller.signal.aborted) {
+        sendJson(res, 499, { ok: false, error: '已取消' })
+        return
+      }
+      sendJson(res, 500, { ok: false, error: message })
+    }
   })
 }

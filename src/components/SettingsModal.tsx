@@ -35,6 +35,8 @@ interface SettingsModalProps {
   onClose: () => void;
   /** 打开「同步到 Bangumi」面板（该面板是独立 Modal，由 App 持有） */
   onOpenBangumiSync: () => void;
+  /** 打开「AI 影评」面板（同样是 App 持有的独立 Modal） */
+  onOpenAiReview?: () => void;
 }
 
 /** 一行设置：左侧标题 + 可选说明，右侧放控件 */
@@ -60,7 +62,7 @@ const Group: React.FC<{ title: string; children: React.ReactNode }> = ({ title, 
   </div>
 );
 
-const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose, onOpenBangumiSync }) => {
+const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose, onOpenBangumiSync, onOpenAiReview }) => {
   const {
     state, dispatch,
     handleImportExcel, handleExportExcel, handleOpenExcel,
@@ -249,6 +251,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose, onOpenBang
   // ── 工具 ──
   const tools = (
     <>
+      <Group title="AI 影评">
+        <Row
+          title="🎬 打开 AI 影评"
+          hint="基于拉片分析生成：分镜配图 + 时间轴 + AI 维度评分（与你的评分并排对比）"
+          onClick={() => onOpenAiReview?.()}
+        />
+      </Group>
       <Group title="数据维护">
         <Row title="🔄 修正检索名" hint="用 Bangumi 复核，低置信度的一律跳过不写" onClick={handleFixSearchAlias} />
         <Row title="🧮 按模板权重重建总评列" hint="按当前模板权重重写 Excel 的 D 列公式与缓存值" onClick={() => void handleRebuildOverallColumn()} />

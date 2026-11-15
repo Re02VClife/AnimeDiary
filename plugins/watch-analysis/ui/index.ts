@@ -13,6 +13,23 @@
 export { WatchTab } from './WatchTab'
 export type { WatchTabProps } from './WatchTab'
 
+// AI 影评面板：宿主在详情页 / 顶栏 / 设置三处打开它
+export {
+  default as AiReviewModal,
+  formatReviewClock,
+  formatEpisodeLabel,
+  formatScoreValue,
+  formatDiff,
+} from './AiReviewModal'
+export type { AiReviewModalProps } from './AiReviewModal'
+export {
+  generateReview,
+  getExistingReview,
+  listAnalyzedEpisodes,
+  resolveVideoFile,
+  getReviewMeta,
+} from './review-api'
+
 export { StoryboardViewer, formatTimecode, formatDuration } from './StoryboardViewer'
 export type { StoryboardViewerProps } from './StoryboardViewer'
 

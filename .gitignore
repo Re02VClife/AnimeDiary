@@ -47,6 +47,8 @@ ai-usage.jsonl
 
 # 拉片分析产物（宫格图 + 报告 JSON，按番剧/集数生成，可重算）
 watch-reports/
+# AI 影评（按番剧/范围生成，含模型与 token 记录；属于本机生成结果）
+ai-reviews/
 
 # 运行期数据（写操作日志，会随使用增长）
 operations.jsonl

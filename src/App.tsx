@@ -3,7 +3,7 @@
  *   状态管理已迁移到 AnimeContext，此处仅负责布局组合
  */
 import React, { useState, useMemo, useEffect } from 'react';
-import { Layout, Result, Button } from 'antd';
+import { Layout, Result, Button, Modal, Select } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useAnimeContext } from '../context/AnimeContext';
 import Sidebar from './components/Sidebar';
@@ -34,6 +34,8 @@ import LocalPlayerModal from './features/local-library/LocalPlayerModal';
 import { refreshLocalLibrary } from './features/local-library/local-store';
 import ScreenCapture from './components/ScreenCapture';
 import MusicPicker from '../features/music/MusicPicker';
+import { animeKeyFor } from '../core/music-links';
+import AiReviewModal from '../plugins/watch-analysis/ui/AiReviewModal';
 import PlayerBar from '../features/music/PlayerBar';
 import type { AnimeEntry } from './types';
 import type { QuickActionId } from './features/quick-actions/quick-actions';
@@ -58,6 +60,10 @@ const App: React.FC = () => {
   const [musicPickerAnime, setMusicPickerAnime] = useState<AnimeEntry | null>(null);
   /** 本地选集播放器针对哪部番（null = 关闭） */
   const [localPlayerAnime, setLocalPlayerAnime] = useState<AnimeEntry | null>(null);
+  /** 「AI 影评」面板针对哪部番（null = 关闭）；从详情面板或顶栏快捷栏打开 */
+  const [aiReviewAnime, setAiReviewAnime] = useState<AnimeEntry | null>(null);
+  /** 顶栏快捷栏没有"当前番"的概念，点「AI 影评」时先弹一个选番框 */
+  const [aiReviewPickerOpen, setAiReviewPickerOpen] = useState(false);
 
   /**
    * 启动时把本地番剧库读进内存。
@@ -83,6 +89,10 @@ const App: React.FC = () => {
         break;
       case 'ai-chat':
         dispatch({ type: 'OPEN_MODAL', modal: 'aiChat' });
+        break;
+      case 'ai-review':
+        // 顶栏是全局的，没有"当前番"——先让用户选一部，再进影评面板
+        setAiReviewPickerOpen(true);
         break;
       case 'bangumi-sync':
         setBangumiSyncOpen(true);
@@ -115,6 +125,30 @@ const App: React.FC = () => {
         break;
     }
   };
+
+  /**
+   * 把 AnimeEntry 翻译成影评面板要的「用户既有判断」。
+   *
+   * 这是 AI 影评质量的关键输入：有了用户自己的维度分和评价，
+   * 模型才能说「我在哪里不同意你」，而不是给一堆 7.5–9 的空洞分数。
+   * 注意它只用于**提示词锚点**，不会反向写回 Excel。
+   */
+  const aiReviewUserContext = useMemo(() => {
+    if (!aiReviewAnime) return undefined;
+    const scores: Record<string, number> = {};
+    for (const score of aiReviewAnime.scores) {
+      if (score.dimensionKey && Number.isFinite(score.score)) scores[score.dimensionKey] = score.score;
+    }
+    return {
+      title: aiReviewAnime.title,
+      ...(Object.keys(scores).length > 0 ? { scores } : {}),
+      ...(aiReviewAnime.review ? { review: aiReviewAnime.review } : {}),
+      ...(aiReviewAnime.tags.length > 0 ? { tags: aiReviewAnime.tags.map((tag) => tag.name) } : {}),
+      ...(aiReviewAnime.bangumiScore != null ? { bangumiScore: aiReviewAnime.bangumiScore } : {}),
+      ...(aiReviewAnime.currentEpisode != null ? { watchedEpisodes: aiReviewAnime.currentEpisode } : {}),
+      ...(aiReviewAnime.episodes != null ? { totalEpisodes: aiReviewAnime.episodes } : {}),
+    };
+  }, [aiReviewAnime]);
 
   // ── FLIP 海报过渡状态 ──
   const [flipState, setFlipState] = useState<{
@@ -510,6 +544,7 @@ const App: React.FC = () => {
         onSave={handleSaveAnime}
         editMode={detailEditMode}
         onOpenMusic={(entry) => setMusicPickerAnime(entry)}
+        onOpenAiReview={(entry) => setAiReviewAnime(entry)}
         onNavigate={(target) => {
           // 前后番剧切换：直接替换当前选中番剧，保持详情面板打开
           dispatch({ type: 'OPEN_MODAL', modal: 'detail', anime: target });
@@ -589,6 +624,7 @@ const App: React.FC = () => {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         onOpenBangumiSync={() => { setSettingsOpen(false); setBangumiSyncOpen(true); }}
+        onOpenAiReview={() => { setSettingsOpen(false); setAiReviewPickerOpen(true); }}
       />
 
       {/* Bangumi 同步：绑账号 → 对条目 → 传评分 */}
@@ -632,6 +668,44 @@ const App: React.FC = () => {
         onClose={() => dispatch({ type: 'CLOSE_MODAL', modal: 'backupHistory' })}
         onRestored={refreshAnimeList}
       />
+
+      {/* AI 影评：顶栏快捷栏入口没有"当前番"，先让用户选一部 */}
+      <Modal
+        open={aiReviewPickerOpen}
+        title="🎬 AI 影评 — 选一部番"
+        footer={null}
+        width={420}
+        onCancel={() => setAiReviewPickerOpen(false)}
+        destroyOnHidden
+      >
+        <Select
+          showSearch
+          autoFocus
+          style={{ width: '100%' }}
+          placeholder="搜索番名…"
+          optionFilterProp="label"
+          options={state.animeList.map((entry) => ({ value: entry.id, label: entry.title }))}
+          onChange={(id: string) => {
+            const target = state.animeList.find((entry) => entry.id === id) ?? null;
+            setAiReviewPickerOpen(false);
+            if (target) setAiReviewAnime(target);
+          }}
+        />
+        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-muted)' }}>
+          影评基于拉片分析的结果；还没有分析过的番，先到详情面板的「🎬 AI 影评」里生成。
+        </div>
+      </Modal>
+
+      {/* AI 影评面板：图文影评 + 时间轴 + AI 维度评分（与你的评分并排对比） */}
+      {aiReviewAnime && (
+        <AiReviewModal
+          open
+          onClose={() => setAiReviewAnime(null)}
+          animeKey={animeKeyFor(aiReviewAnime)}
+          title={aiReviewAnime.title}
+          userContext={aiReviewUserContext}
+        />
+      )}
 
       {/* AI 对话抽屉：贴在右侧、可拖拽调宽，不遮挡网格布局 */}
       <AIChatDrawer
