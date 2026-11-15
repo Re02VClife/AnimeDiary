@@ -26,6 +26,10 @@ import { alignReviewSegments, nowReviewTime, normalizeWatchCount, reviewFallback
 import ReviewTimelineView from './ReviewTimeline';
 import { useReviewDisplayPrefs } from '../features/review-timeline/review-display-prefs';
 import CharacterVoiceBar from '../../features/character-voice/CharacterVoiceBar';
+import WatchPanel from '../../plugins/watch-analysis/ui/WatchPanel';
+import type { WatchPanelEpisode } from '../../plugins/watch-analysis/ui/WatchPanel';
+import { useLocalEpisodes } from '../features/local-library/local-store';
+import { animeKeyFor } from '../../core/music-links';
 
 const { TextArea } = Input;
 const { Paragraph } = Typography;
@@ -105,6 +109,8 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   const [dimReviews, setDimReviews] = useState<DimensionReview[]>([]);
   const [category, setCategory] = useState<AnimeCategory>('watched');
   const [saving, setSaving] = useState(false);
+  /** 「拉片分析」面板开关（选集 + 逐帧看 + 生成分镜图） */
+  const [watchPanelOpen, setWatchPanelOpen] = useState(false);
   /** 评价时间底纹 / 悬停气泡的显示偏好（存 localStorage，设置面板里改） */
   const { prefs: reviewDisplayPrefs } = useReviewDisplayPrefs();
   const [tagInput, setTagInput] = useState('');
@@ -118,6 +124,23 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   const [charInput, setCharInput] = useState('');
   const [editingDimReview, setEditingDimReview] = useState<string | null>(null);
   const [editing, setEditing] = useState(false); // 编辑模式开关
+
+  /**
+   * 本地番剧库里的集 → 拉片面板要的形状。
+   *
+   * 为什么在这里拼绝对路径：`/api/watch/analyze` 也能自己从绑定目录解析，
+   * 但详情页已经拿到了扫好的 episodes（`useLocalEpisodes` 走的是内存里的 store），
+   * 直接传过去能省掉服务端一次全库 scanAll。
+   */
+  const localEpisodes = useLocalEpisodes(anime);
+  const watchEpisodes = useMemo<WatchPanelEpisode[]>(() => {
+    return (localEpisodes ?? []).map((ep) => ({
+      number: ep.number,
+      fileName: ep.fileName,
+      // relPath 是 `/` 分隔的相对路径；Windows 也认正斜杠
+      videoFile: `${ep.dirPath.replace(/[\\/]+$/, '')}/${ep.relPath}`,
+    }));
+  }, [localEpisodes]);
   const [sliderDim, setSliderDim] = useState<string | null>(null);
   const sliderRef = useRef<HTMLDivElement>(null);
   // 雷达图重绘 key（每次打开 +1，强制重播动画）
@@ -1400,6 +1423,7 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   );
 
   return (
+    <>
     <Modal
       title={
         editing ? (
@@ -2406,6 +2430,8 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
           {/* 按钮 */}
           <div style={{ display:'flex',gap:6, flexWrap:'wrap' }}>
             <Button size="small" icon={<PictureOutlined />} onClick={()=>setImageManagerOpen(true)}>图片管理</Button>
+            {/* 拉片分析：切镜 + 分镜宫格，是 AI 影评的数据来源 */}
+            <Button size="small" onClick={() => setWatchPanelOpen(true)}>📽️ 拉片分析</Button>
             {/* AI 影评：入口放在这里是因为它和海报/图片管理同属"这部番的素材"，
                 而不是评分区（评分区是用户自己的判断，影评是 AI 的判断） */}
             {onOpenAiReview && (
@@ -2716,6 +2742,19 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
       />
 
     </Modal>
+
+    {/* 拉片分析面板：叠在详情之上，关掉后回到详情，不打断浏览上下文 */}
+    {anime && (
+      <WatchPanel
+        open={watchPanelOpen}
+        onClose={() => setWatchPanelOpen(false)}
+        animeKey={animeKeyFor(anime)}
+        title={anime.title}
+        episodes={watchEpisodes}
+        initialEpisode={anime.currentEpisode}
+      />
+    )}
+    </>
   );
 };
 
