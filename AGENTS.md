@@ -1,7 +1,7 @@
 # AGENTS.md
 
 > 面向在本仓库工作的 AI 编码代理。取代旧 `CLAUDE.md`。
-> 最后核对：2026-11-14 · v1.3.15。细节见 `README.md` / `HANDOVER.md` / `AI.md`。
+> 最后核对：2026-11-16 · v1.3.26。细节见 `README.md` / `HANDOVER.md` / `AI.md`。
 
 ## 项目
 
@@ -30,6 +30,7 @@ npm run build      # 安装包；build:dir 为免安装目录
 ```text
 electron/   主进程、本地 API 服务、热更新
 server/     /api 路由与网络/文件逻辑（dev 与生产共用）
+plugins/    自包含插件：watch-analysis（拉片分析，Port/Adapter 分层，见下）
 features/   业务模块：anime-data、ai-analysis、ranking、search-add、
             image-management、character-*、media-complete、watch-calendar、music 等
 src/        组件、主题、类型、services；src/features/ 另有 bangumi-sync 等后加模块
@@ -39,6 +40,15 @@ tests/      Vitest；specs/ 旧需求快照；docs/ 截图
 ```
 
 **`features/` 与 `src/features/` 并存**，新增模块按现有引用位置放。
+
+**插件边界**：`plugins/watch-analysis/` 是自包含插件，主应用只在 `server/api-routes.ts`
+接触它一处（`registerWatchRoutes` + 注入 `resolveLocalFile`）。插件内部
+`core`（纯逻辑/类型）→ `ports`（六个可替换接口）← `adapters`（引擎实现）→ `runtime`（子进程/编排）
+→ `server`（路由/落盘）→ `ui`，依赖方向严格单向、adapters 互不知晓。
+换切镜/字幕/动感/配乐引擎 = 只加一个 adapter，pipeline 不动。
+它的 worker 是独立 ESM 子进程（`runtime/worker.mjs`），因为 `dsh-video-storyboard` 是纯 ESM
+而主进程是 CJS bundle，且解码一集会吃满 CPU。打包靠 `asarUnpack`（子进程读不到 asar 内文件）。
+
 
 ```text
 Excel ←→ /api/excel/* ←→ excel-service ←→ AnimeContext ←→ UI
