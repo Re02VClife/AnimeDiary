@@ -9,16 +9,16 @@ import { useTheme } from './ThemeContext';
 import type { IconKey, ThemeMode } from './types';
 
 // ── 内置图标集：文件名即 IconKey，缺哪个就回退 emoji ──
-const toUrlMap = (mods: Record<string, unknown>): Partial<Record<IconKey, string>> => {
-  const set: Partial<Record<IconKey, string>> = {};
+const toUrlMap = (mods: Record<string, unknown>): Record<string, string> => {
+  const set: Record<string, string> = {};
   Object.entries(mods).forEach(([file, url]) => {
     const key = file.split('/').pop()?.replace(/\.png$/i, '');
-    if (key) set[key as IconKey] = String(url);
+    if (key) set[key] = String(url);
   });
   return set;
 };
 
-const BUILTIN_ICONS: Record<ThemeMode, Partial<Record<IconKey, string>>> = {
+export const BUILTIN_ICONS: Record<ThemeMode, Record<string, string>> = {
   // 浅色：粉紫描边的圆角贴纸图标
   light: toUrlMap(
     import.meta.glob('../assets/icons/light/*.png', {
@@ -35,6 +35,34 @@ const BUILTIN_ICONS: Record<ThemeMode, Partial<Record<IconKey, string>>> = {
       import: 'default',
     }),
   ),
+};
+
+/**
+ * 角色头像图标（设置里的「图标库」可手动替换过来）。
+ * customIcons 里存的是 `char:<角色名>` 而不是 URL——打包后资源带哈希，
+ * 直接存 URL 会在下次构建后全部 404。
+ */
+export const CHARACTER_ICONS: Record<string, string> = {
+  ...toUrlMap(
+    import.meta.glob('../assets/icons/portraits-v2/*.png', {
+      eager: true,
+      query: '?url',
+      import: 'default',
+    }),
+  ),
+  ...toUrlMap(
+    import.meta.glob('../assets/icons/portraits-batch2/*.png', {
+      eager: true,
+      query: '?url',
+      import: 'default',
+    }),
+  ),
+};
+
+/** 把 customIcons 的存储值（char:名字 或 直接 URL）解析成可用的图片地址 */
+export const resolveIconValue = (value: string | undefined): string | undefined => {
+  if (!value) return undefined;
+  return value.startsWith('char:') ? CHARACTER_ICONS[value.slice(5)] : value;
 };
 
 // ── 默认 emoji 映射表 ──
@@ -105,7 +133,8 @@ interface AppIconProps {
 const AppIcon: React.FC<AppIconProps> = ({ name, size = 16, style, className }) => {
   const { state } = useTheme();
   // 自定义图标 > 当前主题内置图标 > emoji
-  const customUrl = state.customIcons[name] || BUILTIN_ICONS[state.themeMode]?.[name];
+  const customUrl =
+    resolveIconValue(state.customIcons[name]) || BUILTIN_ICONS[state.themeMode]?.[name];
 
   // 图片图标：渲染 <img>
   if (customUrl) {

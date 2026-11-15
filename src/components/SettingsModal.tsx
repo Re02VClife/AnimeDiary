@@ -21,6 +21,7 @@ import type { ThemeColors } from '../theme/types';
 import UpdatePanel from './UpdatePanel';
 import PosterFixModal from './PosterFixModal';
 import LocalLibrarySettings from '../features/local-library/LocalLibrarySettings';
+import IconLibrarySettings from './IconLibrarySettings';
 import {
   QUICK_ACTIONS,
   MAX_QUICK_ACTIONS,
@@ -290,6 +291,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose, onOpenBang
         <Tabs
           items={[
             { key: 'appearance', label: '外观', children: appearance },
+            { key: 'icons', label: '🎨 图标', children: <IconLibrarySettings /> },
             { key: 'data', label: '数据', children: data },
             { key: 'local', label: '📁 本地', children: <LocalLibrarySettings animeList={animeList} /> },
             { key: 'tools', label: '工具', children: tools },
