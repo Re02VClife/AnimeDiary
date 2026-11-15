@@ -82,6 +82,8 @@ export interface AiReview {
   promptVersion: string
   /** 本次消耗的 token（含图片） */
   tokens: number
+  /** 本次生成耗时（毫秒）；历史记录里读出来可以显示"这篇花了多久" */
+  elapsedMs?: number
   created: string
   appVersion: string
   /** AI 的维度评分；和用户评分**并排展示**，但不合并 */

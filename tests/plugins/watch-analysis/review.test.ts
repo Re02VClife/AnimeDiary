@@ -309,4 +309,42 @@ describe('createReviewGenerator', () => {
       .rejects.toThrow(/任何分镜图/)
     expect(describeMock).not.toHaveBeenCalled()
   })
+
+  it('options.episodes 收窄参与生成的集（配置页的勾选不能白传）', async () => {
+    seedReport(1)
+    const { store } = seedReport(2)
+    const reviewStore = createReviewStore(dir)
+    const { generator, describeMock } = makeGenerator({ store, reviewStore })
+
+    const { review } = await generator.generate({
+      key: KEY,
+      scope: { kind: 'series' },
+      options: { episodes: [2] },
+    })
+    expect(review.inputs.episodes).toEqual([2])
+    // 提示词里不该出现没勾选的 E1
+    const prompt: string = describeMock.mock.calls[0][0].prompt
+    expect(prompt).not.toContain('E1：')
+    expect(prompt).toContain('E2：')
+  })
+
+  it('options.episodes 全是没分析过的集时明确报错', async () => {
+    const { store } = seedReport(1)
+    const reviewStore = createReviewStore(dir)
+    const { generator } = makeGenerator({ store, reviewStore })
+    await expect(generator.generate({
+      key: KEY,
+      scope: { kind: 'series' },
+      options: { episodes: [99] },
+    })).rejects.toThrow(/勾选的集都还没有做过拉片分析/)
+  })
+
+  it('elapsedMs 落盘（历史记录要能显示这篇花了多久）', async () => {
+    const { store } = seedReport(1)
+    const reviewStore = createReviewStore(dir)
+    const { generator } = makeGenerator({ store, reviewStore })
+    const { review } = await generator.generate({ key: KEY, scope: { kind: 'series' } })
+    expect(typeof review.elapsedMs).toBe('number')
+    expect(review.elapsedMs).toBeGreaterThanOrEqual(0)
+  })
 })

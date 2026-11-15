@@ -310,11 +310,23 @@ function replaceSheetPlaceholders(markdown: string, key: string, available: Map<
 }
 
 export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGenerator {
-  const budgetLimit = opts.budgetLimit ?? DEFAULT_BUDGET
+  const defaultBudgetLimit = opts.budgetLimit ?? DEFAULT_BUDGET
 
-  function episodesForScope(scope: ReviewScope, reports: WatchReport[]): WatchReport[] {
-    if (scope.kind === 'episode') return reports.filter((r) => r.episode === scope.episode)
-    return reports
+  /**
+   * 按 scope + 用户勾选收窄要参与生成的集。
+   *
+   * `options.episodes` 是配置页"分析集数"多选的结果 —— 不接的话用户取消勾选等于没反应，
+   * 还会照常为没选的集花 token。
+   */
+  function episodesForScope(scope: ReviewScope, reports: WatchReport[], wanted?: number[]): WatchReport[] {
+    let picked = scope.kind === 'episode'
+      ? reports.filter((r) => r.episode === scope.episode)
+      : reports
+    if (Array.isArray(wanted) && wanted.length > 0) {
+      const allow = new Set(wanted.filter((n) => Number.isInteger(n) && n > 0))
+      picked = picked.filter((r) => allow.has(r.episode))
+    }
+    return picked
   }
 
   return {
@@ -323,6 +335,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
     },
 
     async generate(req, signal) {
+      const startedAt = Date.now()
       const scope = req.scope
       const allReports = opts.store.listEpisodes(req.key)
         .map((episode) => opts.store.read(req.key, episode))
@@ -332,9 +345,11 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
         throw new Error('这部番还没有任何一集的拉片分析：先做一集分析再生成影评')
       }
 
-      const selected = episodesForScope(scope, allReports)
+      const selected = episodesForScope(scope, allReports, req.options?.episodes)
       if (selected.length === 0) {
-        throw new Error(`第 ${scope.kind === 'episode' ? scope.episode : '?'} 集还没有做过拉片分析`)
+        throw new Error(scope.kind === 'episode'
+          ? `第 ${scope.episode} 集还没有做过拉片分析`
+          : '勾选的集都还没有做过拉片分析')
       }
 
       // 缓存：同一份报告 + 同一个模型 + 同一版提示词，不重复花钱
@@ -384,7 +399,9 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
         signal,
       })
 
-      if (result.usage.totalTokens > budgetLimit) {
+      // 预算：请求里带就用请求的（配置页那个 InputNumber），否则用默认 200 万
+      const budgetLimit = Math.max(0, Math.floor(req.options?.budget ?? defaultBudgetLimit))
+      if (budgetLimit > 0 && result.usage.totalTokens > budgetLimit) {
         // 花超了不算失败，但要如实记录 —— 让用户知道这篇影评"很贵"
         console.warn(`[watch-review] 本次 ${result.usage.totalTokens} token 超出预算 ${budgetLimit}`)
       }
@@ -421,6 +438,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
         model: result.model,
         promptVersion: REVIEW_PROMPT_VERSION,
         tokens: result.usage.totalTokens,
+        elapsedMs: Date.now() - startedAt,
         created: new Date().toISOString(),
         appVersion: opts.appVersion,
         scores,
