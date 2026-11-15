@@ -339,6 +339,24 @@ describe('createReviewGenerator', () => {
     })).rejects.toThrow(/勾选的集都还没有做过拉片分析/)
   })
 
+  it('同一张分镜图在正文里只插一次（模型常连着引用同一张图的几个格子）', async () => {
+    const { store } = seedReport(1)
+    const reviewStore = createReviewStore(dir)
+    const json = modelJson({
+      markdown: '看 {{sheet:ep01.png:2}}，然后 {{sheet:ep01.png:5}}，再看 {{sheet:ep01.png}}。',
+    })
+    const { generator } = makeGenerator({
+      store,
+      reviewStore,
+      describe: async () => ({ text: json, usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 }, model: 'm' }),
+    })
+    const { review } = await generator.generate({ key: KEY, scope: { kind: 'series' } })
+
+    // 三次引用同一张图 → 只渲染一次，其余降级成「（见上图）」
+    expect((review.markdown.match(/!\[/g) ?? [])).toHaveLength(1)
+    expect((review.markdown.match(/（见上图）/g) ?? [])).toHaveLength(2)
+  })
+
   it('elapsedMs 落盘（历史记录要能显示这篇花了多久）', async () => {
     const { store } = seedReport(1)
     const reviewStore = createReviewStore(dir)

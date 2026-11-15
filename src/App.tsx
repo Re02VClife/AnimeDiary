@@ -17,7 +17,7 @@ import CharacterCutoutModal from '../features/image-management/CharacterCutoutMo
 import TemplateManager from './components/TemplateManager';
 import ExcelEditor from './components/ExcelEditor';
 import { loadTemplates } from '../features/anime-data/template-service';
-import { getVisibleCategories } from './types';
+import { getVisibleCategories, DIMENSION_LABEL_MAP } from './types';
 import AppIcon from './theme/AppIcon';
 import AISettings from '../features/ai-analysis/AISettings';
 import AIChatDrawer from './components/AIChatDrawer';
@@ -137,7 +137,13 @@ const App: React.FC = () => {
     if (!aiReviewAnime) return undefined;
     const scores: Record<string, number> = {};
     for (const score of aiReviewAnime.scores) {
-      if (score.dimensionKey && Number.isFinite(score.score)) scores[score.dimensionKey] = score.score;
+      if (!score.dimensionKey || !Number.isFinite(score.score)) continue;
+      // **必须转成中文标签**：Excel 里存的是 `plot`/`animation` 这类 key，
+      // 而 AI 返回的 dimension 是「剧情」「作画」。雷达图按名字对齐，
+      // 不转的话用户那条序列永远是空的（实测踩到的 bug）。
+      // 自定义模板的 key 不在默认映射里时保留原 key，至少不会丢数据。
+      const label = DIMENSION_LABEL_MAP[score.dimensionKey] ?? score.dimensionKey;
+      scores[label] = score.score;
     }
     return {
       title: aiReviewAnime.title,

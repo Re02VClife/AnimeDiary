@@ -162,6 +162,9 @@ function buildPrompt(
     '5. 分镜图是压缩过的（格子上有编号），你能看到的细节有限；不要假装看清了表情或台词之外的小字。',
     '6. **分镜图底部可能有一条彩色带子，那是音轨/响度可视化，不是画面内容**。不要把它当成场景里的东西来评论。',
     '7. 图格子上的数字是格子编号，不是年份或字幕。',
+    '8. **正文里不要写「格N」「第N格」**——那是给程序看的内部编号，读者不知道那是什么。要引用画面就直接描述画面里有什么。',
+    '9. **只写你确实看清的东西**。分镜图是压缩过的，表情、小字、细节都可能看不清；看不清就明说"这一段看不清细节"，**不要根据时间码去猜画面内容**——猜错比不写更糟，用户会当场发现。',
+    '10. **评分维度只能用下面列出的那几个**，不要新增、不要改名、不要合并。',
     '',
     '输出必须是 JSON，不要任何解释文字。',
   ].join('\n')
@@ -191,6 +194,13 @@ function buildPrompt(
     )
     shotLines.push(`E${report.episode}：\n${lines.join('\n')}`)
   }
+
+  // 维度只能用用户模板里那些（中文标签由前端翻译好传进来）。
+  // 用户没打过分的维度不要去评 —— 那会让多出来的分数显得凭空出现。
+  const userDimensions = Object.keys(userContext.scores ?? {})
+  const dimensionList = userDimensions.length > 0
+    ? userDimensions.join(' / ')
+    : '剧情 / 作画 / 声音 / 制作 / 沉浸 / 人设 / 深度 / 电波'
 
   const prompt = [
     `【作品】${title}`,
@@ -226,8 +236,9 @@ function buildPrompt(
     '  "caveats": ["信息不足/不确定的地方"]',
     '}',
     '',
-    '评分维度必须沿用用户已经用过的那些维度名（如果用户没打分，就用：剧情 / 作画 / 声音 / 制作 / 沉浸 / 人设 / 深度 / 电波）。',
+    '评分维度**只能是这几个**（一个字都不要改）：' + dimensionList,
     '0–10 分，允许一位小数。**每个分数都必须有 reason，能给出 evidence 就必须给。**',
+    '用户没打过分的维度不要评 —— 多出来的分数会让雷达图看起来凭空多了一堆点。',
   ].filter((line) => line !== '').join('\n')
 
   return { system, prompt }
@@ -313,13 +324,20 @@ function normalizeCitations(raw: unknown, available: Map<number, Set<string>>): 
 /**
  * 把模型写的 `{{sheet:ep01.png}}` 换成真实 Markdown 图片。
  * 引用不存在的 sheet 就降级成纯文本（保留文件名），不让用户看到破图。
+ *
+ * **同一张图在正文里只插一次**：模型经常连着引用"格167、格170"和"格169、格171"，
+ * 它们落在同一张 9 格图里，替换后就是三四张一模一样的图，观感很差（用户实测反馈）。
+ * 重复引用降级成「（见上图）」，既保留语义又不重复渲染。
  */
 function replaceSheetPlaceholders(markdown: string, key: string, available: Map<number, Set<string>>): string {
+  const inserted = new Set<string>()
   return markdown.replace(/\{\{\s*sheet\s*:\s*([^}:]+?)\s*(?::\s*(\d+)\s*)?\}\}/gi, (whole, file: string, cell?: string) => {
     const episode = episodeFromSheetName(file)
     if (episode === null || !available.get(episode)?.has(file)) {
       return `[分镜 ${file}]`
     }
+    if (inserted.has(file)) return '（见上图）'
+    inserted.add(file)
     const query = new URLSearchParams({ key, episode: String(episode), file })
     const url = `/api/watch/sheet?${query.toString()}`
     return `![E${episode} 分镜${cell ? ` 第${cell}格` : ''}](${url})`
