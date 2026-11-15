@@ -1,0 +1,203 @@
+/**
+ * plugins/watch-analysis/core/types — 拉片分析的数据模型
+ *
+ * 这一层是**纯类型**：没有 IO、没有第三方依赖、不 import 任何 server/src。
+ * 所有 Port、adapter、runtime、UI 都只认这里的形状 —— 这是"换引擎不改上层"的前提。
+ *
+ * 命名约定（和 dsh-video-storyboard 保持一致，减少两边的翻译成本）：
+ *   - 时间一律用**秒**（number），帧号只出现在需要精确对齐的地方
+ *   - 一段 = 一个镜头，`Shot.i` 是它在整集里的序号（从 0 开始）
+ *   - tier 是格子档位（边长 1/tier，1..8），由切点密度算出来，不是用户传的
+ */
+
+/** 一集视频的来源描述。file 是绝对路径，video 由本地番剧库给。 */
+export interface VideoRef {
+  /** 本地番剧库的 key：`模板::标题` */
+  animeKey: string
+  /** 第几集，从 1 开始（与 UI 显示一致） */
+  episode: number
+  /** 绝对路径 */
+  file: string
+  duration: number
+  fps: number
+  width: number
+  height: number
+}
+
+/** 一次切点。t 是切点发生的秒数，score 是引擎自己的分数（不同引擎不可直接比大小）。 */
+export interface Cut {
+  t: number
+  score: number
+  /** 引擎标识，用于 A/B 对比时区分 */
+  engine: string
+}
+
+/**
+ * 一个镜头。
+ *
+ * `start`/`end` 是**半开区间** [start, end)，所以 `end - start` 就是时长，
+ * 相邻镜头首尾相接、不重叠、不留缝 —— 这条不变量由 runtime 校验。
+ */
+export interface Shot {
+  /** 整集内的序号，从 0 开始 */
+  i: number
+  start: number
+  end: number
+  /** 该镜头是否由"积分采样"补出来的（不是真切点） */
+  sampled: boolean
+  /** 格子档位 1..8；Phase 1 由 render adapter 回填，规划阶段为 1 */
+  tier: number
+}
+
+/** 一条台词/字幕。时间同样用秒。 */
+export interface Segment {
+  start: number
+  end: number
+  text: string
+  /** 来源标识，写进报告时要说清楚"这是 ASR 转的，可能有错字" */
+  source: string
+}
+
+/** 单镜头的动感测量 */
+export interface ShotMotion {
+  shot: number
+  /** 镜头内逐帧变化分的均值（0–255 口径，和 dsh-see-now 一致） */
+  mean: number
+  /** 峰值 */
+  peak: number
+  /** 是否达到"逐帧都有新画"的密度（粗估一拍一/二用） */
+  dense: boolean
+}
+
+/** 配乐证据。measurements 与 inferred 必须分开 —— 后者是模型推的，不是测出来的。 */
+export interface MusicEvidence {
+  from: number
+  to: number
+  /** 测量值：可被第三方复核 */
+  measurements: {
+    tempo?: number
+    beatCount?: number
+    loudness?: number
+    rms?: number
+    onsetRate?: number
+    /** 声学变化边界（秒），是测量，不是"这里是副歌" */
+    boundaries?: number[]
+  }
+  /** 推断值：引擎自己标的候选，报告里必须标注"推测" */
+  inferred?: {
+    tags?: string[]
+    instruments?: string[]
+    vocal?: boolean
+  }
+}
+
+/** 拼好的一张宫格图 */
+export interface Sheet {
+  /** 相对 watch-reports 的文件名，例如 `sheets/ep01-0.png` */
+  file: string
+  width: number
+  height: number
+  /** 这张图里放了几帧 */
+  cells: number
+  /** 每格在整集里对应的镜头序号，顺序即格子顺序（DP 装箱可能重排，这里给回映射） */
+  shots: number[]
+}
+
+/** token 账本 */
+export interface BudgetLedger {
+  limit: number
+  spent: number
+  byKind: Record<string, number>
+  /** 预占但还没结算的量，用于并发调用时不超卖 */
+  reserved: number
+  /** 已经熔断（花超或显式中止） */
+  exhausted: boolean
+}
+
+/** 一次任务的阶段。UI 的进度条读这个。 */
+export type WatchPhase =
+  | 'queued'
+  | 'probe'
+  | 'scan'
+  | 'render'
+  | 'transcript'
+  | 'motion'
+  | 'music'
+  | 'analyze'
+  | 'done'
+  | 'cancelled'
+  | 'failed'
+
+export interface WatchJobStatus {
+  jobId: string
+  phase: WatchPhase
+  /** 0–100；未知时为 -1 */
+  percent: number
+  message: string
+  /** 已经花掉的 token，UI 实时显示 */
+  spent: number
+  error?: string
+}
+
+/** 落盘的完整报告 */
+export interface WatchReport {
+  /** schema 版本：将来改结构时用来判断要不要迁移 */
+  schema: 1
+  key: string
+  episode: number
+  video: Omit<VideoRef, 'animeKey' | 'episode'>
+  /** 每个环节实际用的后端，写进报告让人知道这份结果是谁算的 */
+  engine: {
+    storyboard: string
+    cut: string
+    transcript: string
+    motion: string
+    music: string
+  }
+  shots: Array<Shot & { motion?: ShotMotion; cell?: { sheet: number; x: number; y: number } }>
+  cuts: Cut[]
+  transcript?: {
+    source: string
+    segments: Segment[]
+    /** 引擎自报的不可信项，例如 `cuts unreliable here` */
+    notes?: string[]
+  }
+  motion?: {
+    /** 整集折线：[秒, 变化分] */
+    curve: Array<[number, number]>
+    perShot: number[]
+  }
+  audio?: {
+    windows: MusicEvidence[]
+  }
+  sheets: Sheet[]
+  report?: {
+    markdown: string
+    model: string
+    tokens: number
+    at: string
+  }
+  budget: BudgetLedger
+  timing: {
+    total: number
+    probe?: number
+    scan?: number
+    render?: number
+    transcript?: number
+    motion?: number
+    music?: number
+    analyze?: number
+  }
+  /** 生成这一份时的时间与软件版本，便于排查"旧报告为什么长这样" */
+  created: string
+  appVersion: string
+}
+
+/** 引擎就绪状态。所有 Provider 都返回它，缺依赖时**不抛错**，让 pipeline 降级。 */
+export interface ReadyState {
+  ok: boolean
+  /** ok=false 时必填：缺什么、怎么补 */
+  reason?: string
+  /** 给 UI 的补充说明（版本号、路径等） */
+  detail?: string
+}

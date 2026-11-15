@@ -5,11 +5,45 @@
  * 挂载方式与其它路由一致：registerAIRoutes(router, { DATA_DIR, fetchImpl })。
  */
 import { createAIClient, AIGatewayError } from './ai-gateway';
-import type { AIStoredConfig, ChatMessage, AIToolSpec, AIToolChoice } from './ai-gateway';
+import type { AIStoredConfig, ChatMessage, AIToolSpec, AIToolChoice, ContentPart } from './ai-gateway';
 import { normalizeAIPermission } from '../core/ai-permission';
 
 interface RouterLike {
   use(prefix: string, handler: (req: any, res: any) => void): void;
+}
+
+/**
+ * 收敛前端传来的多模态正文。
+ *
+ * 前端可以传 `string` 或 `ContentPart[]`，但这两种都是**不可信输入**：
+ * 这里只认 `text` / `image_url` 两种 part，其余一律丢弃（不是报错 —— 一条消息里
+ * 混了不认识的 part 时，丢掉它比整条请求失败合理）。`image_url.url` 必须是
+ * 字符串且非空；`detail` 只接受三个合法值。
+ *
+ * 返回 null 表示这条消息没有可用正文，调用方应整条丢弃。
+ */
+export function normalizeContent(raw: unknown): string | ContentPart[] | null {
+  if (typeof raw === 'string') return raw;
+  if (raw == null) return '';
+  if (!Array.isArray(raw)) return null;
+  const parts: ContentPart[] = [];
+  for (const part of raw) {
+    if (!part || typeof part !== 'object') continue;
+    const type = (part as any).type;
+    if (type === 'text' && typeof (part as any).text === 'string') {
+      parts.push({ type: 'text', text: (part as any).text });
+    } else if (type === 'image_url') {
+      const url = (part as any).image_url?.url;
+      if (typeof url !== 'string' || !url.trim()) continue;
+      const detail = (part as any).image_url?.detail;
+      const normalized: ContentPart = { type: 'image_url', image_url: { url } };
+      if (detail === 'auto' || detail === 'low' || detail === 'high') {
+        (normalized as any).image_url.detail = detail;
+      }
+      parts.push(normalized);
+    }
+  }
+  return parts.length > 0 ? parts : null;
 }
 
 export interface AIRoutesOptions {
@@ -141,16 +175,16 @@ export function registerAIRoutes(router: RouterLike, opts: AIRoutesOptions): voi
       return;
     }
 
-    // 只保留四种角色；content 允许 null（带工具调用的 assistant 消息常常没有正文）
+    // 只保留四种角色；content 允许 null（带工具调用的 assistant 消息常常没有正文），
+    // 也允许 ContentPart[]（看图）。不合法的 part 在 normalizeContent 里被丢掉。
     const VALID_ROLES = new Set(['system', 'user', 'assistant', 'tool']);
     const messages: ChatMessage[] = Array.isArray(body?.messages)
       ? body.messages
-          .filter((m: any) => m && VALID_ROLES.has(m.role) && (typeof m.content === 'string' || m.content == null))
-          .map((m: any) => {
-            const msg: ChatMessage = {
-              role: m.role,
-              content: typeof m.content === 'string' ? m.content : '',
-            };
+          .filter((m: any) => m && VALID_ROLES.has(m.role))
+          .map((m: any): ChatMessage | null => {
+            const content = normalizeContent(m.content);
+            if (content === null) return null;
+            const msg: ChatMessage = { role: m.role, content };
             /**
              * 工具调用的往返必须完整：assistant 的 tool_calls 与 tool 消息的
              * tool_call_id 若被剥掉，模型会以为上次调用没发生过，于是一遍遍重复调用。
@@ -161,6 +195,7 @@ export function registerAIRoutes(router: RouterLike, opts: AIRoutesOptions): voi
             if (typeof m.tool_call_id === 'string') msg.tool_call_id = m.tool_call_id;
             return msg;
           })
+          .filter((m: ChatMessage | null): m is ChatMessage => m !== null)
       : [];
     if (messages.length === 0) {
       sendJson(res, 400, { ok: false, error: 'messages 不能为空' });

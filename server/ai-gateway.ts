@@ -235,9 +235,28 @@ export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
 export type { AIToolCall, AIToolSpec, AIToolChoice } from '../core/ai-tools';
 import type { AIToolCall, AIToolSpec, AIToolChoice } from '../core/ai-tools';
 
+/**
+ * 多模态消息的一段内容（OpenAI 兼容格式）。
+ *
+ * 为什么放在这个文件：`ChatMessage` 是请求体的唯一出口，
+ * `buildBody()` 直接 `messages: req.messages` 透传 —— 所以只要这里放宽类型，
+ * 图片就自动进了请求，不需要在网关里另开一条序列化路径。
+ *
+ * 只支持 OpenAI 的 `text` / `image_url` 两种 part：其它方言（Anthropic 的
+ * `image`+`source.base64`、Gemini 的 `inline_data`）由调用方在 provider 层转换，
+ * 网关不做方言适配 —— 它只负责把「已经标准化的东西」发出去。
+ */
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string; detail?: 'auto' | 'low' | 'high' } };
+
+/** 消息正文：纯文本（绝大多数调用）或多模态分段（看图） */
+export type ChatContent = string | ContentPart[];
+
 export interface ChatMessage {
   role: ChatRole;
-  content: string;
+  /** 纯文本或 ContentPart[]；带工具调用的 assistant 消息可能为空字符串 */
+  content: ChatContent;
   /** assistant 消息里的工具调用：回传给模型时必须原样带上，否则它会重复调用 */
   tool_calls?: { id: string; type: 'function'; function: { name: string; arguments: string } }[];
   /** role='tool' 时说明这是对哪一次调用的结果 */

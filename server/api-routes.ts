@@ -26,6 +26,7 @@ import { sanitizeVoiceName } from '../core/voice-clips';
 import { createBgRemover } from './bg-removal';
 import { decodeImage, encodePng } from './image-codec';
 import { registerAIRoutes } from './ai-routes';
+import { registerWatchRoutes } from '../plugins/watch-analysis/server/routes';
 import { createOperationLog } from './operations-log';
 import type { OperationSource } from './operations-log';
 import { createMusicClient } from './music-qq';
@@ -147,6 +148,10 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
 
   // AI 分析：模型调用全部走本地网关（浏览器直连第三方会被 CORS 拦下）
   registerAIRoutes(router, { DATA_DIR, fetchImpl });
+
+  // 拉片分析插件：/api/watch/*（依赖自检、看图自检；后续加任务/报告端点）
+  // 插件边界见 plugins/watch-analysis/index.ts —— 主应用只在这一行接触它
+  registerWatchRoutes(router, { DATA_DIR, fetchImpl });
 
   // ── 辅助函数（原 vite.config.ts 内） ──
   /** 列出快照文件（文件名带时间戳，排序即 旧 → 新） */
