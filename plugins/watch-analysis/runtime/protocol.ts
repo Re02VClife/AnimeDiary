@@ -33,7 +33,13 @@ export interface WatchWorkerRequest {
 export interface WatchAnalyzeOptions {
   /** 档位策略，默认 auto */
   strategy?: RenderStrategy
-  /** 最多取多少帧；0 = 不封顶 */
+  /**
+   * 最多取多少帧。
+   *
+   * **不传 / 0 = 自动按「每 10 秒一帧」算**（worker 里实现）。
+   * 别传 0 又期待"不封顶"：一集 24 分钟按每个镜头一帧会有 597 帧，
+   * 塞进 8 张宫格图后每格只剩 66×56 px，模型读不出 staff 表和表情 —— 实测踩过。
+   */
   maxFrames?: number
   /** 最多几张图；0 = 不封顶 */
   maxSheets?: number

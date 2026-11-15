@@ -108,9 +108,27 @@ async function main() {
     // ── 3. 排版 + 拼图 ──
     emit({ type: 'progress', phase: 'render', percent: 45, message: '生成分镜宫格图' })
     const renderStarted = Date.now()
+
+    /*
+     * 默认密度：每 10 秒一帧。
+     *
+     * 为什么不按"一个镜头一帧"：实测一集 23.7 分钟的动画切出 597 个镜头，
+     * 塞进 8 张 798×502 的宫格图后每格只有 66×56 px —— 模型只能看出
+     * "这是文字块/这是人脸"，读不出 staff 表上的名字，也看不清表情。
+     * 按 10 秒一帧约 144 帧 → 每张 11 格、每格约 265×180 px（面积大 13 倍），
+     * 实测 staff 表和脸部表情都能辨认，token 只多用 2.25 倍（1864 → 4194）。
+     *
+     * 用户显式传 maxFrames 时以用户为准（前端「密度」选项会传）。
+     */
+    const autoMaxFrames = Math.max(60, Math.round((info.duration || 0) / 10))
+    const effectiveMaxFrames = options.maxFrames && options.maxFrames > 0
+      ? options.maxFrames
+      : autoMaxFrames
+    log(`maxFrames: ${effectiveMaxFrames}${options.maxFrames ? '（指定）' : `（自动：${Math.round(info.duration)}s / 10）`}`)
+
     const rendered = await renderStoryboardProvider.render(video, cutResult.cuts, {
       strategy: options.strategy,
-      maxFrames: options.maxFrames,
+      maxFrames: effectiveMaxFrames,
       maxSheets: options.maxSheets,
       budgetPixels: options.budgetPixels,
       outDir: options.outDir,

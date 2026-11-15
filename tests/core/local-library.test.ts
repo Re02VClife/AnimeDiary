@@ -122,6 +122,17 @@ describe('isVideoFile', () => {
     expect(isVideoFile('a.ass')).toBe(false);
     expect(isVideoFile('a.jpg')).toBe(false);
   });
+
+  it('HLS 分片不算视频（否则一部番会变成几百集）', () => {
+    // Kazumi 把一集拆成 seg_00000.ts…seg_00327.ts + playlist.m3u8
+    for (const name of ['seg_00000.ts', 'seg_00327.ts', 'seg_0.m4s', 'SEG_12.TS']) {
+      expect(isVideoFile(name)).toBe(false);
+    }
+    // 但完整的 ts 视频仍然要认
+    expect(isVideoFile('01.ts')).toBe(true);
+    expect(isVideoFile('ep01.ts')).toBe(true);
+    expect(isVideoFile('EP01.M2TS')).toBe(true);
+  });
 });
 
 describe('formatEpisodeNumber', () => {

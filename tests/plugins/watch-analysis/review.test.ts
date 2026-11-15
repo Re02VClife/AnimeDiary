@@ -347,4 +347,66 @@ describe('createReviewGenerator', () => {
     expect(typeof review.elapsedMs).toBe('number')
     expect(review.elapsedMs).toBeGreaterThanOrEqual(0)
   })
+
+  it('图多时均匀采样，不会只把前半集给 AI 看', async () => {
+    // 一集 18 张图（24 分钟按每 10 秒一帧的实际产物），只允许取 6 张
+    const store = createWatchStore(dir)
+    const report = makeReport(1, {
+      sheets: Array.from({ length: 18 }, (_, i) => ({
+        file: `ep01-${i + 1}.png`, width: 800, height: 450, cells: 10, shots: [],
+      })),
+    })
+    store.write(report)
+    const sheetDir = store.sheetDir(KEY, 1)
+    fs.mkdirSync(sheetDir, { recursive: true })
+    // 每张塞不同标记，好在 describe 收到的 data URL 里认出来是哪一张
+    for (let i = 0; i < 18; i += 1) {
+      fs.writeFileSync(path.join(sheetDir, `ep01-${i + 1}.png`), Buffer.concat([TINY_PNG, Buffer.from(`#${i}#`)]))
+    }
+
+    const reviewStore = createReviewStore(dir)
+    const { generator, describeMock } = makeGenerator({ store, reviewStore })
+    const { review } = await generator.generate({
+      key: KEY,
+      scope: { kind: 'series' },
+      options: { maxSheets: 6 },
+    })
+
+    expect(review.inputs.sheets).toBe(6)
+    const images: string[] = describeMock.mock.calls[0][0].images
+    expect(images).toHaveLength(6)
+    const decode = (url: string) => Buffer.from(url.split(',')[1], 'base64').toString('latin1')
+    // 18 取 6 → step=3 → 索引 0,3,6,9,12,15，首尾都要覆盖到
+    expect(decode(images[0])).toContain('#0#')
+    expect(decode(images[5])).toContain('#15#')
+  })
+
+  it('多集时按比例分配图片配额，后面的集不会一张都看不到', async () => {
+    const store = createWatchStore(dir)
+    for (const episode of [1, 2, 3]) {
+      const report = makeReport(episode, {
+        sheets: Array.from({ length: 10 }, (_, i) => ({
+          file: `ep0${episode}-${i + 1}.png`, width: 800, height: 450, cells: 10, shots: [],
+        })),
+      })
+      store.write(report)
+      const sheetDir = store.sheetDir(KEY, episode)
+      fs.mkdirSync(sheetDir, { recursive: true })
+      for (const sheet of report.sheets) fs.writeFileSync(path.join(sheetDir, sheet.file), TINY_PNG)
+    }
+
+    const reviewStore = createReviewStore(dir)
+    const { generator, describeMock } = makeGenerator({ store, reviewStore })
+    const { review } = await generator.generate({
+      key: KEY,
+      scope: { kind: 'series' },
+      options: { maxSheets: 6 },
+    })
+
+    // 6 张 / 3 集 = 每集 2 张，一共 6 张，三集都有
+    expect(review.inputs.sheets).toBe(6)
+    expect(review.inputs.episodes).toEqual([1, 2, 3])
+    const images: string[] = describeMock.mock.calls[0][0].images
+    expect(images).toHaveLength(6)
+  })
 })

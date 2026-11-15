@@ -23,6 +23,19 @@
 /** 视频扩展名（尽量宽：用户可能从别处拷来 mkv/avi） */
 const VIDEO_EXT = /\.(mp4|mkv|webm|avi|mov|m4v|ts|m2ts|flv|wmv|rmvb)$/i;
 
+/**
+ * HLS / DASH 分片：不是独立视频，而是**一集的一部分**。
+ *
+ * Kazumi 这类下载器把一集存成 `1/seg_00000.ts … 1/seg_00327.ts` + `playlist.m3u8`，
+ * 每片几百 KB 到几 MB、几秒钟。如果按扩展名把它们当视频收进来，
+ * 一部 6 集的番会变成 1774 个「集」，拉片分析只会对其中 7 秒的一个分片做分析
+ * —— 这是实测踩到的坑（学生会也有洞！ 554779）。
+ *
+ * 正确用法是先用 `ffmpeg -i playlist.m3u8 -c copy out.mp4` 合并成整集；
+ * 这里只负责**不要把分片当成集**，不替用户做合并（那是破坏性的写操作）。
+ */
+const HLS_SEGMENT = /^seg_?\d+\.(ts|m4s)$/i;
+
 /** 一个「存储地址」（用户导入的根目录） */
 export interface LocalSource {
   /** 绝对路径，如 E:\kazhumi Anime */
@@ -114,6 +127,8 @@ export function emptyLibrary(): LocalLibraryFile {
 }
 
 export function isVideoFile(fileName: string): boolean {
+  // HLS 分片先挡掉：它们是同一集的一部分，收进来会让"集数"变成几百
+  if (HLS_SEGMENT.test(fileName)) return false;
   return VIDEO_EXT.test(fileName);
 }
 

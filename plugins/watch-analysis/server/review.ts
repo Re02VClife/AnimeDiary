@@ -27,8 +27,15 @@ export const REVIEW_PROMPT_VERSION = '1.0.0'
 /** 单图大小上限：超过就跳过（4MB 的 PNG 转 base64 会撑爆请求体） */
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024
 
-/** 一次生成最多看几张图。图按像素计费不贵，但太多会挤占上下文。 */
-const DEFAULT_MAX_SHEETS = 8
+/**
+ * 一次生成最多看几张图。
+ *
+ * 不能太小：一集 24 分钟按「每 10 秒一帧」会出 18 张图，
+ * 只取前 8 张等于只让 AI 看了半集（这是实测发现的 bug——
+ * 之前的实现是顺序取前 N 张，不是均匀采样）。
+ * 也不能太大：每张 PNG 转 base64 约 400KB，24 张就是 9MB 请求体，网关会顶不住。
+ */
+const DEFAULT_MAX_SHEETS = 12
 
 /** 默认预算：200 万 token（和单集拉片的上限一致，影评通常只花几千） */
 const DEFAULT_BUDGET = 2_000_000
@@ -356,28 +363,37 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       const existing = opts.reviewStore.read(req.key, scope)
       if (!req.options?.force && existing) return { review: existing, cached: true }
 
-      // ── 收集图片 ──
+      // ── 收集图片（每集配额 + 集内均匀采样）──
+      // 旧实现是"顺序取前 N 张"：多集时前面的集吃满配额、后面的集一张都看不到；
+      // 单集时只看得到前半集（一集 18 张图只给前 8 张）。这里改成每集按比例分，
+      // 且集内跳着取，保证覆盖全片。
       const available = new Map<number, Set<string>>()
       const sheetsByEpisode = new Map<number, Array<{ file: string; cells: number }>>()
       const images: string[] = []
-      const maxSheets = Math.max(1, Math.min(16, req.options?.maxSheets ?? DEFAULT_MAX_SHEETS))
-      let usedSheets = 0
+      const maxSheets = Math.max(1, Math.min(24, req.options?.maxSheets ?? DEFAULT_MAX_SHEETS))
+      const perEpisode = Math.max(1, Math.floor(maxSheets / selected.length))
 
       for (const report of selected) {
-        const files = new Set<string>()
+        // 所有 sheet 都登记为"可引用"，即使这次没取到图 —— 引用会降级成文字，不会破图
+        available.set(report.episode, new Set(report.sheets.map((sheet) => sheet.file)))
+
         const meta: Array<{ file: string; cells: number }> = []
-        for (const sheet of report.sheets) {
-          files.add(sheet.file)
-          if (usedSheets >= maxSheets) continue
-          const filePath = opts.store.sheetFile(report.key, report.episode, sheet.file)
-          if (!filePath) continue
-          const dataUrl = readImageAsDataUrl(filePath)
-          if (!dataUrl) continue
-          images.push(dataUrl)
-          meta.push({ file: sheet.file, cells: sheet.cells })
-          usedSheets += 1
+        const total = report.sheets.length
+        if (total > 0) {
+          const take = Math.min(perEpisode, total)
+          // 18 张里取 6 张 → 索引 0/3/6/9/12/15，覆盖开头到结尾
+          const step = total / take
+          for (let index = 0; index < take; index += 1) {
+            const sheet = report.sheets[Math.min(total - 1, Math.floor(index * step))]
+            if (!sheet || meta.some((picked) => picked.file === sheet.file)) continue
+            const filePath = opts.store.sheetFile(report.key, report.episode, sheet.file)
+            if (!filePath) continue
+            const dataUrl = readImageAsDataUrl(filePath)
+            if (!dataUrl) continue
+            images.push(dataUrl)
+            meta.push({ file: sheet.file, cells: sheet.cells })
+          }
         }
-        available.set(report.episode, files)
         sheetsByEpisode.set(report.episode, meta)
       }
 
