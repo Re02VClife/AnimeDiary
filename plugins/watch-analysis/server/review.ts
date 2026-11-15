@@ -410,8 +410,9 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
         prompt,
         images,
         jsonMode: true,
-        // 影评正文 + JSON 结构，给足输出预算
-        maxTokens: 6000,
+        // 影评正文 + JSON 结构。实测 6000 会被截断（JSON 不完整 → 解析失败），
+        // 一篇 24 分钟单集的影评正文 + 8 个维度 + 时间轴经常超 6000 token。
+        maxTokens: 12000,
         signal,
       })
 
@@ -425,7 +426,10 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       // ── 解析 ──
       const parsed = extractJson(result.text)
       if (!parsed || typeof parsed !== 'object') {
-        throw new Error('模型没有返回合法 JSON，影评生成失败（可以重试一次）')
+        // 只报"没返回 JSON"等于什么都没说 —— 把输出结尾带进错误里，
+        // 才能判断是"被截断"（结尾是半截 JSON）还是"根本没按格式写"（结尾是正文）
+        const tail = result.text.slice(-240).replace(/\s+/g, ' ')
+        throw new Error(`模型没有返回合法 JSON（输出 ${result.text.length} 字符，结尾：「${tail}」）`)
       }
       const record = parsed as Record<string, unknown>
 
