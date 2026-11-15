@@ -1,0 +1,155 @@
+{
+  "input": "tests/fixtures/watch-sample.mp4",
+  "topKeys": [
+    "audio",
+    "cached",
+    "cuts",
+    "evidencePath",
+    "info",
+    "plan",
+    "provenance",
+    "sheets",
+    "summary",
+    "threshold",
+    "timing",
+    "totalDuration",
+    "transcript",
+    "window"
+  ],
+  "info": {
+    "duration": 9,
+    "width": 640,
+    "height": 360,
+    "coded": {
+      "width": 640,
+      "height": 360
+    },
+    "rotation": 0,
+    "fps": 24,
+    "sar": 1,
+    "aspect": 1.7777777777777777,
+    "videoCodec": "h264",
+    "container": "mov,mp4,m4a,3gp,3g2,mj2",
+    "hasAudio": true,
+    "hasSubtitle": false,
+    "audioCodec": "aac",
+    "path": "tests/fixtures/watch-sample.mp4"
+  },
+  "window": {
+    "from": 0,
+    "to": 9,
+    "duration": 9
+  },
+  "summary": {
+    "p50": 0,
+    "p90": 0,
+    "p95": 0,
+    "p99": 0,
+    "max": 255,
+    "frames": 215
+  },
+  "threshold": 80,
+  "cutsCount": 2,
+  "cutsHead": [
+    {
+      "t": 3,
+      "score": 255,
+      "type": null,
+      "evidence": null
+    },
+    {
+      "t": 6,
+      "score": 255,
+      "type": null,
+      "evidence": null
+    }
+  ],
+  "plan": {
+    "cells": 4,
+    "sheets": 1,
+    "frames": 4,
+    "produced": 4,
+    "strategy": "compact",
+    "strategyNote": "每帧尺寸降一档",
+    "maxFrames": 0,
+    "markBoost": 3,
+    "budget": 360000,
+    "canvas": {
+      "width": 798,
+      "height": 443
+    },
+    "cell": {
+      "w": 399,
+      "h": 222,
+      "readability": "scene"
+    },
+    "fill": 100,
+    "sheetFill": [
+      100
+    ],
+    "tiers": {
+      "2": 4
+    },
+    "rawTiers": {
+      "1": 1,
+      "2": 2
+    },
+    "sampleMarks": 0,
+    "pick": "mid",
+    "burn": "index",
+    "scanGap": 0,
+    "adaptive": false,
+    "trace": [],
+    "inputs": {
+      "duration": 9,
+      "scanThreshold": 80,
+      "motion": 0,
+      "cuts": 2,
+      "hasSubtitle": false,
+      "meanLufs": -21.8
+    },
+    "fps": 24
+  },
+  "transcript": {
+    "source": "off",
+    "model": null,
+    "segments": 0,
+    "chars": 0,
+    "charsPerSec": 0
+  },
+  "audioShape": "{\n  series: Array(90)<number(-120.691)>\n  step: number(0.1)\n  mean: number(-21.8)\n  peak: number(-21.5)\n  dynamic: number(0.3)\n  samples: number(90)\n  silences: []\n  source: string(\"ebur128\")\n  summary: string(\"mean -21.8 LUFS, peak -21.5 LUFS, 0.3 dB dynamic range, 0 si…\")\n}",
+  "sheets": [
+    {
+      "sheet": 1,
+      "width": 798,
+      "height": 502,
+      "cellW": 399,
+      "cellH": 222,
+      "cellsCount": 4,
+      "cellKeys": [
+        "cell",
+        "i",
+        "sheet",
+        "t_end",
+        "t_frame",
+        "t_start",
+        "tier"
+      ],
+      "firstCell": {
+        "i": 1,
+        "sheet": 1,
+        "t_start": 0,
+        "t_end": 2.25,
+        "t_frame": 1.125,
+        "tier": 2,
+        "cell": {
+          "w": 399,
+          "h": 222
+        }
+      }
+    }
+  ],
+  "savedFiles": [
+    "C:\\Users\\24628\\AppData\\Local\\Temp\\storyboard-contract-YCJDvu\\sheet.png"
+  ]
+}

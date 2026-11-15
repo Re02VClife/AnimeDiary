@@ -149,9 +149,36 @@ export function createApiHandler({ DATA_DIR, fetchImpl, loadOrt }: ApiContext) {
   // AI 分析：模型调用全部走本地网关（浏览器直连第三方会被 CORS 拦下）
   registerAIRoutes(router, { DATA_DIR, fetchImpl });
 
-  // 拉片分析插件：/api/watch/*（依赖自检、看图自检；后续加任务/报告端点）
-  // 插件边界见 plugins/watch-analysis/index.ts —— 主应用只在这一行接触它
-  registerWatchRoutes(router, { DATA_DIR, fetchImpl });
+  // 拉片分析插件：/api/watch/*（依赖自检、看图自检、分析任务、报告与宫格图）
+  // 插件边界见 plugins/watch-analysis/index.ts —— 主应用只在这一处接触它。
+  // resolveLocalFile 把「本地番剧库 → 视频绝对路径」这个宿主知识注入进去，
+  // 插件自己不需要 import local-library（它也不该知道磁盘结构）。
+  let localFileCache: { at: number; folders: ReturnType<typeof localLib.scanAll> } | null = null;
+  registerWatchRoutes(router, {
+    DATA_DIR,
+    fetchImpl,
+    resolveLocalFile: (key, episode) => {
+      try {
+        const binding = localLib.getBindings()[key];
+        if (!binding || binding.dirPaths.length === 0) return null;
+        // scanAll 要扫盘：60 秒内复用，避免连点几次「分析」就扫几遍整个库
+        const now = Date.now();
+        if (!localFileCache || now - localFileCache.at > 60_000) {
+          localFileCache = { at: now, folders: localLib.scanAll() };
+        }
+        for (const dir of binding.dirPaths) {
+          const folder = localFileCache.folders.find((f) => f.dirPath === dir);
+          if (!folder) continue;
+          const found = folder.episodes.find((e) => e.number === episode);
+          // relPath 用 `/` 分隔，path.join 会按平台规范化
+          if (found) return path.join(dir, found.relPath);
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    },
+  });
 
   // ── 辅助函数（原 vite.config.ts 内） ──
   /** 列出快照文件（文件名带时间戳，排序即 旧 → 新） */

@@ -66,8 +66,13 @@
       "dist/**/*",
       "electron/**/*",
       "server/api-routes.cjs",
+      "plugins/**/*",
       "package.json",
       "!**/*.map"
+    ],
+    "asarUnpack": [
+      "plugins/**/*",
+      "node_modules/dsh-video-storyboard/**/*"
     ],
     "win": {
       "target": [

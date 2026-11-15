@@ -47,6 +47,8 @@ export interface Shot {
   sampled: boolean
   /** 格子档位 1..8；Phase 1 由 render adapter 回填，规划阶段为 1 */
   tier: number
+  /** 这一格时间范围内的台词（storyboard 的 alignCells 结果），可能为空 */
+  text?: string
 }
 
 /** 一条台词/字幕。时间同样用秒。 */
@@ -93,7 +95,11 @@ export interface MusicEvidence {
 
 /** 拼好的一张宫格图 */
 export interface Sheet {
-  /** 相对 watch-reports 的文件名，例如 `sheets/ep01-0.png` */
+  /**
+   * **相对本集图片目录**的文件名，例如 `ep01.png` / `ep01-2.png`。
+   * 取图时传 `/api/watch/sheet?key=&episode=&file=`，服务端会拼到
+   * `{DATA_DIR}/watch-reports/{key}/{episode 的图目录}/` 下面并挡掉目录穿越。
+   */
   file: string
   width: number
   height: number
@@ -167,6 +173,32 @@ export interface WatchReport {
     curve: Array<[number, number]>
     perShot: number[]
   }
+  /**
+   * 音轨响度（EBU R128），来自 storyboard 的 audio 条。
+   *
+   * 它和 `audio`（配乐证据）是**两件事**：
+   *   - loudness 是"这一集有多大声"的原始测量，谁都能复核
+   *   - audio 是"这段是不是音乐、什么调式"的推断，需要 MEE
+   * Phase 1 只有前者；Phase 4 接 MEE 之后两者都有。
+   */
+  loudness?: {
+    mean: number
+    peak: number
+    /** 每 step 秒一个采样，单位 LUFS */
+    series: number[]
+    step: number
+    /** 静音区间（秒） */
+    silences: Array<[number, number]>
+  }
+  /** 这次排版实际用的参数，写进报告便于"同样一集下次要多久/多少图"的复盘 */
+  render?: {
+    strategy: string
+    sheets: number
+    frames: number
+    fill: number
+    canvas: { width: number; height: number }
+    tiers: Record<string, number>
+  }
   audio?: {
     windows: MusicEvidence[]
   }
@@ -191,6 +223,8 @@ export interface WatchReport {
   /** 生成这一份时的时间与软件版本，便于排查"旧报告为什么长这样" */
   created: string
   appVersion: string
+  /** 引擎警告：不致命但要让人知道的分析局限（例如「连续运镜导致切点数不可信」） */
+  notes?: string[]
 }
 
 /** 引擎就绪状态。所有 Provider 都返回它，缺依赖时**不抛错**，让 pipeline 降级。 */

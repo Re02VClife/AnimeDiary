@@ -1,18 +1,30 @@
 /**
  * server/routes — /api/watch/* 路由
  *
- * Phase 0 只提供三件事：
- *   GET  /api/watch/deps         依赖自检（ffmpeg / python / 分镜引擎 / ASR / MEE）
- *   GET  /api/watch/ping         插件挂载成功没有
- *   POST /api/watch/vision-test  真发一张图给模型，确认多模态链路通
+ * 端点一览：
+ *   GET  /api/watch/ping          插件挂载成功没有
+ *   GET  /api/watch/deps          依赖自检（ffmpeg / python / 分镜引擎 / ASR / MEE）
+ *   POST /api/watch/vision-test   真发一张图给模型，确认多模态链路通
+ *   POST /api/watch/analyze       起一个分析任务 → { jobId }
+ *   GET  /api/watch/status        任务进度
+ *   POST /api/watch/cancel        取消任务（杀进程树）
+ *   GET  /api/watch/report        读落盘报告
+ *   GET  /api/watch/sheet         读宫格图（PNG）
+ *   GET  /api/watch/episodes      某一部番已经分析过的集号
  *
- * 后面几期会在这里加 analyze / status / cancel / report / sheet / budget。
- * 路由层只做「解析请求 → 调 runtime → 回 JSON」，不放任何业务逻辑。
+ * 路由层只做三件事：解析请求、调 runtime、回 JSON/二进制。
+ * 任何"怎么切镜""怎么排版"的逻辑都不许出现在这个文件里。
  */
+import fs from 'node:fs'
+import path from 'node:path'
 import { createAIClient, AIGatewayError } from '../../../server/ai-gateway'
 import type { AIUsage } from '../../../server/ai-gateway'
 import { checkDependencies } from './deps'
 import type { DependencyStatus } from './deps'
+import { createWatchStore } from './store'
+import { createAnalyzer, resolveWorkerPath } from '../runtime/pipeline'
+import type { WatchAnalyzer } from '../runtime/pipeline'
+import type { WatchAnalyzeOptions } from '../runtime/protocol'
 
 interface RouterLike {
   use(prefix: string, handler: (req: any, res: any) => void): void
@@ -21,6 +33,17 @@ interface RouterLike {
 export interface WatchRoutesOptions {
   DATA_DIR: string
   fetchImpl?: (url: string, init?: Record<string, unknown>) => Promise<any>
+  /**
+   * 由宿主注入：按「模板::标题 + 集号」解析出本地视频的绝对路径。
+   *
+   * 为什么不让前端传 file：前端只知道 `dirPath + relPath`（本地番剧库的
+   * `LocalFolder.dirPath` / `LocalEpisode.relPath`），拼绝对路径是**平台相关**的
+   * （Windows 反斜杠、UNC、盘符大小写），而且把"这台机器的磁盘路径"暴露给页面没什么好处。
+   * 宿主侧已经有 `createLocalLibrary`，让它解析最省事。
+   *
+   * 返回 null = 这一集没绑定/找不到，路由会回 400 并告诉用户去「设置 → 本地」绑定目录。
+   */
+  resolveLocalFile?: (key: string, episode: number) => string | null
 }
 
 function sendJson(res: any, status: number, payload: unknown): void {
@@ -58,13 +81,31 @@ function readJsonBody(req: any, limitBytes = 1024 * 1024): Promise<any> {
   })
 }
 
+/** 从 URL 取参数（宿主没帮我们解析，所以每次自己 new URL） */
+function query(req: any): URLSearchParams {
+  try {
+    return new URL(req.url || '/', 'http://localhost').searchParams
+  } catch {
+    return new URLSearchParams()
+  }
+}
+
+/** 读软件版本：dev 走 cwd，打包后读不到就记 unknown（它只是报告里的元数据） */
+function readAppVersion(): string {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'))
+    return typeof pkg.version === 'string' ? pkg.version : 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
 /**
  * 自检用的测试图：64×64，深绿底 + 红色圆。
  *
  * 为什么内置而不是现场画：这张图唯一的作用是「确认模型真的收到了像素」，
  * 它必须**在所有机器上都一样**（同样的字节、同样的 token 数），
- * 现场生成会因为编码器差异导致结果不可比。绿底红圆的好处是：
- * 即使模型只看一眼也能说出两个明确特征，便于判断"是看了图"还是"在瞎编"。
+ * 现场生成会因为编码器差异导致结果不可比。
  */
 const VISION_TEST_PNG =
   'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA' +
@@ -86,29 +127,16 @@ interface VisionTestResult {
   hint?: string
 }
 
-/**
- * 真发一次多模态请求。
- *
- * 判断标准不是「有没有报错」，而是**回答里提到绿/红/圆** ——
- * 一个不支持图片的模型不会报错，它会忽略图、然后编一句"我看到一张图片"。
- * 所以这里把原文交回去让人判断，同时给一个 `looksLikeItSaw` 的粗判供 UI 显示。
- */
 async function runVisionTest(client: ReturnType<typeof createAIClient>): Promise<VisionTestResult> {
   try {
     const result = await client.chat({
       messages: [
-        {
-          role: 'system',
-          content: '你是一个图片描述器。只描述你实际看到的内容，不要推测、不要客套。',
-        },
+        { role: 'system', content: '你是一个图片描述器。只描述你实际看到的内容，不要推测、不要客套。' },
         {
           role: 'user',
           content: [
             { type: 'text', text: '这张图里有什么？只回答底色和图形，20 个字以内。' },
-            {
-              type: 'image_url',
-              image_url: { url: `data:image/png;base64,${VISION_TEST_PNG}`, detail: 'low' },
-            },
+            { type: 'image_url', image_url: { url: `data:image/png;base64,${VISION_TEST_PNG}`, detail: 'low' } },
           ],
         },
       ],
@@ -136,17 +164,42 @@ async function runVisionTest(client: ReturnType<typeof createAIClient>): Promise
   }
 }
 
-/** 粗判：回答里有没有出现测试图的两个特征。只用于 UI 提示，不参与判定。 */
 function looksLikeItSaw(answer: string | undefined): boolean {
   if (!answer) return false
   const text = answer.toLowerCase()
-  const color = /绿|green|红|red/.test(text)
-  const shape = /圆|circle|round|圆点/.test(text)
-  return color && shape
+  return /绿|green|红|red/.test(text) && /圆|circle|round|圆点/.test(text)
+}
+
+/** 分析请求的 options 白名单：前端传什么就收什么，其余一律丢弃 */
+function pickAnalyzeOptions(raw: any): Partial<WatchAnalyzeOptions> {
+  const out: Partial<WatchAnalyzeOptions> = {}
+  if (!raw || typeof raw !== 'object') return out
+  if (typeof raw.strategy === 'string') out.strategy = raw.strategy as WatchAnalyzeOptions['strategy']
+  if (Number.isFinite(raw.maxFrames)) out.maxFrames = Math.max(0, Math.round(raw.maxFrames))
+  if (Number.isFinite(raw.maxSheets)) out.maxSheets = Math.max(0, Math.round(raw.maxSheets))
+  if (Number.isFinite(raw.budgetPixels)) out.budgetPixels = Math.max(100_000, Math.round(raw.budgetPixels))
+  if (raw.transcript === 'auto' || raw.transcript === 'off') out.transcript = raw.transcript
+  if (Number.isFinite(raw.from)) out.from = Math.max(0, Number(raw.from))
+  if (Number.isFinite(raw.to)) out.to = Math.max(0, Number(raw.to))
+  return out
 }
 
 export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions): void {
-  // 复用同一个 client：内部会缓存配置，反复 new 会每次读盘
+  // ── 依赖注装（一次性）──
+  const store = createWatchStore(opts.DATA_DIR)
+  const appVersion = readAppVersion()
+  let analyzer: WatchAnalyzer | null = null
+  function getAnalyzer(): WatchAnalyzer {
+    analyzer ??= createAnalyzer({
+      DATA_DIR: opts.DATA_DIR,
+      workerPath: resolveWorkerPath(),
+      store,
+      appVersion,
+    })
+    return analyzer
+  }
+
+  // AI 客户端延迟创建：大多数 /api/watch/* 端点不需要它
   let client: ReturnType<typeof createAIClient> | null = null
   function getClient() {
     client ??= createAIClient({ DATA_DIR: opts.DATA_DIR, fetchImpl: opts.fetchImpl })
@@ -154,7 +207,7 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
   }
 
   router.use('/api/watch/ping', (_req, res) => {
-    sendJson(res, 200, { ok: true, plugin: 'watch-analysis', phase: 0 })
+    sendJson(res, 200, { ok: true, plugin: 'watch-analysis', phase: 1 })
   })
 
   router.use('/api/watch/deps', (req, res) => {
@@ -172,7 +225,6 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
     const blocking = deps.filter((d) => d.required && !d.ok)
     sendJson(res, 200, {
       ok: blocking.length === 0,
-      /** 必装项是否齐全：不全就无法开始分析 */
       canRun: blocking.length === 0,
       deps,
       missingRequired: blocking.map((d) => d.id),
@@ -185,12 +237,152 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
       return
     }
     try {
-      await readJsonBody(req) // 允许空体，但非法 JSON 要报出来
+      await readJsonBody(req)
     } catch (e) {
       sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) })
       return
     }
     const result = await runVisionTest(getClient())
     sendJson(res, 200, { ...result, looksLikeItSaw: looksLikeItSaw(result.answer) })
+  })
+
+  // ── 起任务 ──
+  router.use('/api/watch/analyze', async (req, res) => {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method Not Allowed' })
+      return
+    }
+    let body: any
+    try {
+      body = await readJsonBody(req)
+    } catch (e) {
+      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) })
+      return
+    }
+
+    const key = typeof body?.key === 'string' ? body.key.trim() : ''
+    const episode = Number(body?.episode)
+    if (!key) { sendJson(res, 400, { ok: false, error: '缺少 key（模板::标题）' }); return }
+    if (!Number.isInteger(episode) || episode < 1) { sendJson(res, 400, { ok: false, error: 'episode 必须是 ≥1 的整数' }); return }
+
+    // file 可以不给：宿主从本地番剧库按 key+episode 解析（前端只该传 key/episode）
+    let file = typeof body?.file === 'string' ? body.file.trim() : ''
+    if (!file) {
+      const resolved = opts.resolveLocalFile?.(key, episode) ?? null
+      if (!resolved) {
+        sendJson(res, 400, {
+          ok: false,
+          error: '找不到这一集的本地文件：先在「设置 → 本地」绑定番剧目录，或在请求里直接给 file（绝对路径）',
+        })
+        return
+      }
+      file = resolved
+    }
+    if (!path.isAbsolute(file)) { sendJson(res, 400, { ok: false, error: 'file 必须是绝对路径' }); return }
+    if (!fs.existsSync(file)) { sendJson(res, 400, { ok: false, error: `找不到视频文件：${file}` }); return }
+
+    try {
+      const { jobId } = getAnalyzer().analyze({
+        key,
+        episode,
+        file,
+        options: pickAnalyzeOptions(body?.options),
+      })
+      sendJson(res, 200, { ok: true, jobId })
+    } catch (e) {
+      sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) })
+    }
+  })
+
+  // ── 进度 ──
+  router.use('/api/watch/status', (req, res) => {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method Not Allowed' })
+      return
+    }
+    const jobId = query(req).get('jobId') || ''
+    if (!jobId) { sendJson(res, 400, { ok: false, error: '缺少 jobId' }); return }
+    const job = getAnalyzer().status(jobId)
+    if (!job) { sendJson(res, 404, { ok: false, error: '任务不存在或已过期（进程重启会丢）' }); return }
+    sendJson(res, 200, { ok: true, job })
+  })
+
+  // ── 取消 ──
+  router.use('/api/watch/cancel', async (req, res) => {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method Not Allowed' })
+      return
+    }
+    let body: any
+    try {
+      body = await readJsonBody(req)
+    } catch (e) {
+      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) })
+      return
+    }
+    const jobId = typeof body?.jobId === 'string' ? body.jobId : ''
+    if (!jobId) { sendJson(res, 400, { ok: false, error: '缺少 jobId' }); return }
+    const cancelled = getAnalyzer().cancel(jobId)
+    sendJson(res, 200, { ok: cancelled, cancelled })
+  })
+
+  // ── 读报告 ──
+  router.use('/api/watch/report', (req, res) => {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method Not Allowed' })
+      return
+    }
+    const params = query(req)
+    const key = params.get('key') || ''
+    const episode = Number(params.get('episode'))
+    if (!key) { sendJson(res, 400, { ok: false, error: '缺少 key' }); return }
+    if (!Number.isInteger(episode) || episode < 1) { sendJson(res, 400, { ok: false, error: 'episode 必须是 ≥1 的整数' }); return }
+    const report = store.read(key, episode)
+    if (!report) { sendJson(res, 404, { ok: false, error: '这一集还没有分析结果' }); return }
+    sendJson(res, 200, { ok: true, report })
+  })
+
+  // ── 读宫格图 ──
+  router.use('/api/watch/sheet', (req, res) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      sendJson(res, 405, { ok: false, error: 'Method Not Allowed' })
+      return
+    }
+    const params = query(req)
+    const key = params.get('key') || ''
+    const episode = Number(params.get('episode'))
+    const file = params.get('file') || ''
+    if (!key || !Number.isInteger(episode) || episode < 1) {
+      sendJson(res, 400, { ok: false, error: '缺少 key / episode' })
+      return
+    }
+    // 文件名由报告给出（相对 sheetDir），这里再挡一次目录穿越
+    const target = store.sheetFile(key, episode, file)
+    if (!target) { sendJson(res, 400, { ok: false, error: '非法的文件名' }); return }
+    let stat: fs.Stats
+    try {
+      stat = fs.statSync(target)
+    } catch {
+      sendJson(res, 404, { ok: false, error: '图片不存在' })
+      return
+    }
+    res.statusCode = 200
+    res.setHeader('Content-Type', 'image/png')
+    res.setHeader('Content-Length', String(stat.size))
+    // 图一旦生成就不会变（文件名带集号），可以放心长缓存
+    res.setHeader('Cache-Control', 'private, max-age=86400')
+    if (req.method === 'HEAD') { res.end(); return }
+    fs.createReadStream(target).pipe(res)
+  })
+
+  // ── 已分析的集号 ──
+  router.use('/api/watch/episodes', (req, res) => {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method Not Allowed' })
+      return
+    }
+    const key = query(req).get('key') || ''
+    if (!key) { sendJson(res, 400, { ok: false, error: '缺少 key' }); return }
+    sendJson(res, 200, { ok: true, episodes: store.listEpisodes(key) })
   })
 }

@@ -45,6 +45,9 @@ Thumbs.db
 ai-config.json
 ai-usage.jsonl
 
+# 拉片分析产物（宫格图 + 报告 JSON，按番剧/集数生成，可重算）
+watch-reports/
+
 # 运行期数据（写操作日志，会随使用增长）
 operations.jsonl
 operations.1.jsonl

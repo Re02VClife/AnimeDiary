@@ -23,7 +23,7 @@ export interface RenderOptions {
   maxSheets?: number
   /** 单图像素预算；不传用引擎默认（约 360k = 800×450） */
   budgetPixels?: number
-  /** 台词，用于把字幕烧进清单（不是烧进图） */
+  /** 已经解析好的台词，用于把字幕写进文本清单（不是烧进图里）；没有就传 undefined */
   transcript?: Segment[]
   /** 输出目录（绝对路径），图写在这里 */
   outDir: string
@@ -36,12 +36,10 @@ export interface RenderPlan {
   strategy: RenderStrategy
   /** 每档各多少帧，例如 { 1: 2, 2: 5, 4: 18 } */
   tiers: Record<number, number>
-  /** 填充率 0–1 */
+  /** 填充率 **0–100**（百分比，不是 0–1）—— storyboard 原样给的就是这个口径 */
   fill: number
   /** 总帧数 */
   frames: number
-  /** 预计 token（只算图，不含文本）；引擎自己报，供预算管理器参考 */
-  approxTokens: number
 }
 
 export interface RenderResult {
