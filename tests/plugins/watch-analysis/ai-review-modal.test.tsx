@@ -43,7 +43,11 @@ vi.mock('echarts-for-react', async () => {
 
 /* ── mock：影评 HTTP 客户端（组件只 import 这些函数） ── */
 const apiMocks = vi.hoisted(() => ({
-  generateReviewStream: vi.fn(),
+  // 生成已经改成「后台任务 + 轮询」：不再有 generateReviewStream
+  startReviewRun: vi.fn(),
+  getReviewRun: vi.fn(),
+  listReviewRuns: vi.fn(),
+  cancelReviewRun: vi.fn(),
   getExistingReview: vi.fn(),
   getReviewMeta: vi.fn(),
   listAnalyzedEpisodes: vi.fn(),
@@ -55,7 +59,10 @@ vi.mock('../../../plugins/watch-analysis/ui/review-api', async (importOriginal) 
     await importOriginal<typeof import('../../../plugins/watch-analysis/ui/review-api')>()
   return {
     ...actual,
-    generateReviewStream: apiMocks.generateReviewStream,
+    startReviewRun: apiMocks.startReviewRun,
+    getReviewRun: apiMocks.getReviewRun,
+    listReviewRuns: apiMocks.listReviewRuns,
+    cancelReviewRun: apiMocks.cancelReviewRun,
     getExistingReview: apiMocks.getExistingReview,
     getReviewMeta: apiMocks.getReviewMeta,
     listAnalyzedEpisodes: apiMocks.listAnalyzedEpisodes,
@@ -162,7 +169,24 @@ beforeEach(() => {
     budgetLimit: 2_000_000,
   })
   apiMocks.resolveVideoFile.mockResolvedValue('D:\\anime\\葬送的芙莉莲\\01.mp4')
-  apiMocks.generateReviewStream.mockResolvedValue({ review: REVIEW, cached: false })
+  // 后台任务默认：没有正在跑的、创建就返回 runId、轮询立刻是 done
+  apiMocks.listReviewRuns.mockResolvedValue([])
+  apiMocks.startReviewRun.mockResolvedValue({ runId: 'run-test' })
+  apiMocks.getReviewRun.mockResolvedValue({
+    runId: 'run-test',
+    key: KEY,
+    scope: { kind: 'series' },
+    status: 'done',
+    phase: 'done',
+    message: '完成',
+    chars: 0,
+    reasoningChars: 0,
+    startedAt: Date.now() - 1000,
+    finishedAt: Date.now(),
+    review: REVIEW,
+    cached: false,
+  })
+  apiMocks.cancelReviewRun.mockResolvedValue(true)
 })
 
 afterEach(() => {
@@ -376,7 +400,19 @@ describe('AiReviewModal', () => {
 
   it('生成失败：错误 Alert 显示后端原文，并给重试入口', async () => {
     const failure = '模型没有返回合法 JSON，影评生成失败（可以重试一次）'
-    apiMocks.generateReviewStream.mockRejectedValue(new Error(failure))
+    apiMocks.getReviewRun.mockResolvedValue({
+      runId: 'run-test',
+      key: KEY,
+      scope: { kind: 'series' },
+      status: 'failed',
+      phase: 'call',
+      message: '失败',
+      chars: 0,
+      reasoningChars: 0,
+      startedAt: Date.now() - 1000,
+      finishedAt: Date.now(),
+      error: failure,
+    })
 
     await mountModal()
 
@@ -396,28 +432,36 @@ describe('AiReviewModal', () => {
     expect(findButton('重试')).not.toBeUndefined()
   })
 
-  it('生成中显示真实进度：阶段文案 + 已生成字数 + 图数', async () => {
-    let release: (() => void) | null = null
-    apiMocks.generateReviewStream.mockImplementation(
-      async (
-        _request: unknown,
-        _signal: unknown,
-        onEvent: (event: Record<string, unknown>) => void,
-      ) => {
-        onEvent({
-          type: 'phase',
-          phase: 'call',
-          message: '把 6 张分镜图和 3 集报告交给模型',
-          sheets: 6,
-          episodes: [1, 2, 3],
-        })
-        onEvent({ type: 'delta', chars: 1234, reasoningChars: 0 })
-        await new Promise<void>((resolve) => {
-          release = resolve
-        })
-        return { review: REVIEW, cached: false }
-      },
-    )
+  it('生成中显示真实进度：后台任务快照里的阶段 + 已生成字数', async () => {
+    let finished = false
+    apiMocks.getReviewRun.mockImplementation(async () => (
+      finished
+        ? {
+            runId: 'run-test',
+            key: KEY,
+            scope: { kind: 'series' },
+            status: 'done',
+            phase: 'done',
+            message: '完成',
+            chars: 0,
+            reasoningChars: 0,
+            startedAt: Date.now() - 1000,
+            finishedAt: Date.now(),
+            review: REVIEW,
+            cached: false,
+          }
+        : {
+            runId: 'run-test',
+            key: KEY,
+            scope: { kind: 'series' },
+            status: 'running',
+            phase: 'call',
+            message: '把 6 张分镜图和 3 集报告交给模型',
+            chars: 1234,
+            reasoningChars: 0,
+            startedAt: Date.now() - 5000,
+          }
+    ))
 
     await mountModal()
     await waitFor(() => bodyText().includes('还没有生成过影评'))
@@ -428,14 +472,11 @@ describe('AiReviewModal', () => {
     })
 
     await waitFor(() => bodyText().includes('已生成 1,234 字'))
-    // 阶段文案来自 SSE 事件，不是按秒数猜的那套
+    // 阶段文案来自任务快照（服务端真实阶段），不是按秒数猜的那套
     expect(bodyText()).toContain('把 6 张分镜图和 3 集报告交给模型')
-    expect(bodyText()).toContain('模型正在看 6 张分镜')
+    expect(bodyText()).toContain('关掉面板不会中断')
 
-    await act(async () => {
-      release?.()
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    })
+    finished = true
     await waitFor(() => bodyText().includes('评分对比'))
   })
 
@@ -456,7 +497,20 @@ describe('AiReviewModal', () => {
   })
 
   it('缓存命中：顶部提示「这是上次生成的结果」并给重新生成', async () => {
-    apiMocks.generateReviewStream.mockResolvedValue({ review: REVIEW, cached: true })
+    apiMocks.getReviewRun.mockResolvedValue({
+      runId: 'run-test',
+      key: KEY,
+      scope: { kind: 'series' },
+      status: 'done',
+      phase: 'done',
+      message: '完成',
+      chars: 0,
+      reasoningChars: 0,
+      startedAt: Date.now() - 1000,
+      finishedAt: Date.now(),
+      review: REVIEW,
+      cached: true,
+    })
 
     await mountModal()
 

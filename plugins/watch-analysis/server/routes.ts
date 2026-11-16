@@ -16,6 +16,7 @@
  * 任何"怎么切镜""怎么排版"的逻辑都不许出现在这个文件里。
  */
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { createAIClient, AIGatewayError } from '../../../server/ai-gateway'
 import type { AIUsage } from '../../../server/ai-gateway'
@@ -25,6 +26,9 @@ import { createWatchStore } from './store'
 import { createReviewStore } from './review-store'
 import { createReviewGenerator, REVIEW_PROMPT_VERSION } from './review'
 import type { ReviewGenerator } from './review'
+import { createReviewRunManager } from './review-runs'
+import { createWatchSettings } from './settings'
+import { resolvePerformance } from '../core/performance'
 import { createAnalyzer, resolveWorkerPath } from '../runtime/pipeline'
 import type { WatchAnalyzer } from '../runtime/pipeline'
 import type { WatchAnalyzeOptions } from '../runtime/protocol'
@@ -195,6 +199,8 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
   // ── 依赖注装（一次性）──
   const store = createWatchStore(opts.DATA_DIR)
   const appVersion = readAppVersion()
+  /** 性能设置落盘在 DATA_DIR，每次分析前重读（用户可能刚改过） */
+  const watchSettings = createWatchSettings(opts.DATA_DIR)
   let analyzer: WatchAnalyzer | null = null
   function getAnalyzer(): WatchAnalyzer {
     analyzer ??= createAnalyzer({
@@ -202,6 +208,10 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
       workerPath: resolveWorkerPath(),
       store,
       appVersion,
+      performance: () => {
+        const settings = watchSettings.read()
+        return { ...resolvePerformance(settings, os.cpus().length), priority: settings.priority }
+      },
     })
     return analyzer
   }
@@ -213,8 +223,115 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
     return client
   }
 
+  /**
+   * 流式 describe —— SSE 与「后台影评任务」共用同一份实现。
+   *
+   * 两处唯一区别是 `onDelta` 把累计字数写到哪：SSE 直接写响应流，后台任务写进内存快照。
+   * 网关不支持「JSON 输出 + stream」时自动退回一次性生成，并通过 `onFallback` 告诉 UI。
+   */
+  function createStreamingDescribe(
+    onDelta: (chars: number, reasoningChars: number) => void,
+    onFallback?: () => void,
+  ) {
+    let contentChars = 0
+    let reasoningChars = 0
+
+    return async ({
+      system,
+      prompt,
+      images,
+      jsonMode,
+      maxTokens,
+      timeoutMs,
+      signal,
+    }: {
+      system: string
+      prompt: string
+      images: string[]
+      jsonMode: boolean
+      maxTokens: number
+      timeoutMs: number
+      signal?: AbortSignal
+    }) => {
+      const messages = [
+        { role: 'system' as const, content: system },
+        {
+          role: 'user' as const,
+          content: [
+            { type: 'text' as const, text: prompt },
+            ...images.map((url) => ({
+              type: 'image_url' as const,
+              image_url: { url, detail: 'high' as const },
+            })),
+          ],
+        },
+      ]
+
+      /** 统一 chat / chatStream 两种结果的形状（review.ts 只认 text/usage/model） */
+      const toResult = (result: {
+        content: string
+        usage: { promptTokens: number; completionTokens: number; totalTokens: number; reasoningTokens?: number }
+        model: string
+      }) => ({
+        text: result.content,
+        usage: {
+          promptTokens: result.usage.promptTokens,
+          completionTokens: result.usage.completionTokens,
+          totalTokens: result.usage.totalTokens,
+          ...(result.usage.reasoningTokens ? { reasoningTokens: result.usage.reasoningTokens } : {}),
+        },
+        model: result.model,
+      })
+
+      try {
+        const result = await getClient().chatStream(
+          { messages, maxTokens, jsonMode, timeoutMs, purpose: 'watch-review', signal },
+          (event) => {
+            if (event.type === 'reasoning') reasoningChars += event.text?.length ?? 0
+            else if (event.type === 'delta') contentChars += event.text?.length ?? 0
+            else return
+            onDelta(contentChars, reasoningChars)
+          },
+        )
+        return toResult(result)
+      } catch (error) {
+        if (signal?.aborted) throw error
+        // 有的网关对「JSON 输出 + stream」直接 400。看进度不该把功能弄没：退回一次性生成。
+        onFallback?.()
+        const result = await getClient().chat({
+          messages, maxTokens, jsonMode, timeoutMs, purpose: 'watch-review', signal,
+        })
+        contentChars = result.content.length
+        onDelta(contentChars, 0)
+        return toResult(result)
+      }
+    }
+  }
+
   // ── AI 影评 ──
   const reviewStore = createReviewStore(opts.DATA_DIR)
+
+  /**
+   * 影评后台任务：关掉面板/切走都不再取消，重新打开可以接回进度。
+   *
+   * 任务表只在内存里 —— 进程退出就结束（影评本身已经落盘，重开读旧结果即可）。
+   * 这里用流式 describe，但**不往外推 SSE**：进度写进内存快照，前端轮询读取。
+   */
+  const reviewRuns = createReviewRunManager({
+    generate: (req, signal, onEvent) => {
+      const generator = createReviewGenerator({
+        store,
+        reviewStore,
+        appVersion,
+        describe: createStreamingDescribe(
+          (chars, reasoningChars) => onEvent({ type: 'delta', chars, reasoningChars }),
+          () => onEvent({ type: 'phase', phase: 'call', message: '流式不可用，改用一次性生成' }),
+        ),
+      })
+      return generator.generate(req, signal, onEvent)
+    },
+  })
+
   let reviewGenerator: ReviewGenerator | null = null
   function getReviewGenerator(): ReviewGenerator {
     reviewGenerator ??= createReviewGenerator({
@@ -273,6 +390,61 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
       deps,
       missingRequired: blocking.map((d) => d.id),
     })
+  })
+
+  // ── 性能设置（CPU 上限 / 进程优先级 / MOSS 低显存）──
+  router.use('/api/watch/settings', async (req, res) => {
+    if (req.method === 'GET') {
+      const settings = watchSettings.read()
+      sendJson(res, 200, {
+        ok: true,
+        settings,
+        file: watchSettings.file,
+        cores: os.cpus().length,
+        resolved: resolvePerformance(settings, os.cpus().length),
+      })
+      return
+    }
+    if (req.method !== 'PUT' && req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method Not Allowed' })
+      return
+    }
+    let body: any
+    try {
+      body = await readJsonBody(req)
+    } catch (e) {
+      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) })
+      return
+    }
+    const settings = watchSettings.write({
+      ...(body?.cpuPercent !== undefined ? { cpuPercent: Number(body.cpuPercent) } : {}),
+      ...(typeof body?.priority === 'string' ? { priority: body.priority } : {}),
+      ...(body?.asrLowMemory !== undefined ? { asrLowMemory: body.asrLowMemory === true } : {}),
+    })
+    sendJson(res, 200, {
+      ok: true,
+      settings,
+      file: watchSettings.file,
+      cores: os.cpus().length,
+      resolved: resolvePerformance(settings, os.cpus().length),
+    })
+  })
+
+  // ── 后台任务列表：关掉面板再打开时用它把进行中的任务接回来 ──
+  router.use('/api/watch/jobs', (req, res) => {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method Not Allowed' })
+      return
+    }
+    const params = query(req)
+    const key = params.get('key') || ''
+    const episode = Number(params.get('episode'))
+    const jobs = getAnalyzer().list().filter((job) => {
+      if (key && job.key !== key) return false
+      if (Number.isInteger(episode) && episode > 0 && job.episode !== episode) return false
+      return true
+    })
+    sendJson(res, 200, { ok: true, jobs })
   })
 
   router.use('/api/watch/vision-test', async (req, res) => {
@@ -449,6 +621,91 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
     sendJson(res, 200, { ok: true, file, bound: Boolean(file) })
   })
 
+  // ── 影评后台任务：列表 / 查询 / 创建 / 取消 ──
+  // **必须先于 `/api/watch/review` 注册**（前缀匹配，先注册先命中）；
+  // `/review/runs` 又要先于 `/review/run`，否则 runs 会被 run 吃掉。
+  router.use('/api/watch/review/runs', (req, res) => {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method Not Allowed' })
+      return
+    }
+    const params = query(req)
+    const key = params.get('key') || ''
+    const kind = params.get('kind')
+    const episode = Number(params.get('episode'))
+    const runs = reviewRuns.list({
+      ...(key ? { key } : {}),
+      ...(kind === 'series' || kind === 'episode' ? { scopeKind: kind as 'series' | 'episode' } : {}),
+      ...(Number.isInteger(episode) && episode > 0 ? { episode } : {}),
+    })
+    sendJson(res, 200, { ok: true, runs })
+  })
+
+  router.use('/api/watch/review/run', async (req, res) => {
+    // 查询任务快照（含已生成的结果）
+    if (req.method === 'GET') {
+      const runId = query(req).get('id') || ''
+      if (!runId) { sendJson(res, 400, { ok: false, error: '缺少 id' }); return }
+      const run = reviewRuns.get(runId)
+      if (!run) { sendJson(res, 404, { ok: false, error: '任务不存在或已过期' }); return }
+      sendJson(res, 200, { ok: true, run })
+      return
+    }
+
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method Not Allowed' })
+      return
+    }
+
+    let body: any
+    try {
+      body = await readJsonBody(req, 8 * 1024 * 1024)
+    } catch (e) {
+      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) })
+      return
+    }
+
+    const key = typeof body?.key === 'string' ? body.key.trim() : ''
+    if (!key) { sendJson(res, 400, { ok: false, error: '缺少 key' }); return }
+    let scope: ReviewScope = { kind: 'series' }
+    const rawScope = body?.scope
+    if (rawScope && rawScope.kind === 'episode') {
+      const episode = Number(rawScope.episode)
+      if (!Number.isInteger(episode) || episode < 1) {
+        sendJson(res, 400, { ok: false, error: 'scope.episode 必须是 ≥1 的整数' })
+        return
+      }
+      scope = { kind: 'episode', episode }
+    }
+
+    // 202：任务已经接走，结果靠 GET /review/run?id= 或重开面板时拉
+    const { runId } = reviewRuns.start({
+      key,
+      scope,
+      userContext: body?.userContext && typeof body.userContext === 'object' ? body.userContext : undefined,
+      options: body?.options && typeof body.options === 'object' ? body.options : undefined,
+    })
+    sendJson(res, 202, { ok: true, runId })
+  })
+
+  router.use('/api/watch/review/cancel', async (req, res) => {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method Not Allowed' })
+      return
+    }
+    let body: any
+    try {
+      body = await readJsonBody(req)
+    } catch (e) {
+      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) })
+      return
+    }
+    const runId = typeof body?.runId === 'string' ? body.runId.trim() : ''
+    if (!runId) { sendJson(res, 400, { ok: false, error: '缺少 runId' }); return }
+    const cancelled = reviewRuns.cancel(runId)
+    sendJson(res, 200, { ok: cancelled, cancelled })
+  })
+
   // ── 影评元信息 ──
   // **必须在 `/api/watch/review` 之前注册**：分发逻辑是"先注册先匹配"，
   // 而 `/api/watch/review` 的前缀也会吃掉 `/api/watch/review/meta`。
@@ -577,82 +834,10 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
         res.write(`data: ${JSON.stringify(payload)}\n\n`)
       }
 
-      let contentChars = 0
-      let reasoningChars = 0
-
-      const describeStreaming = async ({
-        system,
-        prompt,
-        images,
-        jsonMode,
-        maxTokens,
-        timeoutMs,
-        signal,
-      }: {
-        system: string
-        prompt: string
-        images: string[]
-        jsonMode: boolean
-        maxTokens: number
-        timeoutMs: number
-        signal?: AbortSignal
-      }) => {
-        const messages = [
-          { role: 'system' as const, content: system },
-          {
-            role: 'user' as const,
-            content: [
-              { type: 'text' as const, text: prompt },
-              ...images.map((url) => ({
-                type: 'image_url' as const,
-                image_url: { url, detail: 'high' as const },
-              })),
-            ],
-          },
-        ]
-
-        try {
-          const result = await getClient().chatStream(
-            { messages, maxTokens, jsonMode, timeoutMs, purpose: 'watch-review', signal },
-            (event) => {
-              if (event.type === 'reasoning') reasoningChars += event.text?.length ?? 0
-              else if (event.type === 'delta') contentChars += event.text?.length ?? 0
-              else return
-              write({ type: 'delta', chars: contentChars, reasoningChars })
-            },
-          )
-          return {
-            text: result.content,
-            usage: {
-              promptTokens: result.usage.promptTokens,
-              completionTokens: result.usage.completionTokens,
-              totalTokens: result.usage.totalTokens,
-              ...(result.usage.reasoningTokens ? { reasoningTokens: result.usage.reasoningTokens } : {}),
-            },
-            model: result.model,
-          }
-        } catch (error) {
-          if (controller.signal.aborted) throw error
-          // 有的网关对「JSON 输出 + stream」直接 400。看进度不该把功能弄没：退回一次性生成，
-          // 前端会看到阶段文案变成「流式不可用」，仍然能拿到结果。
-          write({ type: 'phase', phase: 'call', message: '流式不可用，改用一次性生成' })
-          const result = await getClient().chat({
-            messages, maxTokens, jsonMode, timeoutMs, purpose: 'watch-review', signal,
-          })
-          contentChars = result.content.length
-          write({ type: 'delta', chars: contentChars, reasoningChars: 0 })
-          return {
-            text: result.content,
-            usage: {
-              promptTokens: result.usage.promptTokens,
-              completionTokens: result.usage.completionTokens,
-              totalTokens: result.usage.totalTokens,
-              ...(result.usage.reasoningTokens ? { reasoningTokens: result.usage.reasoningTokens } : {}),
-            },
-            model: result.model,
-          }
-        }
-      }
+      const describeStreaming = createStreamingDescribe(
+        (chars, reasoningChars) => write({ type: 'delta', chars, reasoningChars }),
+        () => write({ type: 'phase', phase: 'call', message: '流式不可用，改用一次性生成' }),
+      )
 
       const streamingGenerator = createReviewGenerator({
         store,

@@ -43,6 +43,11 @@ export interface JobStartOptions {
   /** worker.mjs 的绝对路径 */
   workerPath: string
   options: WatchAnalyzeOptions
+  /**
+   * 子进程优先级（Windows 上 ffmpeg 子进程会继承这个优先级类）。
+   * 不传 = 不动系统默认。
+   */
+  priority?: 'normal' | 'below-normal' | 'low'
   /** 正常产出（payload 已经过协议校验） */
   onResult: (payload: WatchWorkerResult) => void | Promise<void>
   /** 失败（含 worker 崩溃、超时、协议错误） */
@@ -55,6 +60,11 @@ export interface WatchJobManager {
   cancel(jobId: string): boolean
   /** 当前所有未结束的任务（用于进程退出时清理） */
   running(): string[]
+  /**
+   * 最近的任务列表（进行中 + 30 分钟内结束的）。
+   * UI 用它做「关掉面板又打开，能接回后台任务」。
+   */
+  list(): JobSnapshot[]
 }
 
 /** 默认超时：一集 24 分钟，慢机器要 10 分钟以上，给足余量 */
@@ -100,6 +110,18 @@ interface JobEntry {
   cancelled: boolean
   timer?: NodeJS.Timeout
   cleanup: () => void
+  /** 结束时刻（done/failed/cancelled）；用于把旧任务从列表里清出去 */
+  finishedAt?: number
+}
+
+/** 结束后的任务保留多久：够用户在面板关/开之间来回，又不至于无限攒内存 */
+const FINISHED_TTL_MS = 30 * 60 * 1000
+
+/** 优先级名 → Node 常量。Node 在三个平台上都支持 setPriority */
+function priorityValue(priority: JobStartOptions['priority']): number | null {
+  if (priority === 'below-normal') return os.constants.priority.PRIORITY_BELOW_NORMAL
+  if (priority === 'low') return os.constants.priority.PRIORITY_LOW
+  return null
 }
 
 export function createJobManager(): WatchJobManager {
@@ -108,8 +130,17 @@ export function createJobManager(): WatchJobManager {
   function finish(jobId: string) {
     const job = jobs.get(jobId)
     if (!job) return
+    if (!job.finishedAt) job.finishedAt = Date.now()
     if (job.timer) clearTimeout(job.timer)
     try { job.cleanup() } catch { /* ignore */ }
+  }
+
+  /** 把过期的结束任务清掉：list() 每次调用顺手做，不需要额外定时器 */
+  function pruneFinished() {
+    const now = Date.now()
+    for (const [jobId, job] of jobs) {
+      if (job.finishedAt && now - job.finishedAt > FINISHED_TTL_MS) jobs.delete(jobId)
+    }
   }
 
   return {
@@ -168,6 +199,20 @@ export function createJobManager(): WatchJobManager {
       entry.child = child
       entry.snapshot.phase = 'probe'
       entry.snapshot.message = '启动分析进程'
+
+      /*
+       * 降优先级：Windows 上子进程会继承父进程的优先级类，所以 worker 里
+       * 后续 spawn 的 ffmpeg 也一起变低 —— 这是"分析时系统不被抢到卡死"最有效的一招。
+       * 失败不致命（某些沙箱/权限下 setPriority 会抛错）。
+       */
+      const priority = priorityValue(opts.priority)
+      if (priority !== null && typeof child.pid === 'number') {
+        try {
+          os.setPriority(child.pid, priority)
+        } catch {
+          // 拿不到权限就当没设，不影响分析
+        }
+      }
 
       // stderr 只是日志：转给 console 便于排查，不进状态
       if (child.stderr) {
@@ -281,6 +326,13 @@ export function createJobManager(): WatchJobManager {
           return phase !== 'done' && phase !== 'failed' && phase !== 'cancelled'
         })
         .map((job) => job.snapshot.jobId)
+    },
+
+    list() {
+      pruneFinished()
+      return [...jobs.values()]
+        .map((job) => ({ ...job.snapshot }))
+        .sort((a, b) => b.startedAt - a.startedAt)
     },
   }
 }

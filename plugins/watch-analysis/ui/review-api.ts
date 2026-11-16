@@ -252,6 +252,94 @@ export async function generateReviewStream(
   return finished
 }
 
+/* ─────────────────────────────────────────────────────────
+ * 后台任务（关掉面板也继续跑）
+ * ───────────────────────────────────────────────────────── */
+
+/**
+ * 服务端一个影评任务的快照（`GET /api/watch/review/run?id=`）。
+ *
+ * 和 SSE 事件的区别：这是**轮询**读的持久状态，关掉面板再回来看得到同一份；
+ * `status` 到 `done` 时 `review` 才出现。
+ */
+export interface ReviewRunSnapshot {
+  runId: string
+  key: string
+  scope: ReviewScope
+  status: 'running' | 'done' | 'failed' | 'cancelled'
+  phase: 'collect' | 'call' | 'parse' | 'done'
+  message: string
+  chars: number
+  reasoningChars: number
+  startedAt: number
+  finishedAt?: number
+  cached?: boolean
+  error?: string
+  review?: AiReview
+}
+
+/** 创建后台生成任务。立即返回 runId，生成在服务端继续（关面板不影响）。 */
+export async function startReviewRun(request: ReviewGenerateRequest): Promise<{ runId: string }> {
+  const data = await requestJson<{ ok: boolean; runId?: string; error?: string }>(
+    `${API_BASE}/review/run`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    },
+  )
+  if (!data.ok || !data.runId) throw new Error(data.error || '服务端没有返回任务 id')
+  return { runId: data.runId }
+}
+
+/** 读任务快照。404/失效返回 null（前端据此停止轮询，不弹错）。 */
+export async function getReviewRun(runId: string): Promise<ReviewRunSnapshot | null> {
+  try {
+    const resp = await fetch(`${API_BASE}/review/run?id=${encodeURIComponent(runId)}`)
+    if (resp.status === 404) return null
+    const body = await readJsonOrNull(resp)
+    if (!body || body.ok !== true || !body.run || typeof body.run !== 'object') return null
+    return body.run as ReviewRunSnapshot
+  } catch {
+    return null
+  }
+}
+
+/** 列某部番（某个范围）的任务，用来在面板重新打开时接回进行中的那一次。 */
+export async function listReviewRuns(filter: {
+  key: string
+  scope: ReviewScope
+}): Promise<ReviewRunSnapshot[]> {
+  try {
+    const params = new URLSearchParams({ key: filter.key, kind: filter.scope.kind })
+    if (filter.scope.kind === 'episode') params.set('episode', String(filter.scope.episode))
+    const resp = await fetch(`${API_BASE}/review/runs?${params.toString()}`)
+    if (!resp.ok) return []
+    const body = await readJsonOrNull(resp)
+    const runs = body?.runs
+    return Array.isArray(runs) ? (runs as ReviewRunSnapshot[]) : []
+  } catch {
+    return []
+  }
+}
+
+/** 取消任务。任务已结束/不存在时返回 false（前端安静收尾）。 */
+export async function cancelReviewRun(runId: string): Promise<boolean> {
+  try {
+    const data = await requestJson<{ ok?: boolean; cancelled?: boolean }>(
+      `${API_BASE}/review/cancel`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId }),
+      },
+    )
+    return data.cancelled === true || data.ok === true
+  } catch {
+    return false
+  }
+}
+
 /**
  * 读已生成的影评。
  *

@@ -60,8 +60,11 @@ function assertNotAborted(signal) {
  * `-ss` 放在 `-i` 前面是**快速 seek**（跳到最近关键帧），对"取一张代表帧"足够，
  * 而且比精确 seek 快一个数量级 —— 一集要抽一百多帧，这个差别很实在。
  * `decrease + pad` 保证非 16:9 的素材不拉伸变形（黑边补足）。
+ *
+ * `threads` 来自性能设置：用户选了 25% CPU 就只给 ffmpeg 少量线程，
+ * 避免抽帧把整机抢满（0/不传 = 让 ffmpeg 自己决定）。
  */
-async function extractFrame(video, seconds, outPath, signal) {
+async function extractFrame(video, seconds, outPath, signal, threads = 0) {
   assertNotAborted(signal)
   const vf = [
     `scale=${CELL_W}:${CELL_H}:force_original_aspect_ratio=decrease`,
@@ -69,6 +72,7 @@ async function extractFrame(video, seconds, outPath, signal) {
   ].join(',')
   await ffmpeg([
     '-y', '-loglevel', 'error',
+    ...(threads > 0 ? ['-threads', String(threads)] : []),
     '-ss', String(Math.max(0, seconds)),
     '-i', video,
     '-frames:v', '1',
@@ -78,7 +82,7 @@ async function extractFrame(video, seconds, outPath, signal) {
 }
 
 /** 把 6 张单格拼成 2 列 × 3 行 */
-async function tileSheet(frames, outPath) {
+async function tileSheet(frames, outPath, threads = 0) {
   if (frames.length !== CELLS_PER_SHEET) {
     throw new Error(`tileSheet 需要 ${CELLS_PER_SHEET} 帧，实际 ${frames.length} 张`)
   }
@@ -95,6 +99,7 @@ async function tileSheet(frames, outPath) {
   ].join(';')
   await ffmpeg([
     '-y', '-loglevel', 'error',
+    ...(threads > 0 ? ['-threads', String(threads)] : []),
     ...inputs,
     '-filter_complex', filter,
     '-frames:v', '1',
@@ -195,6 +200,16 @@ export const renderGrid23Provider = {
     const prefix = String(opts.prefix || 'sheet')
     await mkdir(outDir, { recursive: true })
 
+    /*
+     * 性能预留：用户可能在面板上选了「25% CPU」。
+     * 12 核 25% → threads=3、concurrency=1；不传则该抽帧并发仍是 4、线程交给 ffmpeg。
+     */
+    const perf = opts?.performance && typeof opts.performance === 'object' ? opts.performance : null
+    const threads = Number(perf?.threads) > 0 ? Math.max(1, Math.round(perf.threads)) : 0
+    const concurrency = Number(perf?.concurrency) > 0
+      ? Math.max(1, Math.min(CONCURRENCY, Math.round(perf.concurrency)))
+      : CONCURRENCY
+
     const planned = planGrid23(video.duration, {
       minSheets: opts.minSheets,
       maxSheets: opts.maxSheets,
@@ -218,13 +233,15 @@ export const renderGrid23Provider = {
         })
 
         await runPool(
-          frames.map((frame) => () => extractFrame(video.file, frame.cell.at, frame.file, opts.signal)),
-          CONCURRENCY,
+          frames.map((frame) => () => extractFrame(
+            video.file, frame.cell.at, frame.file, opts.signal, threads,
+          )),
+          concurrency,
         )
 
         // 输出 JPEG（不是 PNG）：见 tileSheet 里 -q:v 的注释，体积差 3 倍
         const file = `${prefix}-${sheet.index + 1}.jpg`
-        await tileSheet(frames.map((frame) => frame.file), path.join(outDir, file))
+        await tileSheet(frames.map((frame) => frame.file), path.join(outDir, file), threads)
 
         for (const frame of frames) {
           shots.push({
@@ -264,6 +281,7 @@ export const renderGrid23Provider = {
       },
       notes: [
         `2×3 布局：每张图 ${CELLS_PER_SHEET} 格 640×360，每格约 ${Math.round((video.duration || 0) / Math.max(1, shots.length) * 100) / 100} 秒`,
+        ...(perf ? [`性能预留：抽帧并发 ${concurrency}，ffmpeg 线程 ${threads || '自动'}`] : []),
       ],
     }
   },

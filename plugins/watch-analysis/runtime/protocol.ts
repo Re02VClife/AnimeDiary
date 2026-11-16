@@ -63,6 +63,18 @@ export interface WatchAnalyzeOptions {
   /** 只分析这一段（秒） */
   from?: number
   to?: number
+  /**
+   * 性能预留（主进程按设置算好后传进来，worker 原样透传给 renderer）。
+   *
+   * - `concurrency`：同时跑几个抽帧 ffmpeg
+   * - `threads`：单个 ffmpeg 的 `-threads`（0 = 不传，交给 ffmpeg 自己决定）
+   *
+   * 注意扫描阶段（dsh-video-storyboard 内部）的 ffmpeg 不受这里控制 —— 见 core/performance.ts。
+   */
+  performance?: {
+    concurrency: number
+    threads: number
+  }
   /** 宫格图输出目录（绝对路径），由主进程创建好传进来 */
   outDir: string
   /** 文件名前缀，例如 `ep01` */

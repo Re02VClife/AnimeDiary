@@ -175,6 +175,8 @@ async function main() {
       // 张数上下限（grid6 用）：用户在面板上配的 100–1000 就是这两个值
       minSheets: options.minSheets,
       maxSheets: options.maxSheets,
+      // 性能预留（抽帧并发 / ffmpeg 线程）；扫描阶段不受它控制
+      performance: options.performance,
       budgetPixels: options.budgetPixels,
       outDir: options.outDir,
       prefix: options.prefix,

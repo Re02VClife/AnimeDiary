@@ -73,14 +73,17 @@ import type {
 import { formatTokens } from './BudgetBar'
 import {
   DEFAULT_REVIEW_BUDGET,
-  generateReviewStream,
+  cancelReviewRun,
   getExistingReview,
   getReviewMeta,
+  getReviewRun,
   isAbortError,
   listAnalyzedEpisodes,
+  listReviewRuns,
   resolveVideoFile,
+  startReviewRun,
 } from './review-api'
-import type { ReviewGenerateRequest, ReviewMeta, ReviewStreamEvent } from './review-api'
+import type { ReviewGenerateRequest, ReviewMeta } from './review-api'
 
 /* ─────────────────────────────────────────────────────────
  * Props
@@ -947,23 +950,28 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
   const [cached, setCached] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [generatedSeconds, setGeneratedSeconds] = useState<number | null>(null)
-  /** 流式进度（SSE 事件驱动）；null = 还没收到第一个事件 */
+  /** 流式进度（任务快照驱动）；null = 还没收到第一个事件 */
   const [progress, setProgress] = useState<GenerationProgress | null>(null)
+  /**
+   * 当前后台生成任务 id。
+   *
+   * 生成不再是一次同步请求 —— 服务端接走任务、前端轮询快照，
+   * 所以**关掉面板不会取消**，重新打开还能接着看（见下面的恢复 effect）。
+   */
+  const [runId, setRunId] = useState<string | null>(null)
+  /** 任务开始时刻（算「用时」用；任务可能在面板关闭期间跑完） */
+  const runStartedAtRef = useRef(0)
 
-  /** 进行中的生成请求；关面板/取消/换范围时 abort */
+  /** 读已有影评 / 集号的请求仍用 abort（这些是纯读，关面板就该断） */
   const abortRef = useRef<AbortController | null>(null)
 
   /* ── 打开/换番/换初始集：重置面板状态，避免看到上一部番的影评 ── */
   useEffect(() => {
     if (!open) {
-      abortRef.current?.abort()
-      abortRef.current = null
+      // 关面板**不取消**后台任务：生成继续跑，回来时恢复 effect 会把它接上
       setGenerating(false)
       return
     }
-
-    abortRef.current?.abort()
-    abortRef.current = null
 
     const startEpisode =
       initialEpisode !== undefined && Number.isInteger(initialEpisode) && initialEpisode > 0
@@ -991,6 +999,8 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
     setElapsed(0)
     setProgress(null)
     setForce(false)
+    setGenerating(false)
+    setRunId(null)
   }, [open, animeKey, initialEpisode])
 
   /** 组件卸载：断掉所有在飞的请求（定时器由下面的 effect 自己收） */
@@ -1123,6 +1133,88 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
     }
   }, [open, animeKey, resolveEpisode])
 
+  /* ── 后台任务：打开面板 / 换范围时，把该范围还在跑的那次接回来 ── */
+  useEffect(() => {
+    if (!open || !animeKey) return
+    let scope: ReviewScope | null = null
+    if (scopeKind === 'episode') {
+      if (episode !== null && episode >= 1) scope = { kind: 'episode', episode }
+    } else {
+      scope = { kind: 'series' }
+    }
+    if (!scope) return
+
+    let alive = true
+    listReviewRuns({ key: animeKey, scope })
+      .then((runs) => {
+        if (!alive) return
+        const running = runs.find((run) => run.status === 'running')
+        if (!running) return
+        runStartedAtRef.current = running.startedAt
+        setRunId(running.runId)
+        setGenerating(true)
+        setProgress({
+          phase: running.phase,
+          message: running.message,
+          chars: running.chars,
+          reasoningChars: running.reasoningChars,
+        })
+      })
+      .catch(() => {
+        // 旧后端没有 /review/runs：当成"没有后台任务"
+      })
+
+    return () => {
+      alive = false
+    }
+  }, [open, animeKey, scopeKind, episode])
+
+  /* ── 轮询后台任务：1 秒一次，直到 done / failed / cancelled ── */
+  useEffect(() => {
+    if (!generating || !runId) return
+    let alive = true
+
+    const tick = async (): Promise<void> => {
+      const run = await getReviewRun(runId)
+      if (!alive) return
+
+      if (!run) {
+        setGenerating(false)
+        setGenerateError('后台任务已失效（应用可能重启过），请重新生成')
+        return
+      }
+
+      if (run.status === 'running') {
+        setProgress({
+          phase: run.phase,
+          message: run.message,
+          chars: run.chars,
+          reasoningChars: run.reasoningChars,
+        })
+        return
+      }
+
+      setGenerating(false)
+      if (run.status === 'done' && run.review) {
+        setReview(run.review)
+        setCached(run.cached === true)
+        setGenerateError(null)
+        setGeneratedSeconds(Math.max(1, Math.round((Date.now() - runStartedAtRef.current) / 1000)))
+        setProgress({ phase: 'done', message: '完成', chars: 0, reasoningChars: 0 })
+        setForce(false)
+      } else if (run.status === 'failed') {
+        setGenerateError(run.error || '生成失败')
+      }
+    }
+
+    void tick()
+    const timer = window.setInterval(() => void tick(), 1000)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+    }
+  }, [generating, runId])
+
   /* ── 生成计时：只在 generating 期间存在，结束/卸载自动清 ── */
   useEffect(() => {
     if (!generating) return
@@ -1137,26 +1229,26 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
   /* ── 操作 ── */
 
   const cancelGeneration = useCallback(() => {
-    abortRef.current?.abort()
-    abortRef.current = null
+    const current = runId
     setGenerating(false)
-  }, [abortRef])
+    setProgress(null)
+    setRunId(null)
+    if (current) void cancelReviewRun(current)
+  }, [runId])
 
   const handleClose = useCallback(() => {
-    abortRef.current?.abort()
-    abortRef.current = null
+    // 关面板**不取消**后台任务：生成继续跑，重新打开会接回进度
     setGenerating(false)
     onClose()
-  }, [abortRef, onClose])
+  }, [onClose])
 
   const handleScopeKindChange = useCallback(
     (value: string | number) => {
       const next: 'series' | 'episode' = value === 'episode' ? 'episode' : 'series'
       if (next === scopeKind) return
-      // 换范围 = 换请求语义，正在跑的那次结果不能混进来
-      abortRef.current?.abort()
-      abortRef.current = null
+      // 换范围时旧任务留在后台跑完（结果落到旧范围），UI 只停止跟踪
       setGenerating(false)
+      setRunId(null)
       setScopeKind(next)
       if (next === 'episode') {
         setEpisode((current) => current ?? initialEpisode ?? episodes[0] ?? null)
@@ -1167,9 +1259,8 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
 
   const handleEpisodeChange = useCallback(
     (value: number) => {
-      abortRef.current?.abort()
-      abortRef.current = null
       setGenerating(false)
+      setRunId(null)
       setEpisode(value)
     },
     [abortRef],
@@ -1217,9 +1308,6 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
       }
 
       abortRef.current?.abort()
-      const controller = new AbortController()
-      abortRef.current = controller
-
       setTab('review')
       setGenerating(true)
       setGenerateError(null)
@@ -1227,7 +1315,8 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
       setGeneratedSeconds(null)
       setElapsed(0)
       setProgress(null)
-      const startedAt = Date.now()
+      setRunId(null)
+      runStartedAtRef.current = Date.now()
 
       const payload: ReviewGenerateRequest = {
         key: animeKey,
@@ -1246,44 +1335,13 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
       }
 
       try {
-        const result = await generateReviewStream(
-          payload,
-          controller.signal,
-          (event: ReviewStreamEvent) => {
-            if (event.type === 'phase') {
-              setProgress({
-                phase: event.phase,
-                message: event.message,
-                chars: 0,
-                reasoningChars: 0,
-                sheets: event.sheets,
-                episodes: event.episodes,
-              })
-            } else if (event.type === 'delta') {
-              setProgress((current) => current
-                ? { ...current, chars: event.chars, reasoningChars: event.reasoningChars }
-                : {
-                    phase: 'call',
-                    message: '模型正在生成',
-                    chars: event.chars,
-                    reasoningChars: event.reasoningChars,
-                  })
-            } else if (event.type === 'done') {
-              setProgress({ phase: 'done', message: '完成', chars: 0, reasoningChars: 0 })
-            }
-          },
-        )
-        setReview(result.review)
-        setCached(result.cached)
-        setGenerateError(null)
-        setGeneratedSeconds(Math.max(1, Math.round((Date.now() - startedAt) / 1000)))
-        setForce(false)
+        // 服务端接走任务后就返回 runId；后面的进度由轮询 effect 负责
+        const created = await startReviewRun(payload)
+        runStartedAtRef.current = Date.now()
+        setRunId(created.runId)
       } catch (e) {
-        // 用户取消不是失败：不发错误 Alert，直接回到原来的状态
         if (isAbortError(e)) return
         setGenerateError(errorText(e))
-      } finally {
-        if (abortRef.current === controller) abortRef.current = null
         setGenerating(false)
       }
     },
@@ -1375,7 +1433,7 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
         {progress?.phase === 'call' && progress.sheets
           ? `模型正在看 ${progress.sheets} 张分镜${progress.episodes?.length ? `（${progress.episodes.length} 集）` : ''}。`
           : ''}
-        阶段与字数由服务端实时推送；关掉面板会中断这次请求。
+        阶段与字数由服务端实时推送；**关掉面板不会中断**，回来还能接着看。
       </span>
     </div>
   ) : null
@@ -1779,7 +1837,7 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
           )}
         </div>
         <span style={MUTED_STYLE}>
-          生成过程中会实时显示阶段与已生成字数；关掉面板会中断这次请求。
+          生成会挂在后台：关掉面板不会中断，重新打开还能接着看进度；要停就点「取消」。
         </span>
       </div>
     </div>

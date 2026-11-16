@@ -24,7 +24,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, FC, ReactNode } from 'react'
-import { Alert, Button, Empty, InputNumber, Progress, Spin, Switch, Tag, Tooltip, Typography } from 'antd'
+import { Alert, Button, Empty, InputNumber, Progress, Select, Spin, Switch, Tag, Tooltip, Typography } from 'antd'
 import {
   CheckCircleOutlined,
   InfoCircleOutlined,
@@ -33,8 +33,8 @@ import {
   StopOutlined,
 } from '@ant-design/icons'
 import type { WatchPhase, WatchReport } from '../core/types'
-import { analyze, cancel, getDeps, getReport, getStatus } from './api'
-import type { DepsResponse, WatchDependency, WatchJobStatus } from './api'
+import { analyze, cancel, getDeps, getReport, getStatus, getWatchSettings, listJobs, saveWatchSettings } from './api'
+import type { DepsResponse, WatchDependency, WatchJobStatus, WatchSettings, WatchSettingsResponse } from './api'
 import BudgetBar, { formatTokens } from './BudgetBar'
 import StoryboardViewer from './StoryboardViewer'
 
@@ -128,6 +128,11 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
   /** 派生：不让用户在三选一和两个开关之间来回理解 */
   const transcriptMode: TranscriptMode = !readSubtitle ? 'off' : asrFallback ? 'asr' : 'auto'
 
+  // ── 性能预留（落盘在服务端，改完立即生效于下一次分析）──
+  const [perf, setPerf] = useState<WatchSettingsResponse | null>(null)
+  const [perfSaving, setPerfSaving] = useState(false)
+  const [perfError, setPerfError] = useState<string | null>(null)
+
   // ── 已落盘报告 ──
   const [report, setReport] = useState<WatchReport | null>(null)
   const [reportLoading, setReportLoading] = useState(true)
@@ -152,6 +157,62 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
     setCancelError(null)
     pollFailuresRef.current = 0
   }, [animeKey, episode])
+
+  /*
+   * 恢复后台任务：关掉面板再打开时，把这一集还在跑的任务接回来。
+   *
+   * 分析一直是 worker 子进程在跑，UI 关掉只断了轮询、**没有取消任务** ——
+   * 所以这里查到进行中的 job 就直接接管，不必让用户重新点「开始分析」。
+   */
+  useEffect(() => {
+    if (!animeKey || !Number.isInteger(episode) || episode < 1) return
+    let alive = true
+    listJobs(animeKey, episode)
+      .then((jobs) => {
+        if (!alive) return
+        const running = jobs.find((job) =>
+          job.phase !== 'done' && job.phase !== 'failed' && job.phase !== 'cancelled',
+        )
+        if (running) {
+          setJobId(running.jobId)
+          setJobState(running)
+        }
+      })
+      .catch(() => {
+        // 恢复失败不影响手动开始；旧后端没有 /jobs 时这里就是一次 404
+      })
+    return () => {
+      alive = false
+    }
+  }, [animeKey, episode])
+
+  // 性能设置：只读一次，改的时候即时 PUT
+  useEffect(() => {
+    let alive = true
+    getWatchSettings()
+      .then((value) => {
+        if (alive) setPerf(value)
+      })
+      .catch(() => {
+        // 旧后端没有 /settings：面板不显示性能设置，不影响分析
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const savePerf = useCallback(async (patch: Partial<WatchSettings>) => {
+    setPerfSaving(true)
+    setPerfError(null)
+    try {
+      const next = await saveWatchSettings(patch)
+      setPerf(next)
+    } catch (e) {
+      setPerfError(errorText(e))
+    } finally {
+      setPerfSaving(false)
+    }
+  }, [])
 
   // 依赖自检（每次点「重新检查」都重新探测，用户装完 ffmpeg 不用重启）
   useEffect(() => {
@@ -571,8 +632,52 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
             )}
           </div>
 
+          {/* 性能预留：抽帧 ffmpeg 的线程/并发 + worker 进程优先级 */}
+          {perf && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <Typography.Text style={mutedTextStyle}>性能预留</Typography.Text>
+              <Select
+                size="small"
+                value={perf.settings.cpuPercent}
+                onChange={(value) => void savePerf({ cpuPercent: Number(value) })}
+                options={[25, 50, 75, 100].map((percent) => ({
+                  value: percent,
+                  label: `CPU 最多 ${percent}%`,
+                }))}
+                style={{ width: 132 }}
+                disabled={perfSaving}
+                aria-label="CPU 使用上限"
+              />
+              <Select
+                size="small"
+                value={perf.settings.priority}
+                onChange={(value) => void savePerf({ priority: value as WatchSettings['priority'] })}
+                options={[
+                  { value: 'normal', label: '优先级：普通' },
+                  { value: 'below-normal', label: '优先级：低于普通' },
+                  { value: 'low', label: '优先级：低' },
+                ]}
+                style={{ width: 156 }}
+                disabled={perfSaving}
+                aria-label="进程优先级"
+              />
+              {perf.resolved && (
+                <Typography.Text style={mutedTextStyle}>
+                  {perf.cores} 核 → 抽帧并发 {perf.resolved.concurrency} / ffmpeg 线程 {perf.resolved.threads}
+                </Typography.Text>
+              )}
+              {perfError && (
+                <Typography.Text style={{ ...mutedTextStyle, color: 'var(--color-error)' }}>
+                  保存失败：{perfError}
+                </Typography.Text>
+              )}
+            </div>
+          )}
+
           <Typography.Text style={mutedTextStyle}>
             张数留空 = 自动；超过 200 张会明显变慢（每张要抽 6 帧再拼图）。影评生成时仍按每集 1–6 张取样。
+            <br />
+            性能预留只作用于抽帧/拼图；扫描阶段由分镜引擎直接调 ffmpeg，不受它控制（这一招靠进程优先级降低卡顿）。
           </Typography.Text>
         </div>
       )}

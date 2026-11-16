@@ -26,7 +26,7 @@
  *      不是任务书写的 `n`。`sheetUrl` 同时带 `n` 和 `file` —— 后备实现按哪个取都成立，
  *      传参签名也保持任务书要求的 `(key, episode, n)`。
  */
-import type { WatchReport } from '../core/types'
+import type { WatchPhase, WatchReport } from '../core/types'
 import type { AnalyzeResponse, ReportResponse, StatusResponse } from '../runtime/protocol'
 import type { RenderStrategy } from '../ports/render'
 
@@ -236,4 +236,108 @@ export async function getDeps(): Promise<DepsResponse> {
     deps: data.deps,
     missingRequired,
   }
+}
+
+/* ─────────────────────────────────────────────────────────
+ * 性能设置（CPU 上限 / 进程优先级 / MOSS 低显存）
+ * ───────────────────────────────────────────────────────── */
+
+export interface WatchSettings {
+  cpuPercent: number
+  priority: 'normal' | 'below-normal' | 'low'
+  asrLowMemory: boolean
+}
+
+export interface ResolvedPerformance {
+  concurrency: number
+  threads: number
+  cores: number
+  cpuPercent: number
+}
+
+export interface WatchSettingsResponse {
+  settings: WatchSettings
+  /** 配置文件落盘位置（面板上显示"存在哪"） */
+  file?: string
+  cores?: number
+  /** 按当前百分比换算出来的实际并发/线程（用户能看见"50% 到底是几线程"） */
+  resolved?: ResolvedPerformance
+}
+
+/**
+ * 读性能设置。**可降级**：后端没实现 / 404 / 网络失败一律返回 null，
+ * 面板不显示这一块，而不是整个拉片面板报错。
+ */
+export async function getWatchSettings(): Promise<WatchSettingsResponse | null> {
+  try {
+    const resp = await fetch(`${API_BASE}/settings`)
+    if (!resp.ok) return null
+    const body = await readJson(resp) as Record<string, any>
+    if (!body || body.ok !== true || !body.settings) return null
+    return {
+      settings: {
+        cpuPercent: Number(body.settings.cpuPercent) || 50,
+        priority: body.settings.priority === 'normal' || body.settings.priority === 'low'
+          ? body.settings.priority
+          : 'below-normal',
+        asrLowMemory: body.settings.asrLowMemory === true,
+      },
+      file: typeof body.file === 'string' ? body.file : undefined,
+      cores: typeof body.cores === 'number' ? body.cores : undefined,
+      resolved: body.resolved && typeof body.resolved === 'object'
+        ? {
+            concurrency: Number(body.resolved.concurrency) || 1,
+            threads: Number(body.resolved.threads) || 1,
+            cores: Number(body.resolved.cores) || 1,
+            cpuPercent: Number(body.resolved.cpuPercent) || 50,
+          }
+        : undefined,
+    }
+  } catch {
+    return null
+  }
+}
+
+/** 保存性能设置（只传要改的字段）。失败抛错，调用方显示重试。 */
+export async function saveWatchSettings(patch: Partial<WatchSettings>): Promise<WatchSettingsResponse> {
+  return requestJson<WatchSettingsResponse>(`${API_BASE}/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+}
+
+/* ─────────────────────────────────────────────────────────
+ * 后台任务
+ * ───────────────────────────────────────────────────────── */
+
+/** `GET /api/watch/jobs` 的一个任务（形状与 runtime/job.ts 的 JobSnapshot 一致） */
+export interface WatchJob {
+  jobId: string
+  key: string
+  episode: number
+  phase: WatchPhase
+  percent: number
+  message: string
+  spent: number
+  startedAt: number
+  error?: string
+}
+
+/**
+ * 列后台任务（进行中 + 最近 30 分钟结束的）。
+ *
+ * 面板关掉再打开时用它把进行中的任务接回来 —— 这是"分析能挂后台"的关键：
+ * 任务一直在 worker 子进程里跑，UI 只是重新接上进度轮询。
+ */
+export async function listJobs(key?: string, episode?: number): Promise<WatchJob[]> {
+  const params = new URLSearchParams()
+  if (key) params.set('key', key)
+  if (episode !== undefined && Number.isInteger(episode) && episode > 0) {
+    params.set('episode', String(episode))
+  }
+  const data = await requestJson<{ ok: boolean; jobs?: WatchJob[]; error?: string }>(
+    `${API_BASE}/jobs${params.toString() ? `?${params.toString()}` : ''}`,
+  )
+  return Array.isArray(data.jobs) ? data.jobs : []
 }

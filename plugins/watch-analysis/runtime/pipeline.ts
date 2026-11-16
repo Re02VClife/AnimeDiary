@@ -26,6 +26,11 @@ export interface AnalyzerOptions {
   appVersion: string
   /** worker 的输出根目录；默认 {DATA_DIR}/watch-reports */
   outputRoot?: string
+  /**
+   * 每次 analyze 时读一次性能设置（用户可能刚在面板上改过）。
+   * 返回的值会：① 作为 options.performance 传给 worker/renderer；② 作为 worker 进程优先级。
+   */
+  performance?: () => { concurrency: number; threads: number; priority?: 'normal' | 'below-normal' | 'low' }
 }
 
 export interface AnalyzeRequest {
@@ -43,6 +48,8 @@ export interface WatchAnalyzer {
   analyze(req: AnalyzeRequest): { jobId: string }
   status(jobId: string): JobSnapshot | null
   cancel(jobId: string): boolean
+  /** 任务列表（进行中 + 最近结束），UI 用来恢复后台任务 */
+  list(): JobSnapshot[]
   /** 任务跑完后写好的报告（未完成或失败时为 null） */
   result(jobId: string): WatchReport | null
 }
@@ -154,11 +161,14 @@ export function createAnalyzer(opts: AnalyzerOptions): WatchAnalyzer {
     // 输出目录交给 store 决定，保证"报告"和"图"永远在同一个 key 目录下
     const outDir = opts.store.sheetDir(request.key, request.episode)
     const prefix = `ep${String(request.episode).padStart(2, '0')}`
+    // 每次 analyze 都重读一次设置：用户可能刚把 CPU 上限从 100% 调到 25%
+    const perf = opts.performance?.()
     const options: WatchAnalyzeOptions = {
       ...DEFAULT_OPTIONS,
       ...request.options,
       outDir,
       prefix,
+      ...(perf ? { performance: { concurrency: perf.concurrency, threads: perf.threads } } : {}),
     }
 
     const jobId = jobs.start({
@@ -169,6 +179,7 @@ export function createAnalyzer(opts: AnalyzerOptions): WatchAnalyzer {
       prefix,
       workerPath: opts.workerPath,
       options,
+      priority: perf?.priority,
       onResult: async (payload) => {
         // worker 说成功不等于数据可用：最低限度的形状校验，坏数据宁可报错也别落盘
         if (!Array.isArray(payload.shots) || payload.shots.length === 0) {
@@ -194,6 +205,7 @@ export function createAnalyzer(opts: AnalyzerOptions): WatchAnalyzer {
     analyze,
     status: (jobId) => jobs.status(jobId),
     cancel: (jobId) => jobs.cancel(jobId),
+    list: () => jobs.list(),
     result: (jobId) => finished.get(jobId) ?? null,
   }
 }

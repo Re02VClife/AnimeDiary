@@ -42,6 +42,10 @@ const apiMocks = vi.hoisted(() => ({
   cancel: vi.fn(),
   getReport: vi.fn(),
   getDeps: vi.fn(),
+  // 2026-11-16 新增：性能设置与后台任务（不 mock 会走真实 fetch，在 jsdom 里必失败）
+  getWatchSettings: vi.fn(),
+  saveWatchSettings: vi.fn(),
+  listJobs: vi.fn(),
 }))
 
 vi.mock('../../../plugins/watch-analysis/ui/api', async (importOriginal) => {
@@ -123,6 +127,18 @@ async function waitFor(check: () => boolean, timeout = 3000): Promise<void> {
 
 beforeEach(() => {
   vi.resetAllMocks()
+  // 默认：没有后台任务、性能设置读得到（各用例可以覆盖）
+  apiMocks.listJobs.mockResolvedValue([])
+  apiMocks.getWatchSettings.mockResolvedValue({
+    settings: { cpuPercent: 50, priority: 'below-normal', asrLowMemory: false },
+    cores: 16,
+    resolved: { concurrency: 4, threads: 8, cores: 16, cpuPercent: 50 },
+  })
+  apiMocks.saveWatchSettings.mockResolvedValue({
+    settings: { cpuPercent: 75, priority: 'below-normal', asrLowMemory: false },
+    cores: 16,
+    resolved: { concurrency: 4, threads: 12, cores: 16, cpuPercent: 75 },
+  })
 })
 
 afterEach(() => {
