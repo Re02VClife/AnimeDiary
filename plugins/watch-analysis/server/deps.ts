@@ -245,7 +245,14 @@ function detectMoss(): DependencyStatus {
     const r = run(exe, ['-c', 'import moss_transcribe_diarize as m; print(getattr(m, "__version__", "unknown"))'])
     if (!r?.ok) continue
     pythonPath = exe
-    const version = r.out.split(/\r?\n/).pop()?.trim()
+    // `run()` 把 stdout + stderr 合并了，而 torch 会往 stderr 打 NOTE / 进度条，
+    // 直接取最后一行会得到一长串警告（实测面板上真的显示成了那样）——
+    // 所以只认「unknown 或 数字.数字」开头的那一行。
+    const version = r.out
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .reverse()
+      .find((line) => /^(unknown|\d+\.\d+)/.test(line))
     packageVersion = version && version !== 'unknown' ? version : undefined
     break
   }
