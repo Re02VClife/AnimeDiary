@@ -85,3 +85,49 @@ describe('planGrid23', () => {
     expect(planGrid23(400, { sheetSeconds: 40 })).toHaveLength(10)
   })
 })
+
+/**
+ * 2026-11-16 新增：张数上下限（面板上的「100–1000」就是这两个值）。
+ *
+ * 用户要的是「切片数量可控」：设置 100–1000 时，24 分钟的片应该出 100 张而不是自动的 18 张。
+ * 这里把四个边界钉死：拉高、压低、落在区间内、写反。
+ */
+describe('planGrid23 的张数上下限', () => {
+  it('minSheets 拉高张数：24 分钟的片配 100–1000 就出 100 张', async () => {
+    const planGrid23 = await loadPlanner()
+    expect(planGrid23(1420, { minSheets: 100, maxSheets: 1000 })).toHaveLength(100)
+  })
+
+  it('maxSheets 压低张数：自动 18 张被压到 10 张', async () => {
+    const planGrid23 = await loadPlanner()
+    expect(planGrid23(1420, { maxSheets: 10 })).toHaveLength(10)
+  })
+
+  it('自动值落在区间内时按自动走（18 在 10–40 之间）', async () => {
+    const planGrid23 = await loadPlanner()
+    expect(planGrid23(1420, { minSheets: 10, maxSheets: 40 })).toHaveLength(18)
+  })
+
+  it('上下限写反时下限优先，不返回空计划', async () => {
+    const planGrid23 = await loadPlanner()
+    expect(planGrid23(1420, { minSheets: 120, maxSheets: 20 })).toHaveLength(120)
+  })
+
+  it('超过 10000 的配置被夹到 10000（不会真去抽十万张）', async () => {
+    const planGrid23 = await loadPlanner()
+    expect(planGrid23(3600, { minSheets: 20_000, maxSheets: 30_000 })).toHaveLength(10_000)
+  })
+
+  it('1000 张时时间轴仍然首尾相接、覆盖全片（张数变多不能把时间轴算歪）', async () => {
+    const planGrid23 = await loadPlanner()
+    const sheets = planGrid23(1420, { minSheets: 1000, maxSheets: 1000 })
+    expect(sheets).toHaveLength(1000)
+    const cells = sheets.flatMap((sheet) => sheet.cells)
+    expect(cells).toHaveLength(6000)
+    expect(cells[0].start).toBeCloseTo(0, 6)
+    expect(cells[cells.length - 1].end).toBeCloseTo(1420, 3)
+    for (let i = 0; i < cells.length - 1; i += 1) {
+      expect(cells[i].end).toBeCloseTo(cells[i + 1].start, 6)
+    }
+  })
+})

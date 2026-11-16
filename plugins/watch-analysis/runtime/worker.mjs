@@ -172,6 +172,8 @@ async function main() {
     const rendered = await renderer.render(video, cutResult.cuts, {
       strategy: options.strategy,
       maxFrames: effectiveMaxFrames,
+      // 张数上下限（grid6 用）：用户在面板上配的 100–1000 就是这两个值
+      minSheets: options.minSheets,
       maxSheets: options.maxSheets,
       budgetPixels: options.budgetPixels,
       outDir: options.outDir,

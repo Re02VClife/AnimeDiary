@@ -75,9 +75,11 @@ export interface DepsResponse {
 export interface AnalyzeOptions {
   /** 宫格排版策略，默认 auto */
   strategy?: RenderStrategy
-  /** 最多取多少帧；0 = 不封顶 */
+  /** 最多取多少帧；0 = 不封顶（只对 storyboard 排版生效） */
   maxFrames?: number
-  /** 最多几张图；0 = 不封顶 */
+  /** 宫格图张数下限；0 / 不传 = 自动（每 80 秒一张） */
+  minSheets?: number
+  /** 宫格图张数上限；0 / 不传 = 默认 40；面板可配到 10000 */
   maxSheets?: number
   /** 单图像素预算 */
   budgetPixels?: number

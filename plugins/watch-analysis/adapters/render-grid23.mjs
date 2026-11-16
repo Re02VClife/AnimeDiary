@@ -33,8 +33,13 @@ const CELLS_PER_SHEET = COLS * ROWS // 6
 
 /** 每张图覆盖多少秒。80 秒 × 6 格 = 每格约 13 秒，一集 24 分钟出 18 张 */
 const SHEET_SECONDS = 80
-/** 兜底上限：再长也不至于出几十张图把请求体撑爆 */
+/**
+ * 默认张数上限：不传参数时最多 40 张（3 小时的片也能出，不至于撑爆请求体）。
+ * 用户在面板上可以配到 `MAX_SHEET_LIMIT`，那时代替这个默认值。
+ */
 const MAX_SHEETS = 40
+/** 面板允许配置的硬上限：10000 张（再高就是重复抽同一帧了，没有意义） */
+export const MAX_SHEET_LIMIT = 10_000
 /** 同时最多几个 ffmpeg（抽帧是 CPU 密集，开太多反而慢） */
 const CONCURRENCY = 4
 
@@ -123,11 +128,35 @@ async function runPool(tasks, limit) {
  * 抽成纯函数是为了能单测：给定时长和张数，输出的时间段必须首尾相接、不重叠、
  * 覆盖全片 —— 这个渲染器最容易错的地方就是时间轴算歪，
  * 而算歪了不会报错，只会让影评引用的时间码对不上画面。
+ *
+ * 张数规则（2026-11-16 起支持自定义上下限）：
+ *   自动张数 = ceil(时长 / sheetSeconds)   // 默认每 80 秒一张
+ *   实际张数 = clamp(自动张数, minSheets, maxSheets)
+ * 所以 `{ minSheets: 100, maxSheets: 1000 }` 对 24 分钟的片会出 100 张（自动只有 18）；
+ * `{ maxSheets: 10 }` 会压到 10 张（每格覆盖更久）。两个都传 0 / 不传 = 自动。
+ *
+ * 上下限写反时按**下限优先**纠正（lower 胜出），不返回空计划 ——
+ * 用户把 1000 填在左边是常见手误，静默给空图比给多几张图更糟。
  */
-export function planGrid23(duration, { sheetSeconds = SHEET_SECONDS, maxSheets = MAX_SHEETS } = {}) {
+export function planGrid23(duration, {
+  sheetSeconds = SHEET_SECONDS,
+  minSheets = 1,
+  maxSheets = MAX_SHEETS,
+} = {}) {
   const total = Number(duration)
   if (!Number.isFinite(total) || total <= 0) return []
-  const sheetCount = Math.min(maxSheets, Math.max(1, Math.ceil(total / sheetSeconds)))
+
+  const auto = Math.max(1, Math.ceil(total / sheetSeconds))
+  const lower = Math.min(
+    MAX_SHEET_LIMIT,
+    Math.max(1, Math.round(Number(minSheets) || 1)),
+  )
+  const upper = Math.min(
+    MAX_SHEET_LIMIT,
+    Math.max(lower, Math.round(Number(maxSheets) || MAX_SHEETS)),
+  )
+  const sheetCount = Math.min(upper, Math.max(lower, auto))
+
   const sheetSpan = total / sheetCount
   const cellSpan = sheetSpan / CELLS_PER_SHEET
   const sheets = []
@@ -166,7 +195,10 @@ export const renderGrid23Provider = {
     const prefix = String(opts.prefix || 'sheet')
     await mkdir(outDir, { recursive: true })
 
-    const planned = planGrid23(video.duration)
+    const planned = planGrid23(video.duration, {
+      minSheets: opts.minSheets,
+      maxSheets: opts.maxSheets,
+    })
     if (planned.length === 0) throw new Error('render-grid23: 视频时长无效，无法规划宫格')
 
     const scratch = await mkdtemp(path.join(tmpdir(), 'grid23-'))
@@ -230,7 +262,9 @@ export const renderGrid23Provider = {
         canvas: { width: SHEET_W, height: SHEET_H },
         tiers: { 2: shots.length },
       },
-      notes: [`2×3 布局：每张图 ${CELLS_PER_SHEET} 格 640×360，每格约 ${Math.round(SHEET_SECONDS / CELLS_PER_SHEET)} 秒`],
+      notes: [
+        `2×3 布局：每张图 ${CELLS_PER_SHEET} 格 640×360，每格约 ${Math.round((video.duration || 0) / Math.max(1, shots.length) * 100) / 100} 秒`,
+      ],
     }
   },
 }

@@ -24,7 +24,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, FC, ReactNode } from 'react'
-import { Alert, Button, Empty, Progress, Segmented, Spin, Tag, Tooltip, Typography } from 'antd'
+import { Alert, Button, Empty, InputNumber, Progress, Spin, Switch, Tag, Tooltip, Typography } from 'antd'
 import {
   CheckCircleOutlined,
   InfoCircleOutlined,
@@ -118,7 +118,15 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
   /** 点「重新检查」时自增，触发依赖自检 effect 重跑 */
   const [depsEpoch, setDepsEpoch] = useState(0)
   /** 台词来源：只影响下一次「开始分析」 */
-  const [transcriptMode, setTranscriptMode] = useState<TranscriptMode>('auto')
+  const [readSubtitle, setReadSubtitle] = useState(true)
+  /** 没字幕文件时是否用本地 MOSS 兜底（= `transcript: 'asr'`） */
+  const [asrFallback, setAsrFallback] = useState(false)
+  /** 宫格图张数上下限；null / 0 = 自动（每 80 秒一张） */
+  const [minSheets, setMinSheets] = useState<number | null>(null)
+  const [maxSheets, setMaxSheets] = useState<number | null>(null)
+
+  /** 派生：不让用户在三选一和两个开关之间来回理解 */
+  const transcriptMode: TranscriptMode = !readSubtitle ? 'off' : asrFallback ? 'asr' : 'auto'
 
   // ── 已落盘报告 ──
   const [report, setReport] = useState<WatchReport | null>(null)
@@ -258,14 +266,18 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
     setReport(null)
     pollFailuresRef.current = 0
     try {
-      const started = await analyze(animeKey, episode, { transcript: transcriptMode }, videoFile)
+      const started = await analyze(animeKey, episode, {
+        transcript: transcriptMode,
+        ...(minSheets !== null && minSheets > 0 ? { minSheets } : {}),
+        ...(maxSheets !== null && maxSheets > 0 ? { maxSheets } : {}),
+      }, videoFile)
       setJobId(started.jobId)
     } catch (e) {
       setFailed(`启动分析失败：${errorText(e)}`)
     } finally {
       setStarting(false)
     }
-  }, [animeKey, episode, videoFile, transcriptMode])
+  }, [animeKey, episode, videoFile, transcriptMode, minSheets, maxSheets])
 
   /**
    * 取消是「请求」不是「结果」：服务端把任务标成 cancelled 后，状态轮询会看到
@@ -308,10 +320,20 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
     return dep ? dep.ok : undefined
   }, [deps])
 
-  // 依赖明确说 MOSS 不可用时，别让「语音识别」这个选项悬在半空
+  // 依赖明确说 MOSS 不可用时，别让「语音识别」这个开关悬在半空
   useEffect(() => {
-    if (asrReady === false && transcriptMode === 'asr') setTranscriptMode('auto')
-  }, [asrReady, transcriptMode])
+    if (asrReady === false && asrFallback) setAsrFallback(false)
+  }, [asrReady, asrFallback])
+
+  /** 按当前设置估算这一次会出多少张图（只有已经分析过、知道片长时才算得出来） */
+  const estimatedSheets = useMemo(() => {
+    const duration = report?.video.duration
+    if (!duration || duration <= 0) return null
+    const auto = Math.max(1, Math.ceil(duration / 80))
+    const lower = minSheets !== null && minSheets > 0 ? minSheets : 1
+    const upper = maxSheets !== null && maxSheets > 0 ? maxSheets : 40
+    return Math.min(Math.max(auto, lower), Math.max(lower, upper))
+  }, [report, minSheets, maxSheets])
 
   const canRun = deps?.canRun === true
   const running = jobId !== null
@@ -485,30 +507,73 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
         )}
       </header>
 
-      {/* ── 台词来源（只影响下一次运行，不改已有报告）── */}
+      {/* ── 分析参数（只影响下一次运行，不改已有报告）── */}
       {!running && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <Typography.Text style={mutedTextStyle}>台词来源</Typography.Text>
-          <Segmented
-            size="small"
-            value={transcriptMode}
-            onChange={(value) => setTranscriptMode(value as TranscriptMode)}
-            options={[
-              { label: '字幕文件', value: 'auto' },
-              { label: '语音识别', value: 'asr', disabled: asrReady === false },
-              { label: '不要', value: 'off' },
-            ]}
-          />
-          {transcriptMode === 'asr' && (
-            <Typography.Text style={mutedTextStyle}>
-              没有字幕时用本地 MOSS 转写（含说话人分离）；一集 24 分钟约 10 分钟
-            </Typography.Text>
-          )}
-          {asrReady === false && (
-            <Typography.Text style={mutedTextStyle}>
-              本地 MOSS 未就绪，见上方「可选依赖」
-            </Typography.Text>
-          )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* 分镜图张数上下限 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Typography.Text style={mutedTextStyle}>分镜图数量</Typography.Text>
+            <InputNumber
+              size="small"
+              min={0}
+              max={10000}
+              step={10}
+              value={minSheets ?? undefined}
+              onChange={(value) => setMinSheets(typeof value === 'number' && Number.isFinite(value) ? value : null)}
+              placeholder="自动"
+              style={{ width: 88 }}
+              aria-label="分镜图张数下限"
+            />
+            <Typography.Text style={mutedTextStyle}>–</Typography.Text>
+            <InputNumber
+              size="small"
+              min={0}
+              max={10000}
+              step={10}
+              value={maxSheets ?? undefined}
+              onChange={(value) => setMaxSheets(typeof value === 'number' && Number.isFinite(value) ? value : null)}
+              placeholder="自动"
+              style={{ width: 88 }}
+              aria-label="分镜图张数上限"
+            />
+            <Typography.Text style={mutedTextStyle}>张（每张 6 格；留空 = 自动，约 80 秒一张）</Typography.Text>
+            {estimatedSheets !== null && (
+              <Tag data-testid="estimated-sheets" style={{ marginInlineEnd: 0 }}>
+                本次约 {estimatedSheets} 张
+              </Tag>
+            )}
+          </div>
+
+          {/* 读取字幕 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Typography.Text style={mutedTextStyle}>读取字幕</Typography.Text>
+            <Switch
+              size="small"
+              checked={readSubtitle}
+              onChange={setReadSubtitle}
+              aria-label="读取字幕"
+            />
+            <Typography.Text style={mutedTextStyle}>没字幕时用语音识别</Typography.Text>
+            <Switch
+              size="small"
+              checked={asrFallback}
+              disabled={!readSubtitle || asrReady === false}
+              onChange={setAsrFallback}
+              aria-label="语音识别兜底"
+            />
+            {asrFallback && (
+              <Typography.Text style={mutedTextStyle}>
+                本地 MOSS 转写（含说话人分离）；一集 24 分钟约 10 分钟
+              </Typography.Text>
+            )}
+            {asrReady === false && (
+              <Typography.Text style={mutedTextStyle}>本地 MOSS 未就绪，见上方「可选依赖」</Typography.Text>
+            )}
+          </div>
+
+          <Typography.Text style={mutedTextStyle}>
+            张数留空 = 自动；超过 200 张会明显变慢（每张要抽 6 帧再拼图）。影评生成时仍按每集 1–6 张取样。
+          </Typography.Text>
         </div>
       )}
 

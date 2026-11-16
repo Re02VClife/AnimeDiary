@@ -180,7 +180,8 @@ function pickAnalyzeOptions(raw: any): Partial<WatchAnalyzeOptions> {
   if (!raw || typeof raw !== 'object') return out
   if (typeof raw.strategy === 'string') out.strategy = raw.strategy as WatchAnalyzeOptions['strategy']
   if (Number.isFinite(raw.maxFrames)) out.maxFrames = Math.max(0, Math.round(raw.maxFrames))
-  if (Number.isFinite(raw.maxSheets)) out.maxSheets = Math.max(0, Math.round(raw.maxSheets))
+  if (Number.isFinite(raw.minSheets)) out.minSheets = Math.min(10_000, Math.max(0, Math.round(raw.minSheets)))
+  if (Number.isFinite(raw.maxSheets)) out.maxSheets = Math.min(10_000, Math.max(0, Math.round(raw.maxSheets)))
   if (Number.isFinite(raw.budgetPixels)) out.budgetPixels = Math.max(100_000, Math.round(raw.budgetPixels))
   if (raw.transcript === 'auto' || raw.transcript === 'off' || raw.transcript === 'asr') {
     out.transcript = raw.transcript

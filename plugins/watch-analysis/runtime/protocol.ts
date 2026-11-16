@@ -34,14 +34,22 @@ export interface WatchAnalyzeOptions {
   /** 档位策略，默认 auto */
   strategy?: RenderStrategy
   /**
-   * 最多取多少帧。
+   * 最多取多少帧（只对 `storyboard` 排版策略生效；grid6 按张数算）。
    *
    * **不传 / 0 = 自动按「每 10 秒一帧」算**（worker 里实现）。
    * 别传 0 又期待"不封顶"：一集 24 分钟按每个镜头一帧会有 597 帧，
    * 塞进 8 张宫格图后每格只剩 66×56 px，模型读不出 staff 表和表情 —— 实测踩过。
    */
   maxFrames?: number
-  /** 最多几张图；0 = 不封顶 */
+  /**
+   * 宫格图**张数下限**（grid6 用）。不传 / 0 = 自动（每 80 秒一张，一集约 18 张）。
+   * 例如 `{ minSheets: 100, maxSheets: 1000 }`：24 分钟的集会出 100 张而不是 18 张。
+   */
+  minSheets?: number
+  /**
+   * 宫格图**张数上限**（grid6 用）。不传 / 0 = 默认 40；面板允许配到 10000。
+   * 上下限写反时按「下限优先」纠正，不会返回空计划。
+   */
   maxSheets?: number
   /** 单图像素预算；默认 360000（800×450 ≈ 233 token） */
   budgetPixels?: number
