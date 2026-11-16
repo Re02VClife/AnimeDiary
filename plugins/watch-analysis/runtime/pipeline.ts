@@ -98,6 +98,7 @@ export function buildReport(
       score: cut.score,
       engine: 'hsv',
     })),
+    ...(payload.danmaku ? { danmaku: payload.danmaku } : {}),
     ...(payload.transcript
       ? {
           transcript: {

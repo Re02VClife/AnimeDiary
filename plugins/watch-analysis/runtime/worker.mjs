@@ -191,6 +191,26 @@ async function main() {
       message: `${rendered.shots.length} 个镜头 → ${rendered.sheets.length} 张图`,
     })
 
+    // ── 3.5 弹幕（Kazumi 下载缓存自带，不依赖 ASR/字幕）──
+    // 放在字幕之前：字幕要 ASR/外挂文件才有，而弹幕几乎每部 Kazumi 番都有，
+    // 是零成本能拿到的"观众视角"证据。
+    let danmaku
+    const danmakuStarted = Date.now()
+    try {
+      const { readDanmaku } = await import('../adapters/danmaku-kazumi.mjs')
+      const found = await readDanmaku(input, { duration: info.duration })
+      if (found && found.buckets.length > 0) {
+        danmaku = found
+        log(`弹幕: ${found.rawTotal} 条 → ${found.total} 条有效 / ${found.buckets.length} 个时间桶`)
+      } else {
+        log('没有可用弹幕（只有 Kazumi 缓存目录下才有 danmaku.json）')
+      }
+    } catch (error) {
+      // 弹幕失败不能拖垮分析
+      log(`弹幕读取失败（继续）：${error instanceof Error ? error.message : error}`)
+    }
+    timing.danmaku = (Date.now() - danmakuStarted) / 1000
+
     // ── 4. 字幕（可选）──
     let transcript
     if (options.transcript !== 'off') {
@@ -232,6 +252,7 @@ async function main() {
       cuts: cutResult.cuts.map((c) => ({ t: c.t, score: c.score, kind: c.type })),
       shots: rendered.shots,
       sheets: rendered.sheets,
+      ...(danmaku ? { danmaku } : {}),
       ...(transcript ? { transcript } : {}),
       ...(audio ? { audio } : {}),
       timing: { ...timing, total: (Date.now() - startedAt) / 1000 },

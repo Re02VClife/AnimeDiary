@@ -126,6 +126,7 @@ export type WatchPhase =
   | 'probe'
   | 'scan'
   | 'render'
+  | 'danmaku'
   | 'transcript'
   | 'motion'
   | 'music'
@@ -145,6 +146,33 @@ export interface WatchJobStatus {
   error?: string
 }
 
+/** 弹幕聚合的一个时间桶（观众反应） */
+export interface DanmakuBucket {
+  /** 桶起始时间（秒） */
+  t: number
+  /** 这个桶里有多少条有效弹幕 */
+  count: number
+  /** 代表弹幕（已去重、已过滤广告与刷屏） */
+  samples: string[]
+}
+
+/**
+ * 一集的弹幕摘要。
+ *
+ * 为什么值得占报告空间：弹幕是**观众在那一刻的真实反应**，
+ * 「这里崩了 / 这段封神 / 横谷昌宏又来 / 角色设计是别当欧尼酱的」这类信息，
+ * 画面和字幕都给不了。Kazumi 下载缓存自带 `danmaku.json`，零成本可得。
+ */
+export interface DanmakuSummary {
+  /** 过滤后的有效弹幕条数 */
+  total: number
+  /** 原始条数 */
+  rawTotal?: number
+  /** 来源文件名 */
+  file: string
+  buckets: DanmakuBucket[]
+}
+
 /** 落盘的完整报告 */
 export interface WatchReport {
   /** schema 版本：将来改结构时用来判断要不要迁移 */
@@ -162,6 +190,8 @@ export interface WatchReport {
   }
   shots: Array<Shot & { motion?: ShotMotion; cell?: { sheet: number; x: number; y: number } }>
   cuts: Cut[]
+  /** 弹幕摘要（Kazumi 下载缓存自带 danmaku.json，没有就是 undefined） */
+  danmaku?: DanmakuSummary
   transcript?: {
     source: string
     segments: Segment[]
@@ -215,6 +245,7 @@ export interface WatchReport {
     probe?: number
     scan?: number
     render?: number
+    danmaku?: number
     transcript?: number
     motion?: number
     music?: number

@@ -65,6 +65,7 @@ const PHASE_LABELS: Record<WatchPhase, string> = {
   probe: '探测视频信息',
   scan: '切镜扫描',
   render: '抽帧拼宫格图',
+  danmaku: '读取观众弹幕',
   transcript: '提取台词',
   motion: '测量动感',
   music: '分析配乐',

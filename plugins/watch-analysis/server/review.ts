@@ -202,6 +202,31 @@ function buildPrompt(
     shotLines.push(`E${report.episode}：\n${lines.join('\n')}`)
   }
 
+  /*
+   * 弹幕：**观众在那一刻的真实反应**。
+   *
+   * 这是本插件里最"便宜"的一手证据：Kazumi 缓存自带 danmaku.json，不用装 ASR、
+   * 不用调模型，一次读盘 0.01 秒。里面经常有「横谷昌宏又来」「角色设计是别当欧尼酱的」
+   * 这种连画面和字幕都给不了的制作背景，以及「这里崩了/这段封神」的观众共识。
+   *
+   * 但不能全塞：95 个时间桶 × 5 条会占掉上下文的三分之一。
+   * 折中：均匀抽 30 桶（覆盖全片）+ 密度最高的 10 桶（高能段不遗漏）。
+   */
+  const danmakuLines: string[] = []
+  for (const report of reports) {
+    const summary = report.danmaku
+    if (!summary || summary.buckets.length === 0) continue
+    const all = summary.buckets
+    const dense = [...all].sort((a, b) => b.count - a.count).slice(0, 10)
+    const evenStep = Math.max(1, Math.floor(all.length / 20))
+    const even = all.filter((_, index) => index % evenStep === 0).slice(0, 20)
+    const picked = [...new Set([...even, ...dense])].sort((a, b) => a.t - b.t)
+    const lines = picked.map((bucket) =>
+      `  [${clock(bucket.t)}] ${bucket.count}条: ${bucket.samples.slice(0, 3).join(' / ')}`,
+    )
+    danmakuLines.push(`E${report.episode}（共 ${summary.rawTotal ?? summary.total} 条弹幕）：\n${lines.join('\n')}`)
+  }
+
   // 维度只能用用户模板里那些（中文标签由前端翻译好传进来）。
   // 用户没打过分的维度不要去评 —— 那会让多出来的分数显得凭空出现。
   const userDimensions = Object.keys(userContext.scores ?? {})
@@ -225,8 +250,18 @@ function buildPrompt(
     '【镜头与台词时间码（节选）】',
     ...shotLines,
     '',
+    ...(danmakuLines.length > 0
+      ? [
+          '【观众弹幕（按时间，已过滤广告/刷屏）】',
+          '这是**真实观众在那些时刻的反应**，可以用来说明"哪段高能/哪段被吐槽"，',
+          '但它是**别人的观点**，引用时要写清楚"弹幕在说"而不是当成你自己的判断。',
+          ...danmakuLines,
+          '',
+        ]
+      : []),
     '【引用分镜的格式】',
-    '正文里要插图时，写成 `{{sheet:文件名}}` 或 `{{sheet:文件名:第几格}}`，例如 `{{sheet:ep01.png}}`、`{{sheet:ep01.png:3}}`。',
+    '正文里要插图时，写成 `{{sheet:文件名}}` 或 `{{sheet:文件名:第几格}}`，例如 `{{sheet:ep01-1.jpg}}`、`{{sheet:ep01-1.jpg:3}}`。',
+    '**文件名必须和上面列出的完全一致（包括 .jpg / .png 后缀）**，写错就插不进图。',
     '**不要写 URL**，会由程序替换。只能引用上面列出来的那些文件名。',
     '时间码写成 `[mm:ss]`，例如 `[12:34]`。',
     '',

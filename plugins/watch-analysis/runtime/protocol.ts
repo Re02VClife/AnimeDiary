@@ -12,7 +12,7 @@
  *
  * 通信协议：一行一个 JSON（stdout），**不要往 stdout 打日志** —— 日志走 stderr。
  */
-import type { BudgetLedger, Sheet, Shot, WatchPhase } from '../core/types'
+import type { BudgetLedger, DanmakuSummary, Sheet, Shot, WatchPhase } from '../core/types'
 import type { RenderStrategy } from '../ports/render'
 
 // ─────────────────────────────────────────────────────────────
@@ -106,6 +106,8 @@ export interface WatchWorkerResult {
     cuts?: number
   }>
   sheets: Sheet[]
+  /** 弹幕摘要（Kazumi 下载缓存自带 danmaku.json；没有就是 undefined） */
+  danmaku?: DanmakuSummary
   transcript?: {
     source: string
     model?: string
