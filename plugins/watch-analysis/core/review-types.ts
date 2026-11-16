@@ -157,7 +157,7 @@ export interface ReviewOptions {
   force?: boolean
   /** 预算上限（token），默认 200 万 */
   budget?: number
-  /** 最大图数（一张图 ≈ 233 token，但更吃上下文）；默认按集数自适应 */
+  /** 最大图数：默认 12，上限 48。整部番时按集数平分（6 集 → 每集 2 张） */
   maxSheets?: number
 }
 

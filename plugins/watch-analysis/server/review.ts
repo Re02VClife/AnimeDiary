@@ -30,13 +30,17 @@ const MAX_IMAGE_BYTES = 4 * 1024 * 1024
 /**
  * 一次生成最多看几张图。
  *
- * 不能太小：一集 24 分钟按「每 10 秒一帧」会出 18 张图，
- * 只取前 8 张等于只让 AI 看了半集（这是实测发现的 bug——
- * 之前的实现是顺序取前 N 张，不是均匀采样）。
- * 也不能太大：实测 8 张图 + 长提示词会让总耗时冲到 140 秒，
- * 上游直接掐断在半截 JSON（500 + 输出 5789 字符）。6 张是最稳的值。
+ * ⚠️ 2026-11-17 从 6 提到 12：**上下文不是瓶颈**（当前模型 1M 上下文），
+ * 6 是早期用同步请求时的保守值 —— 那次实测 8 张图 + 长提示词冲到 140 秒，
+ * 上游直接把 JSON 掐断在半截。现在改成后台任务 + 300 秒超时，容得下更多图。
+ *
+ * 仍然不建议无脑拉满：每张 1280×1080 约 250KB，48 张 ≈ 12MB 请求体，
+ * 上传和 prefill 都会明显变慢（用户看到的就是"转很久"）。
  */
-const DEFAULT_MAX_SHEETS = 6
+const DEFAULT_MAX_SHEETS = 12
+
+/** 单次影评最多看几张图（硬上限，防止把请求体撑到网关直接拒收） */
+const MAX_SHEETS_LIMIT = 48
 
 /** 默认预算：200 万 token（和单集拉片的上限一致，影评通常只花几千） */
 const DEFAULT_BUDGET = 2_000_000
@@ -521,7 +525,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       const available = new Map<number, Set<string>>()
       const sheetsByEpisode = new Map<number, Array<{ file: string; cells: number }>>()
       const images: string[] = []
-      const maxSheets = Math.max(1, Math.min(24, req.options?.maxSheets ?? DEFAULT_MAX_SHEETS))
+      const maxSheets = Math.max(1, Math.min(MAX_SHEETS_LIMIT, req.options?.maxSheets ?? DEFAULT_MAX_SHEETS))
       const perEpisode = Math.max(1, Math.floor(maxSheets / selected.length))
 
       for (const report of selected) {

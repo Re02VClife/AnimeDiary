@@ -675,7 +675,8 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
           )}
 
           <Typography.Text style={mutedTextStyle}>
-            张数留空 = 自动；超过 200 张会明显变慢（每张要抽 6 帧再拼图）。影评生成时仍按每集 1–6 张取样。
+            张数留空 = 自动；超过 200 张会明显变慢（每张要抽 6 帧再拼图）。
+            影评生成时按「AI 看图数量」从每集均匀取样（默认每集 2 张，可在影评配置里调）。
             <br />
             性能预留只作用于抽帧/拼图；扫描阶段由分镜引擎直接调 ffmpeg，不受它控制（这一招靠进程优先级降低卡顿）。
           </Typography.Text>

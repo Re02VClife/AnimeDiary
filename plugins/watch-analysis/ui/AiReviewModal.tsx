@@ -73,6 +73,8 @@ import type {
 import { formatTokens } from './BudgetBar'
 import {
   DEFAULT_REVIEW_BUDGET,
+  DEFAULT_REVIEW_SHEETS,
+  MAX_REVIEW_SHEETS,
   cancelReviewRun,
   getExistingReview,
   getReviewMeta,
@@ -958,6 +960,8 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
   // ── 生成选项 ──
   const [selectedEpisodes, setSelectedEpisodes] = useState<number[]>([])
   const [budget, setBudget] = useState(DEFAULT_REVIEW_BUDGET)
+  /** 本次给模型看几张分镜图（整部番时按集数平分） */
+  const [maxSheets, setMaxSheets] = useState(DEFAULT_REVIEW_SHEETS)
   const [force, setForce] = useState(false)
   const [meta, setMeta] = useState<ReviewMeta | null>(null)
 
@@ -1346,6 +1350,7 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
         userContext: { ...(userContext ?? {}), title: userContext?.title || title },
         options: {
           budget,
+          maxSheets,
           force: options?.force ?? force,
           ...(scope.kind === 'series' && selectedEpisodes.length > 0
             ? { episodes: selectedEpisodes }
@@ -1375,6 +1380,7 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
       userContext,
       title,
       budget,
+      maxSheets,
       force,
       selectedEpisodes,
       manualFile,
@@ -1778,6 +1784,34 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
             <span style={MUTED_STYLE}>默认全选已经分析过的集；这里改的就是参与生成的范围。</span>
           </section>
         )}
+
+        {/* AI 看图数量 */}
+        <section style={SECTION_STYLE}>
+          <span style={SECTION_TITLE_STYLE}>AI 看图数量</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <InputNumber
+              min={1}
+              max={MAX_REVIEW_SHEETS}
+              step={1}
+              value={maxSheets}
+              onChange={(value) =>
+                setMaxSheets(
+                  typeof value === 'number' && Number.isFinite(value)
+                    ? Math.min(MAX_REVIEW_SHEETS, Math.max(1, Math.round(value)))
+                    : DEFAULT_REVIEW_SHEETS,
+                )
+              }
+              style={{ width: 120 }}
+            />
+            <span style={MUTED_STYLE}>
+              张 · 整部番按集数平分（6 集 × 12 张 → 每集 2 张）
+            </span>
+          </div>
+          <span style={MUTED_STYLE}>
+            上下文不是瓶颈（模型 1M），限制来自**请求体大小与单次耗时**：每张 1280×1080 约 250KB，
+            48 张 ≈ 12MB。想看得更全就调大，想更快就保持 12。
+          </span>
+        </section>
 
         {/* 预算 */}
         <section style={SECTION_STYLE}>

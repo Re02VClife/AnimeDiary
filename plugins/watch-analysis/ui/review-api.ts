@@ -25,6 +25,16 @@ const API_BASE = '/api/watch'
 export const DEFAULT_REVIEW_BUDGET = 2_000_000
 
 /**
+ * 影评默认看几张分镜图（与后端 `DEFAULT_MAX_SHEETS` 对齐）。
+ *
+ * 整部番时按集数平分：12 张 / 6 集 → 每集 2 张。
+ */
+export const DEFAULT_REVIEW_SHEETS = 12
+
+/** 单次影评最多看几张图（与后端 `MAX_SHEETS_LIMIT` 对齐） */
+export const MAX_REVIEW_SHEETS = 48
+
+/**
  * `GET /api/watch/review/meta` 的客户端形状。
  *
  * 后端读不到时这里整块返回 `null`（不是抛错），UI 显示「未知」。
