@@ -692,7 +692,8 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
 
     const { system, prompt } = buildSeriesSummaryPrompt({
       title,
-      episodeRange: `E${selected[0].episode}–E${selected[selected.length - 1].episode}（${selected.length} 集）`,
+      // 用集号列表而不是区间：只选 E3/E5 时写「E3–E5」会让模型以为 E4 也该有小结
+      episodeRange: `${selected.map((report) => `E${report.episode}`).join(' / ')}（${selected.length} 集）`,
       briefs,
       userScores: userScoreText(userContext),
       stats: {
