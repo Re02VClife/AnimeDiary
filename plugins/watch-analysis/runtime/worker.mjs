@@ -16,8 +16,29 @@
  * 退出码：0 成功；1 异常（错误已通过 error 事件发过）；2 参数错误。
  */
 import { readFile } from 'node:fs/promises'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readdir, unlink } from 'node:fs/promises'
 import path from 'node:path'
+
+/**
+ * 清掉同一集上一次分析留下的图。
+ *
+ * 为什么必须清：换排版策略时后缀和张数都会变（storyboard 出 798×494 的 PNG、
+ * 可能 49 张；grid6 出 1280×1080 的 JPG、18 张）。不清的话旧文件一直躺在
+ * `sheets/epN/` 里越积越多，而且前端按旧报告的文件名会 404。
+ * 只删本集前缀的图片，不碰 evidence.json 之类别的产物（那是 saveStoryboards 写的）。
+ */
+async function cleanPreviousSheets(outDir, prefix) {
+  try {
+    const entries = await readdir(outDir)
+    const pattern = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-\\d+\\.(png|jpe?g)$`, 'i')
+    for (const name of entries) {
+      if (!pattern.test(name)) continue
+      await unlink(path.join(outDir, name)).catch(() => {})
+    }
+  } catch {
+    // 目录不存在 / 权限问题都不该让分析失败 —— 大不了留着旧图
+  }
+}
 
 /** stdout 单行 JSON —— 唯一允许往 stdout 写的地方 */
 function emit(event) {
@@ -66,7 +87,21 @@ async function main() {
   try {
     // 适配器按需加载：切镜引擎缺失时还能降级，不该在模块加载期就整片崩掉
     const { cutHsvProvider } = await import('../adapters/cut-hsv.mjs')
-    const { renderStoryboardProvider } = await import('../adapters/render-storyboard.mjs')
+
+    /*
+     * 排版策略：
+     *   grid6（默认）— 2×3 六格，每张 1280×1080 / 每格 640×360。
+     *     "写死格数"是用户要的：格子够大，staff 表和表情都能读。
+     *   storyboard  — 按切点密度分档排版（798×494 那种），张数更少但格子小。
+     *     显式传 compact/standard/skim/full 或 'storyboard' 时才用。
+     */
+    const renderPolicy = options.strategy && !['grid6', 'auto'].includes(options.strategy)
+      ? 'storyboard'
+      : 'grid6'
+    const renderer = renderPolicy === 'storyboard'
+      ? (await import('../adapters/render-storyboard.mjs')).renderStoryboardProvider
+      : (await import('../adapters/render-grid23.mjs')).renderGrid23Provider
+    log(`render policy: ${renderPolicy}${renderPolicy === 'grid6' ? '（2×3 / 1280×1080）' : ''}`)
 
     await mkdir(options.outDir, { recursive: true })
 
@@ -126,15 +161,18 @@ async function main() {
       : autoMaxFrames
     log(`maxFrames: ${effectiveMaxFrames}${options.maxFrames ? '（指定）' : `（自动：${Math.round(info.duration)}s / 10）`}`)
 
-    const rendered = await renderStoryboardProvider.render(video, cutResult.cuts, {
+    // 换策略后旧图会残留（后缀/张数都不同），渲染前先清本集旧文件
+    await cleanPreviousSheets(options.outDir, options.prefix)
+
+    const rendered = await renderer.render(video, cutResult.cuts, {
       strategy: options.strategy,
       maxFrames: effectiveMaxFrames,
       maxSheets: options.maxSheets,
       budgetPixels: options.budgetPixels,
       outDir: options.outDir,
       prefix: options.prefix,
-      // 复用 cut-hsv 已经算好的扫描结果，避免解两遍码
-      precomputed: cutResult.raw,
+      // storyboard 才吃 precomputed；grid6 是按时间抽帧，不依赖扫描结果
+      precomputed: renderPolicy === 'storyboard' ? cutResult.raw : null,
       onProgress: (stage, done, total) => {
         const ratio = total > 0 ? Math.min(1, done / total) : 0
         emit({

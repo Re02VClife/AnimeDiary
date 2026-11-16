@@ -357,6 +357,23 @@ describe('createReviewGenerator', () => {
     expect((review.markdown.match(/（见上图）/g) ?? [])).toHaveLength(2)
   })
 
+  it('模型漏写扩展名时也要能匹配到图（实测 2×3 换成 .jpg 后整篇没插进图）', async () => {
+    const { store } = seedReport(1)
+    const reviewStore = createReviewStore(dir)
+    // 报告的 sheet 叫 ep01.png，模型写的是不带后缀的 ep01
+    const json = modelJson({ markdown: '看 {{sheet:ep01}} 和 {{sheet:ep01:3}}。' })
+    const { generator } = makeGenerator({
+      store,
+      reviewStore,
+      describe: async () => ({ text: json, usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 }, model: 'm' }),
+    })
+    const { review } = await generator.generate({ key: KEY, scope: { kind: 'series' } })
+    expect(review.markdown).toContain('![E1 分镜]')
+    expect(review.markdown).toContain('file=ep01.png')
+    // 第一处成功匹配后第二处去重
+    expect(review.markdown).toContain('（见上图）')
+  })
+
   it('elapsedMs 落盘（历史记录要能显示这篇花了多久）', async () => {
     const { store } = seedReport(1)
     const reviewStore = createReviewStore(dir)

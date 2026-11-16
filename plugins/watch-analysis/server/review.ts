@@ -78,13 +78,16 @@ export interface ReviewGenerator {
   read(req: ReviewRequest): AiReview | null
 }
 
-/** 把本地 PNG 读成 data URL。读不到（不存在/太大/不是图）返回 null，跳过而不是让整单失败。 */
+/** 把本地图读成 data URL。读不到（不存在/太大/不是图）返回 null，跳过而不是让整单失败。 */
 function readImageAsDataUrl(filePath: string): string | null {
   try {
     const stat = fs.statSync(filePath)
     if (!stat.isFile() || stat.size === 0 || stat.size > MAX_IMAGE_BYTES) return null
     const buffer = fs.readFileSync(filePath)
-    return `data:image/png;base64,${buffer.toString('base64')}`
+    // 2×3 渲染器出 JPEG，storyboard 出 PNG —— MIME 必须跟着扩展名走，
+    // 否则模型侧可能按 PNG 解 JPEG 字节，直接报"无法解码图片"
+    const mime = /\.jpe?g$/i.test(filePath) ? 'image/jpeg' : 'image/png'
+    return `data:${mime};base64,${buffer.toString('base64')}`
   } catch {
     return null
   }
@@ -335,14 +338,27 @@ function normalizeCitations(raw: unknown, available: Map<number, Set<string>>): 
  */
 function replaceSheetPlaceholders(markdown: string, key: string, available: Map<number, Set<string>>): string {
   const inserted = new Set<string>()
-  return markdown.replace(/\{\{\s*sheet\s*:\s*([^}:]+?)\s*(?::\s*(\d+)\s*)?\}\}/gi, (whole, file: string, cell?: string) => {
-    const episode = episodeFromSheetName(file)
-    if (episode === null || !available.get(episode)?.has(file)) {
-      return `[分镜 ${file}]`
-    }
-    if (inserted.has(file)) return '（见上图）'
-    inserted.add(file)
-    const query = new URLSearchParams({ key, episode: String(episode), file })
+  return markdown.replace(/\{\{\s*sheet\s*:\s*([^}:]+?)\s*(?::\s*(\d+)\s*)?\}\}/gi, (whole, rawFile: string, cell?: string) => {
+    const episode = episodeFromSheetName(rawFile)
+    if (episode === null) return `[分镜 ${rawFile}]`
+    const files = available.get(episode)
+    if (!files) return `[分镜 ${rawFile}]`
+
+    // 模型经常**漏写扩展名**（写 {{sheet:ep01-1}} 而不是 ep01-1.jpg）——
+    // 实测 2×3 渲染器换成 .jpg 后缀后整篇一个图都没插进去。
+    // 这里按「原样 → 补 .jpg → 补 .png」依次找，找不到才降级成文字。
+    const resolved = files.has(rawFile)
+      ? rawFile
+      : files.has(`${rawFile}.jpg`)
+        ? `${rawFile}.jpg`
+        : files.has(`${rawFile}.png`)
+          ? `${rawFile}.png`
+          : null
+    if (!resolved) return `[分镜 ${rawFile}]`
+
+    if (inserted.has(resolved)) return '（见上图）'
+    inserted.add(resolved)
+    const query = new URLSearchParams({ key, episode: String(episode), file: resolved })
     const url = `/api/watch/sheet?${query.toString()}`
     return `![E${episode} 分镜${cell ? ` 第${cell}格` : ''}](${url})`
   })

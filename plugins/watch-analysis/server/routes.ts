@@ -408,7 +408,8 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
       return
     }
     res.statusCode = 200
-    res.setHeader('Content-Type', 'image/png')
+    // 2×3 渲染器出的是 JPEG（PNG 每张近 800KB，18 张就是 14MB）；按扩展名给 MIME
+    res.setHeader('Content-Type', /\.jpe?g$/i.test(target) ? 'image/jpeg' : 'image/png')
     res.setHeader('Content-Length', String(stat.size))
     // 图一旦生成就不会变（文件名带集号），可以放心长缓存
     res.setHeader('Cache-Control', 'private, max-age=86400')
