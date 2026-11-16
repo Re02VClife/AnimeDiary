@@ -39,7 +39,8 @@ export function formatDuration(seconds: number): string {
 }
 
 interface ShotRow {
-  shot: Shot
+  /** 用报告 shots 的完整类型（含 cell / duration），不是裸 Shot */
+  shot: WatchReport['shots'][number]
   /** 该镜头落在哪张宫格图（没有映射时为 null） */
   sheetIndex: number | null
   /** 动感均值（0–255 口径），没有测量时为 null */
@@ -258,7 +259,9 @@ export const StoryboardViewer: FC<StoryboardViewerProps> = ({ report }) => {
       <section style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
           <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>镜头清单</span>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>点击某一行跳到对应宫格图</span>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            点击某一行跳到对应宫格图；每行标了它落在第几张图、第几格
+          </span>
         </div>
         {rows.length === 0 ? (
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="这份报告没有镜头数据" />
@@ -301,7 +304,14 @@ export const StoryboardViewer: FC<StoryboardViewerProps> = ({ report }) => {
                 <span style={sepStyle}>·</span>
                 <span style={metaStyle}>{formatDuration(row.shot.end - row.shot.start)}</span>
                 <span style={sepStyle}>·</span>
-                <span style={metaStyle}>档位 {row.shot.tier}</span>
+                {row.shot.cell ? (
+                  // 有 cell 就标出它落在第几张图的第几格 —— 这就是"镜头和图的对应关系"
+                  <span data-testid="shot-cell" style={metaStyle}>
+                    图 {row.shot.cell.sheet + 1} · 格 {row.shot.cell.y * 2 + row.shot.cell.x + 1}
+                  </span>
+                ) : (
+                  <span style={metaStyle}>档位 {row.shot.tier}</span>
+                )}
                 <span style={sepStyle}>·</span>
                 <span style={metaStyle}>动感 {row.motion === null ? '—' : row.motion.toFixed(1)}</span>
                 <span style={sepStyle}>·</span>

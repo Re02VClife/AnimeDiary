@@ -63,8 +63,66 @@ function describeError(error) {
   return { message: String(error) }
 }
 
-async function main() {
-  const requestPath = process.argv[2]
+/**
+ * 从切点推导**真实镜头**区间。
+ *
+ * 为什么需要：grid6 渲染器是按时间抽格子（每格 1.2 秒），它返回的 `shots` 其实是格子。
+ * 以前直接拿它当镜头，结果一集 597 个真实镜头变成 1200 个"1.2 秒镜头"，
+ * 档位（tier）全是 2 —— 用户一眼就看出不对（2026-11-17 反馈）。
+ * 真实镜头 = 相邻切点之间的区间。
+ */
+function buildShotsFromCuts(cuts, duration) {
+  const points = (cuts ?? [])
+    .map((cut) => Number(cut.t))
+    .filter((t) => Number.isFinite(t) && t > 0.05 && t < duration - 0.05)
+    .sort((a, b) => a - b)
+
+  const boundaries = [0, ...points, duration]
+  const shots = []
+  for (let index = 0; index < boundaries.length - 1; index += 1) {
+    const start = boundaries[index]
+    const end = boundaries[index + 1]
+    if (end - start < 0.05) continue
+    shots.push({
+      i: shots.length,
+      start: Math.round(start * 100) / 100,
+      end: Math.round(end * 100) / 100,
+      duration: Math.round((end - start) * 100) / 100,
+      // grid6 没有分档语义；保留字段兼容，UI 不再显示"档位"
+      tier: 2,
+    })
+  }
+  return shots
+}
+
+/**
+ * 把真实镜头挂到它起点所在的格子（sheet + x/y）。
+ *
+ * 一个镜头可能跨好几格，这里只记**起点**那格 —— 点镜头行跳过去时看到的是镜头的第一帧。
+ */
+function attachCells(shots, frames, cellsPerSheet = 6) {
+  if (!Array.isArray(frames) || frames.length === 0) return shots
+  const cells = frames.map((frame) => ({
+    sheet: Math.floor(frame.i / cellsPerSheet),
+    x: frame.i % 2,
+    y: Math.floor((frame.i % cellsPerSheet) / 2),
+    start: frame.start,
+    end: frame.end,
+  }))
+
+  return shots.map((shot) => {
+    const hit =
+      cells.find((cell) => shot.start >= cell.start - 0.06 && shot.start < cell.end + 0.06) ??
+      cells[cells.length - 1]
+    return {
+      ...shot,
+      frameAt: shot.start,
+      cell: { sheet: hit.sheet, x: hit.x, y: hit.y },
+    }
+  })
+}
+
+async function main() {  const requestPath = process.argv[2]
   if (!requestPath) {
     log('缺少 request 文件路径参数')
     process.exit(2)
@@ -227,23 +285,49 @@ async function main() {
     let transcript
     if (options.transcript !== 'off') {
       const transcriptStarted = Date.now()
-      emit({ type: 'progress', phase: 'transcript', percent: 96, message: '查找字幕文件' })
-      try {
-        const { transcriptSubtitleProvider } = await import('../adapters/transcript-subtitle.mjs')
-        const result = await transcriptSubtitleProvider.transcribe(video, {})
-        if (result.segments.length > 0) {
-          transcript = {
-            source: result.source,
-            segments: result.segments,
-            chars: countChars(result.segments),
-            notes: result.notes,
+
+      // ① 内嵌字幕轨（优先级 0）：mp4/mkv 自带字幕时最省事，不用装 ASR
+      if (info.hasSubtitle) {
+        emit({ type: 'progress', phase: 'transcript', percent: 96, message: '提取内嵌字幕轨' })
+        try {
+          const { transcriptEmbeddedProvider } = await import('../adapters/transcript-embedded.mjs')
+          const result = await transcriptEmbeddedProvider.transcribe(video)
+          if (result.segments.length > 0) {
+            transcript = {
+              source: result.source,
+              segments: result.segments,
+              chars: countChars(result.segments),
+              notes: result.notes,
+            }
+            log(`内嵌字幕: ${result.segments.length} 句`)
+          } else {
+            log(result.notes?.join('；') ?? '没有内嵌字幕轨')
           }
-        } else {
-          log(`没有可用字幕文件（${result.notes?.join('；') ?? '目录里没找到 .ass/.srt/.vtt'}）`)
+        } catch (error) {
+          log(`内嵌字幕提取失败（继续）：${error instanceof Error ? error.message : error}`)
         }
-      } catch (error) {
-        // 字幕失败不能拖垮整个分析：画面才是主体
-        log(`字幕解析失败（继续）：${error instanceof Error ? error.message : error}`)
+      }
+
+      // ② 同目录字幕文件
+      if (!transcript) {
+        emit({ type: 'progress', phase: 'transcript', percent: 96, message: '查找字幕文件' })
+        try {
+          const { transcriptSubtitleProvider } = await import('../adapters/transcript-subtitle.mjs')
+          const result = await transcriptSubtitleProvider.transcribe(video, {})
+          if (result.segments.length > 0) {
+            transcript = {
+              source: result.source,
+              segments: result.segments,
+              chars: countChars(result.segments),
+              notes: result.notes,
+            }
+          } else {
+            log(`没有可用字幕文件（${result.notes?.join('；') ?? '目录里没找到 .ass/.srt/.vtt'}）`)
+          }
+        } catch (error) {
+          // 字幕失败不能拖垮整个分析：画面才是主体
+          log(`字幕解析失败（继续）：${error instanceof Error ? error.message : error}`)
+        }
       }
 
       if (!transcript && options.transcript === 'asr') {
@@ -280,6 +364,17 @@ async function main() {
     // storyboard 的返回里带 EBU R128 响度序列，直接透传；没有音轨时为 null
     const audio = rendered.audio ?? undefined
 
+    /*
+     * 镜头 vs 格子：
+     *   - storyboard：渲染器本身就按镜头出格，rendered.shots 就是镜头；
+     *   - grid6：rendered.shots 是格子（每格 1.2 秒），真实镜头要从切点推导。
+     * 这一步决定了「镜头清单」里显示的是 600 个真实镜头还是 1200 个格子。
+     */
+    const gridFrames = renderPolicy === 'grid6' ? rendered.shots : undefined
+    const reportShots = renderPolicy === 'grid6'
+      ? attachCells(buildShotsFromCuts(cutResult.cuts, info.duration), rendered.shots)
+      : rendered.shots
+
     const payload = {
       video: {
         duration: info.duration,
@@ -290,7 +385,8 @@ async function main() {
         hasSubtitle: Boolean(info.hasSubtitle),
       },
       cuts: cutResult.cuts.map((c) => ({ t: c.t, score: c.score, kind: c.type })),
-      shots: rendered.shots,
+      shots: reportShots,
+      ...(gridFrames ? { frames: gridFrames } : {}),
       sheets: rendered.sheets,
       ...(danmaku ? { danmaku } : {}),
       ...(transcript ? { transcript } : {}),
@@ -301,7 +397,7 @@ async function main() {
     }
 
     emit({ type: 'result', payload })
-    log(`done: ${rendered.shots.length} shots, ${rendered.sheets.length} sheets, ${(
+    log(`done: ${reportShots.length} shots, ${rendered.sheets.length} sheets, ${(
       (Date.now() - startedAt) / 1000
     ).toFixed(2)}s`)
     process.exit(0)

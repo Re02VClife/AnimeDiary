@@ -193,7 +193,15 @@ export interface WatchReport {
     motion: string
     music: string
   }
-  shots: Array<Shot & { motion?: ShotMotion; cell?: { sheet: number; x: number; y: number } }>
+  shots: Array<Shot & {
+    motion?: ShotMotion
+    /** 这个镜头（按起点）落在哪张宫格图的哪一格 */
+    cell?: { sheet: number; x: number; y: number }
+    /** 镜头时长（秒）；grid6 由切点推导，storyboard 是格子跨度 */
+    duration?: number
+    /** 代表帧时刻 */
+    frameAt?: number
+  }>
   cuts: Cut[]
   /** 弹幕摘要（Kazumi 下载缓存自带 danmaku.json，没有就是 undefined） */
   danmaku?: DanmakuSummary

@@ -116,20 +116,32 @@ export interface WatchWorkerResult {
    */
   cuts: Array<{ t: number; score: number; kind?: string }>
   /**
-   * 镜头序列。`i` 从 0 开始（storyboard 的 cell 从 1 开始，worker 负责 -1）。
-   * `text` 是这一格时间范围内的台词（可能为空）。
+   * 镜头序列。`i` 从 0 开始。
+   *
+   * **语义（2026-11-17 修正）**：grid6 以前把「格子」当镜头（每格 1.2 秒、tier 固定 2），
+   * 导致镜头清单里全是同档位、而且一集 1200 个"镜头"其实是 200 张图 × 6 格。
+   * 现在 `shots` 是从切点推导的**真实镜头**（一集约 600 个），`frames` 才是格子。
    */
   shots: Array<{
     i: number
     start: number
     end: number
-    /** 取帧时刻（格子的代表帧） */
-    frameAt: number
+    /** 镜头时长（秒）；= end - start */
+    duration?: number
+    /** 取帧时刻（格子代表帧）；真实镜头通常 = start */
+    frameAt?: number
     tier: number
     text?: string
     /** 该格内部有几个切点 */
     cuts?: number
+    /** 这个镜头（按起点）落在哪张宫格图的哪一格 */
+    cell?: { sheet: number; x: number; y: number }
   }>
+  /**
+   * 抽样的格子（grid6：一张图 6 格 → 6 个格子）。
+   * UI 的「镜头清单」用 shots，宫格图用 sheets + frames 做定位。
+   */
+  frames?: Array<{ i: number; start: number; end: number; sheet: number }>
   sheets: Sheet[]
   /** 弹幕摘要（Kazumi 下载缓存自带 danmaku.json；没有就是 undefined） */
   danmaku?: DanmakuSummary

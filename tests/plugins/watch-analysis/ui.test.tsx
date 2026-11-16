@@ -313,8 +313,9 @@ describe('StoryboardViewer', () => {
     expect(el.textContent).toContain('02:08.9')
     // 第二行时长 65.4 - 3.5 = 61.9s
     expect(el.textContent).toContain('61.9s')
-    // 档位 / 动感值：前两个镜头有 shot.motion，第三个镜头回退到 motion.perShot[2]
-    expect(el.textContent).toContain('档位 4')
+    // 镜头落在第几张图的第几格（grid6 由 worker 算好；没有 cell 时才回退显示档位）
+    expect(el.textContent).toContain('图 1 · 格 1')
+    expect(el.textContent).toContain('图 1 · 格 2')
     expect(el.textContent).toContain('动感 48.2')
     expect(el.textContent).toContain('动感 9.1')
     // 台词：shot 0 用 storyboard 回填的 shot.text，shot 2 用 transcript 时间重叠兜底

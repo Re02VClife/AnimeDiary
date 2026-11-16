@@ -85,21 +85,26 @@ export function buildReport(
       motion: 'none',
       music: 'none',
     },
-    shots: payload.shots.map((shot) => ({
-      i: shot.i,
-      start: shot.start,
-      end: shot.end,
-      sampled: false,
-      tier: shot.tier,
-      ...(shot.text ? { text: shot.text } : {}),
-      cell: {
-        // sheet 序号和坐标在 storyboard 的 cell 里没直接给，
-        // 这里只填 sheet 编号（能在哪个文件里找到），x/y 由 UI 按图顺序推
-        sheet: payload.sheets.findIndex((sheet) => sheet.shots.includes(shot.i)),
-        x: 0,
-        y: 0,
-      },
-    })),
+    shots: payload.shots.map((shot) => {
+      /*
+       * 镜头落在哪张图哪一格：
+       *   - grid6：worker 按起点精确算好（shot.cell）；
+       *   - storyboard / 老 payload：用 Sheet.shots 反查（只能拿到图号，格坐标未知）。
+       */
+      const sheetIndex = payload.sheets.findIndex((sheet) => sheet.shots.includes(shot.i))
+      const cell = shot.cell ?? (sheetIndex >= 0 ? { sheet: sheetIndex, x: 0, y: 0 } : undefined)
+      return {
+        i: shot.i,
+        start: shot.start,
+        end: shot.end,
+        ...(typeof shot.duration === 'number' ? { duration: shot.duration } : {}),
+        ...(typeof shot.frameAt === 'number' ? { frameAt: shot.frameAt } : {}),
+        sampled: false,
+        tier: shot.tier,
+        ...(shot.text ? { text: shot.text } : {}),
+        ...(cell ? { cell } : {}),
+      }
+    }),
     cuts: payload.cuts.map((cut) => ({
       t: cut.t,
       score: cut.score,

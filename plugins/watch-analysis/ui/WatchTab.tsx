@@ -498,6 +498,23 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
             {report.shots.length} 个镜头 · {report.sheets.length} 张宫格图 · 分镜引擎 {report.engine.storyboard}
           </Typography.Text>
         </div>
+        {/* 没台词时要说清楚"为什么没有、怎么补" —— 以前只有日志里有 */}
+        {!report.transcript && (
+          <Alert
+            type="info"
+            showIcon
+            data-testid="no-transcript-hint"
+            style={{ marginBottom: 8 }}
+            message="这一集没有台词"
+            description={
+              <>
+                没找到内嵌字幕轨，也没找到同目录的 .ass/.srt/.vtt 字幕文件。
+                要台词的话：分析前打开「读取字幕」并打开「没字幕时用语音识别」兜底；
+                或者把字幕文件放到视频旁边再分析一次。
+              </>
+            }
+          />
+        )}
         <StoryboardViewer report={report} />
         <div>
           <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>

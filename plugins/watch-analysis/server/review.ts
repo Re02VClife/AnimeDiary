@@ -249,8 +249,13 @@ function buildPrompt(
 
   const shotLines: string[] = []
   for (const report of reports.slice(0, 12)) {
-    // 每集最多列 40 个镜头的时间，足够模型定位，又不至于淹没重点
-    const lines = report.shots.slice(0, 40).map((shot) =>
+    // 每集最多列 40 个镜头的**时间点**。真实镜头一集约 600 个，
+    // 只取前 40 个会覆盖不到一半（以前是格子，正好只到开头几分钟）；
+    // 这里均匀抽样，确保整集都有代表。
+    const maxShots = 40
+    const step = Math.max(1, Math.ceil(report.shots.length / maxShots))
+    const picked = report.shots.filter((_, index) => index % step === 0).slice(0, maxShots)
+    const lines = picked.map((shot) =>
       `  #${shot.i} ${clock(shot.start)}–${clock(shot.end)}${shot.text ? ` 「${shot.text.slice(0, 40)}」` : ''}`,
     )
     shotLines.push(`E${report.episode}：\n${lines.join('\n')}`)
