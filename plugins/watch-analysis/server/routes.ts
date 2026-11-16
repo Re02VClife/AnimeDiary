@@ -182,7 +182,9 @@ function pickAnalyzeOptions(raw: any): Partial<WatchAnalyzeOptions> {
   if (Number.isFinite(raw.maxFrames)) out.maxFrames = Math.max(0, Math.round(raw.maxFrames))
   if (Number.isFinite(raw.maxSheets)) out.maxSheets = Math.max(0, Math.round(raw.maxSheets))
   if (Number.isFinite(raw.budgetPixels)) out.budgetPixels = Math.max(100_000, Math.round(raw.budgetPixels))
-  if (raw.transcript === 'auto' || raw.transcript === 'off') out.transcript = raw.transcript
+  if (raw.transcript === 'auto' || raw.transcript === 'off' || raw.transcript === 'asr') {
+    out.transcript = raw.transcript
+  }
   if (Number.isFinite(raw.from)) out.from = Math.max(0, Number(raw.from))
   if (Number.isFinite(raw.to)) out.to = Math.max(0, Number(raw.to))
   return out

@@ -203,6 +203,29 @@ function buildPrompt(
   }
 
   /*
+   * 台词：**影评里最硬的一手证据**，但以前根本没进提示词。
+   *
+   * 之前只统计了 `inputs.dialogueLines` 的条数，模型却一句话都看不到 —— 报告里明明
+   * 存着 ASR/字幕的完整台词，prompt 只给了镜头时间码。画面能看出"谁在说话"，
+   * 但说不清"说了什么"，这恰好是影评最需要引用的东西。
+   *
+   * 不能全塞：一集 24 分钟几百句会占掉半个上下文。均匀抽样（每集最多 60 句），
+   * 说话人编号原样带上（`S01`），并明确告诉模型"编号不是名字，别自己安"。
+   */
+  const dialogueLines: string[] = []
+  for (const report of reports.slice(0, 12)) {
+    const segments = report.transcript?.segments ?? []
+    if (segments.length === 0) continue
+    const maxLines = 60
+    const step = Math.max(1, Math.ceil(segments.length / maxLines))
+    const picked = segments.filter((_, index) => index % step === 0).slice(0, maxLines)
+    const lines = picked.map((segment) => (
+      `  [${clock(segment.start)}]${segment.speaker ? ` ${segment.speaker}:` : ''} ${segment.text.slice(0, 60)}`
+    ))
+    dialogueLines.push(`E${report.episode}（共 ${segments.length} 句）：\n${lines.join('\n')}`)
+  }
+
+  /*
    * 弹幕：**观众在那一刻的真实反应**。
    *
    * 这是本插件里最"便宜"的一手证据：Kazumi 缓存自带 danmaku.json，不用装 ASR、
@@ -250,6 +273,15 @@ function buildPrompt(
     '【镜头与台词时间码（节选）】',
     ...shotLines,
     '',
+    ...(dialogueLines.length > 0
+      ? [
+          '【台词（字幕文件或本地 ASR，同音字可能有错）】',
+          '标了 `S01`/`S02` 的是说话人编号：**同一编号是同一个人，但编号本身不是角色名**，',
+          '不要自己把编号和角色对上号；引用时保留原句即可。',
+          ...dialogueLines,
+          '',
+        ]
+      : []),
     ...(danmakuLines.length > 0
       ? [
           '【观众弹幕（按时间，已过滤广告/刷屏）】',

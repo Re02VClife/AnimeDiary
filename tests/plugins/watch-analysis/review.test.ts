@@ -374,6 +374,42 @@ describe('createReviewGenerator', () => {
     expect(review.markdown).toContain('（见上图）')
   })
 
+  it('台词要进提示词（带说话人编号），没台词时不要出现这一节', async () => {
+    const { store } = seedReport(1, {
+      transcript: {
+        source: 'asr-moss',
+        segments: [
+          { start: 12, end: 14, text: '这句是主角说的', source: 'asr-moss', speaker: 'S01' },
+          { start: 20, end: 22, text: '这句没编号', source: 'asr-moss' },
+        ],
+        speakers: 1,
+      },
+    })
+    const reviewStore = createReviewStore(dir)
+    const { generator, describeMock } = makeGenerator({ store, reviewStore })
+
+    await generator.generate({ key: KEY, scope: { kind: 'series' } })
+    const prompt: string = describeMock.mock.calls[0][0].prompt
+    // 台词是影评最硬的证据，之前只统计条数却没喂给模型
+    expect(prompt).toContain('【台词（字幕文件或本地 ASR，同音字可能有错）】')
+    expect(prompt).toContain('S01: 这句是主角说的')
+    // 没编号的照常给，绝不补一个假编号（说明文字里提过 S01/S02，所以只查带冒号的台词行）
+    expect(prompt).toContain('这句没编号')
+    expect(prompt).not.toContain('S02:')
+    // 说话人编号不是角色名，提示词要明说，否则模型会自己安名字
+    expect(prompt).toContain('编号本身不是角色名')
+  })
+
+  it('没有台词的报告不该让提示词里出现空台词小节', async () => {
+    const { store } = seedReport(1)
+    const reviewStore = createReviewStore(dir)
+    const { generator, describeMock } = makeGenerator({ store, reviewStore })
+
+    await generator.generate({ key: KEY, scope: { kind: 'series' } })
+    const prompt: string = describeMock.mock.calls[0][0].prompt
+    expect(prompt).not.toContain('【台词')
+  })
+
   it('elapsedMs 落盘（历史记录要能显示这篇花了多久）', async () => {
     const { store } = seedReport(1)
     const reviewStore = createReviewStore(dir)

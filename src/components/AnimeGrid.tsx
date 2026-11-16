@@ -3,8 +3,8 @@ import { Popconfirm } from 'antd';
 import { DeleteOutlined, CaretRightFilled } from '@ant-design/icons';
 import type { AnimeEntry, Dimension } from '../types';
 import { loadPosterPositions } from '../../features/anime-data/storage-service';
-import { getTemplate, getPosterObjectPosition } from '../../features/anime-data/template-service';
-import { calcOverall as computeOverall } from '../../core/overall';
+import { getTemplate, getPosterObjectPosition, getTemplateDimensions } from '../../features/anime-data/template-service';
+import { calcEntryOverall } from '../../core/overall';
 import { searchPoster } from '../../features/anime-data/excel-service';
 import { formatReleaseDateCn } from '../../core/date';
 import { formatScore } from '../../core/math';
@@ -104,11 +104,6 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
     scroller.scrollTo({ top: Math.max(0, delta), behavior: 'smooth' });
   }, [scoreFocus, activeDim, animeList]);
 
-  /** 动态计算条目的加权总评（根据条目自身模板的维度和权重） */
-  const calcOverall = useCallback((entry: AnimeEntry): number => (
-    computeOverall(entry.scores, getTemplate(entry.templateId).dimensions)
-  ), []);
-
   /** 串行消费搜索队列：避免一次滚动就并发几十个请求把 AniList 打挂 */
   const drainQueue = useCallback(async () => {
     if (runningRef.current) return;
@@ -196,7 +191,7 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
         let dimScore: string | null = null;
         let dimValue: number | null = null;
         if (activeDim === 'overall') {
-          const ov = calcOverall(anime);
+          const ov = calcEntryOverall(anime, getTemplateDimensions);
           if (ov > 0) { dimScore = `总评 ${formatScore(ov)}`; dimValue = ov; }
         } else if (activeDim === 'bgm' && anime.bangumiScore) {
           dimScore = `BGM ${formatScore(anime.bangumiScore)}`;
@@ -218,7 +213,7 @@ const AnimeGrid: React.FC<AnimeGridProps> = ({
          */
         let cardScore: string | null = dimScore;
         if (!cardScore) {
-          const overall = calcOverall(anime);
+          const overall = calcEntryOverall(anime, getTemplateDimensions);
           cardScore = overall > 0
             ? `总评 ${formatScore(overall)}`
             : anime.bangumiScore ? `BGM ${formatScore(anime.bangumiScore)}` : null;

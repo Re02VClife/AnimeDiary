@@ -15,10 +15,12 @@ import type { ReadyState, Segment, VideoRef } from '../core/types'
 
 export interface TranscriptResult {
   segments: Segment[]
-  /** 实际来源标识，写进报告（`subtitle-track` / `subtitle-file` / `asr`） */
+  /** 实际来源标识，写进报告（`subtitle-track` / `subtitle-file` / `asr-moss`） */
   source: string
   /** 引擎自报的可信度提示，例如「ASR 转写，同音字可能有错」 */
   notes?: string[]
+  /** 识别到的说话人数量。只有做了说话人分离的引擎会给（ASR）；外挂字幕没有 */
+  speakers?: number
 }
 
 export interface TranscriptOptions {
@@ -26,6 +28,11 @@ export interface TranscriptOptions {
   onProgress?: (processed: number, total: number) => void
   /** 同目录字幕文件搜索目录；不传则用视频所在目录 */
   searchDirs?: string[]
+  /**
+   * 引擎的实时阶段提示（`本地语音识别：加载模型`）。
+   * 给 worker 转发成 progress 文案用 —— ASR 要跑好几分钟，只显示「提取台词」像卡住了。
+   */
+  onLog?: (message: string) => void
 }
 
 export interface TranscriptProvider {

@@ -58,6 +58,11 @@ export interface Segment {
   text: string
   /** 来源标识，写进报告时要说清楚"这是 ASR 转的，可能有错字" */
   source: string
+  /**
+   * 说话人编号（`S01` / `S02`…），只有带**说话人分离**的 ASR 才有。
+   * 外挂字幕文件没有这个字段 —— 不要为了填它去猜，空着比编错强。
+   */
+  speaker?: string
 }
 
 /** 单镜头的动感测量 */
@@ -197,6 +202,8 @@ export interface WatchReport {
     segments: Segment[]
     /** 引擎自报的不可信项，例如 `cuts unreliable here` */
     notes?: string[]
+    /** 识别到的说话人数量。只有做了说话人分离的引擎会给（外挂字幕没有） */
+    speakers?: number
   }
   motion?: {
     /** 整集折线：[秒, 变化分] */

@@ -2,8 +2,8 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { message, Segmented, Input, Button, Popconfirm } from 'antd';
 import { PlusOutlined, EditOutlined, CloseOutlined } from '@ant-design/icons';
 import type { AnimeEntry, Dimension } from '../types';
-import { getTemplate } from '../../features/anime-data/template-service';
-import { calcOverall as computeOverall } from '../../core/overall';
+import { getTemplate, getTemplateDimensions } from '../../features/anime-data/template-service';
+import { calcEntryOverall } from '../../core/overall';
 import { rankByDimension } from '../../features/ranking/ranking-service';
 import type { ScoreRange } from '../../features/ranking/score-distribution';
 import { findScoreRangeIndex } from '../../features/ranking/score-distribution';
@@ -214,17 +214,12 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false, onOpenSettings }) 
     message.success(`已添加标签「${name}」`);
   }, [newTagName, tagPresets]);
 
-  /** 动态计算条目的加权总评（根据条目自身模板的维度和权重） */
-  const calcOverall = useCallback((entry: AnimeEntry): number => (
-    computeOverall(entry.scores, getTemplate(entry.templateId).dimensions)
-  ), []);
-
   // 按当前维度排序（仅含当前模板类型的条目）
   const allRanked = useMemo(() => {
     if (!activeDim) return [];
     if (activeDim === 'overall') {
       return [...templateFiltered]
-        .map((a) => ({ entry: a, overall: calcOverall(a) }))
+        .map((a) => ({ entry: a, overall: calcEntryOverall(a, getTemplateDimensions) }))
         .filter((x) => x.overall > 0)
         .sort((a, b) => b.overall - a.overall)
         .map((x) => x.entry);
@@ -249,7 +244,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false, onOpenSettings }) 
       });
     }
     return rankByDimension(templateFiltered, activeDim);
-  }, [templateFiltered, activeDim, calcOverall]);
+  }, [templateFiltered, activeDim]);
 
   /** 当前排序方向下的完整排名（默认只渲染前 RANK_PREVIEW 名） */
   const rankedList = useMemo(
@@ -268,11 +263,11 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false, onOpenSettings }) 
 
   /** 条目在当前排序维度上的分数（无分数 = 0） */
   const dimScoreOf = useCallback((entry: AnimeEntry): number => {
-    if (activeDim === 'overall') return calcOverall(entry);
+    if (activeDim === 'overall') return calcEntryOverall(entry, getTemplateDimensions);
     if (activeDim === 'bgm') return entry.bangumiScore ?? 0;
     if (activeDim === 'namesort' || activeDim === 'watchDate') return 0;
     return entry.scores.find((s) => s.dimensionKey === activeDim)?.score ?? 0;
-  }, [activeDim, calcOverall]);
+  }, [activeDim]);
 
   /** 分布图的数据源：当前排名里该维度有分的条目 */
   const dimScores = useMemo(
@@ -438,7 +433,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false, onOpenSettings }) 
                        activeDim === 'watchDate'
                         ? <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-secondary)' }}>{anime.watchDate || anime.createdAt || '无记录'}</span>
                         : activeDim === 'overall'
-                         ? formatScore(calcOverall(anime))
+                         ? formatScore(calcEntryOverall(anime, getTemplateDimensions))
                          : activeDim === 'bgm'
                            ? formatScore(anime.bangumiScore)
                            : formatScore(score?.score)}

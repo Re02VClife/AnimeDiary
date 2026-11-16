@@ -81,8 +81,13 @@ export interface AnalyzeOptions {
   maxSheets?: number
   /** 单图像素预算 */
   budgetPixels?: number
-  /** 台词来源：auto 走字幕轨/ASR，off 不要台词 */
-  transcript?: 'auto' | 'off'
+  /**
+   * 台词来源：
+   *   - `auto`（默认）只找字幕轨 / 同目录字幕文件，快；
+   *   - `asr` 字幕优先，没有就跑本地语音识别（MOSS，一集 24 分钟约 10 分钟）；
+   *   - `off` 不要台词。
+   */
+  transcript?: 'auto' | 'off' | 'asr'
   /** 只分析这一段（秒） */
   from?: number
   to?: number

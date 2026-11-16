@@ -1,6 +1,6 @@
 # AnimeDiary 进度与交接
 
-> 最后更新：**2026-11-16** · 当前版本 **1.3.36**
+> 最后更新：**2026-11-16** · 当前版本 **1.3.37**
 >
 > ⚠️ **从 1.3.36 起热更新不够用了**：新增的「拉片分析 / AI 影评」插件带 `plugins/`
 > 和 `dsh-video-storyboard` 依赖，**热更新 zip 里没有这些**。每次升级必须覆盖整个
@@ -105,6 +105,53 @@ stdout 一行 JSON，日志走 stderr），和 `ocr_bridge.py` 是同一个思�
 10. **弹幕广告**：每集开头刷几十条「交流群1047615969 欢迎加入（打扰致歉）」，
     过滤规则：含「群/交流/欢迎加入/打扰」且有 5 位以上数字 → 丢弃。
 
+### 0.6 台词兜底：MOSS 本地 ASR（2026-11-16 加）
+
+没有外挂字幕的番，以前报告里只有画面和弹幕、**一句台词都没有**。现在多了一条本地兜底：
+
+| 台词来源 | 优先级 | 什么时候用 |
+|---|---|---|
+| 内嵌字幕轨 | 0 | 还没实现（storyboard 那边固定 `transcript: 'off'`） |
+| 同目录 `.ass/.srt/.vtt` | 1 | 默认（`transcript: 'auto'`） |
+| **MOSS 本地 ASR** | 2 | 只有用户在拉片面板上选「语音识别」（`transcript: 'asr'`） |
+
+**默认不跑 ASR**：一集 24 分钟大约 10 分钟（实测 RTF ≈ 0.4），不能让"顺手拉个片"变成等十分钟。
+没字幕又想要台词，必须显式选。
+
+链路 `plugins/watch-analysis/adapters/transcript-moss.mjs`：
+
+```text
+video.file ──spawn──> python moss_bridge.py <mp4> --model <权重目录>
+   PyAV 直接解容器音轨（**不用先 ffmpeg 抽 wav**）
+   ──stdout 一行 JSON──> { ok, segments:[{start,end,speaker,text}], elapsed }
+```
+
+实测（`E:\kazhumi Anime\554779_giriGiriLove\01.mp4` 截 60 秒，1080p/24fps）：
+模型加载 2.4s + 推理 15.9s = **26.4s**，输出 **18 句 / 5 位说话人**（`S01`…`S05`），
+时间戳与画面对得上。整集 24 分钟约 10 分钟。
+
+环境变量（都不配也能自动探测本机默认路径）：
+
+```text
+ANIMEDIARY_MOSS_PYTHON   …\miniconda3\envs\moss\python.exe
+ANIMEDIARY_MOSS_MODEL    D:\models\MOSS-Transcribe-Diarize
+```
+
+依赖自检的 `asr` 项（`server/deps.ts`）探测的是 **MOSS**：python env + 权重目录 + 包可 import。
+缺了只标「可选依赖未就绪」，不影响切镜/分镜/弹幕，也不影响开始分析。
+
+**报告与影评的连带变化**：
+
+- `WatchReport.transcript.segments[].speaker`（只有 ASR 有）+ `transcript.speakers`（人数）
+- 影评 prompt 新增「台词」小节：每集均匀抽 ≤60 句，带 `[mm:ss]` 与 `S01:` 编号，
+  并明确告诉模型「编号不是角色名，别自己安」。**以前只统计 `dialogueLines` 条数，
+  台词根本没进提示词** —— 报告里存着几百句，模型一句都看不到。
+- 镜头清单里台词显示成 `S01: 台词`，多段拼一行。
+
+⚠️ MOSS 权重 1.7GB、吃 3–4GB 显存，是**纯可选**：没装照样能分析，只是没字幕的番没台词。
+代码在 `plugins/`，模型与 `moss_transcribe_diarize` 包在本机（`D:\MOSS-Transcribe-Diarize`，
+pip install -e 进 conda env），**都不进仓库**。
+
 ---
 
 ## 1. 一分钟上手
@@ -125,7 +172,7 @@ stdout 一行 JSON，日志走 stderr），和 `ocr_bridge.py` 是同一个思�
 
 ```bash
 npx tsc --noEmit    # 唯一类型检查（注意：不覆盖 plugins/*.mjs，那些用 node --check）
-npx vitest run      # 934 通过 / 61 个文件（另有 6 个跳过：需 AI_LIVE=1 才跑）
+npx vitest run      # 959 通过 / 63 个文件（另有 6 个跳过：需 AI_LIVE=1 才跑）
 ```
 
 ---
@@ -288,12 +335,16 @@ server/character-voice.ts 语音抓取：B 站搜索/下载 + ffmpeg 切片拼�
 另外 `src/components/TasteReportModal.tsx` 随 1.1.0 的 AI 重构一并删除
 （AI 分析已并入对话窗口）。
 
-⚠️ `src/services/` 现在只剩 2 个文件，**都是活的**：`imageService` / `rankingService`。
-（`aiCache` / `aiConfig` / `aiSkills` / `llmService` 已随 1.1.0 的 AI 重构删除，
-`graphService` 已随后续模块清理删除。）
+⚠️ `src/services/` 现在只剩 **1 个文件**：`imageService`（活）。
+（`rankingService` 已于 2026-11-16 合并掉 —— 它和 `features/ranking/ranking-service.ts`
+是**逐行副本**，只差 2 行 import 路径；雷达图改用 features 版后旧文件已删。
+`aiCache` / `aiConfig` / `aiSkills` / `llmService` 随 1.1.0 的 AI 重构删除，
+`graphService` 随后续模块清理删除。）
 
-⚠️ 仍有一组**并存的两套实现**（不是副本，不同组件各用一套，别误合并）：
-`src/services/rankingService.ts` ↔ `features/ranking/ranking-service.ts`。
+**排名唯一入口**：`features/ranking/ranking-service.ts`。别再复制一份到别处。
+合并前做过对拍：230 次边界输入 + 1512 个真实单元（189 条 × 8 维）逐位相同 ——
+"双份"从来没换来任何东西，只换来"改一份忘另一份"的风险。
+⚠️ `AnimeDetailModal.nearbyRanking` 是**同模板邻邻**口径（不是全表百分位），语义不同、仍内联，别合并。
 
 **排查方法**（想再确认有没有新的死副本时用）：扫全仓库的相对 import，
 把「没有任何非测试文件引用」的源文件列出来即可。1.1.0 那次的结果就是上面 5 个。
@@ -347,7 +398,7 @@ $c = [System.IO.File]::ReadAllText('dist\assets\index-*.js', [System.Text.Encodi
 
 | 逻辑 | 有几份 | 说明 |
 |---|---|---|
-| `calcOverall` | 5+ 处 | `AnimeGrid` / `Sidebar` / `AnimeDetailModal`（两份）/ `ai-helpers` / `core/math` |
+| `calcOverall` | **已统一** | 2026-11-16 起唯一实现是 `core/overall.ts`（`calcOverall` / `calcEntryOverall`）。`core/math.ts` 里那个同名旧函数只剩测试引用，待删 |
 | `round2` | 曾有 2 份 | `excel-transfer` 里的副本缺 nudge → `.5` 边界少 0.01（1.0.48 删除） |
 | `formatScore` / `fmt2` | `core/math` | 统一入口，别再自己写 |
 
@@ -359,19 +410,21 @@ $c = [System.IO.File]::ReadAllText('dist\assets\index-*.js', [System.Text.Encodi
 会把中文写成 `?` 且**不可逆**（1.0.48 期间就把本文件搞坏过一次，只能 `git checkout` 整份恢复后重改）。
 要改文本用编辑工具；要在命令行处理，必须显式 `-Encoding utf8`。
 
-### 5.9 `tsc --noEmit` **不检查 `server/`**
+### 5.9 `tsc --noEmit` 的覆盖范围（2026-11-16 核对）
 
-`tsconfig.json` 的 `include` 只有 `src / core / features / context / tests`，**没有 `server/`**。
-后果：在 `server/*.ts` 里写出语法错误，`npx tsc --noEmit` 依然全绿，直到 `vite` 启动
-（dev 模式的 vite 插件会直接 import `server/api-routes.ts`）才炸在 esbuild 里。
+`tsconfig.json` 的 `include` 现在是 `src / core / features / context / tests / server / plugins`，
+**包含 `server/`**（这条曾经写成"不含 server"，已过时）。但仍然：
 
-改过 `server/` 之后，至少跑一次：
+- `plugins/**/*.mjs` **不在**检查范围（没开 allowJs、也没写 d.ts）→ 改过 worker/adapter 要跑
+  `node --check <file>.mjs`，或者靠一次真实分析验证。
+- `server/*.ts` 虽然被 tsc 检查，`npm run build:api` 的 esbuild 仍是检查语法/导入的第一道门，
+  改过 `server/` 之后至少跑一次：
 
 ```bash
 npm run build:api     # esbuild 打包，顺带做语法检查
+npm run typecheck     # tsc --noEmit（覆盖 src/core/features/context/tests/server/plugins 的 ts/tsx）
 ```
 
-同理，`core/` 是被 `tsc` 检查的，但 `server/` 只能靠 esbuild。
 
 ### 5.10 桌面壳层的四个约定（2026-11 加，改弹窗/主题/侧栏前必读）
 
@@ -422,7 +475,7 @@ npm run build:api     # esbuild 打包，顺带做语法检查
 | 网格卡片 `AnimeGrid.calcOverall` | `getTemplate(entry.templateId)` | ✅ 正确 |
 | 侧栏排行榜 `Sidebar.calcOverall` | 同上 | ✅ 正确 |
 | 详情面板 `AnimeDetailModal.overallScore` | **曾经是 `DEFAULT_DIMENSIONS`** | ❌ 1.0.47 修好 |
-| AI 套件 `ai-helpers.calcOverall` | `DEFAULT_DIMENSIONS`（不传参时） | 独立实现，**未统一** |
+| AI 套件 `ai-helpers.calcOverall` | `getTemplateDimensions(entry.templateId)`（2026-11-16 统一） | ✅ 已修 |
 | Excel D 列 | 自己的手工公式 | 见 6.3 |
 
 **1.0.47 修的 bug**：
@@ -439,6 +492,12 @@ const templateDims = getTemplate(templateId).dimensions;
 
 **教训**：`x ? f(x) : null` + `|| DEFAULT_*` 这个组合会把"自带兜底的函数"短路掉，
 让兜底值反而变成错的那一份。
+
+**2026-11-16 第二次统一**：`ai-helpers.calcOverall` 这处「不传参时用 `DEFAULT_DIMENSIONS`」
+已经修掉；同时 `AnimeGrid` / `Sidebar` / `AnimeDetailModal`（两份手抄）/ `app-tools` /
+`BangumiSyncModal` / `AnimeContext` 的维度来源全部收进 `getTemplateDimensions()`（= `getTemplate(id).dimensions`）。
+细节面板的 `overallScore` 保留两个旧语义：`equalWeightFallback: false`（没有正权重时显示 `-`）
+和「编辑中切模板即时预览」。
 
 ### 6.2 加权算法（三处一致）
 
@@ -669,13 +728,24 @@ atrim + concat 拼够 35 秒 → audio/{角色名}/voice.mp3
 
 ### 仍待处理
 
-- [ ] 番剧里还有 **4 条检索名为空**：`记忆管理局`、`21世纪电气目录`、`无职转生2上半`、`无职转生3上半`。
-      前两条是 Bangumi 匹配分数不够被主动跳过；后两条是用户自己拆的上/下半，源站没有对应条目。
-      留着不影响使用 —— 检索名为空时会回退用标题去搜。
-- [ ] 2 行海报 URL 仍指向 `cover-nobg.png`（「星野爱」，该目录没有原图可回退）
-- [ ] 上面 5.1 提到的两组「并存实现」可以合并，但属于重构，动手前先逐条确认两边行为一致
-- [ ] **`calcOverall` 还有 5 份实现没统一**（见 5.7）。最值得合的是 `ai-helpers.calcOverall` ——
-      它不传 `dimensions` 时永远用 `DEFAULT_DIMENSIONS`，和界面口径不一致（AI 分析算出来的总评会偏）
+- [ ] 4 条检索名为空，**该填什么已经查清**（2026-11-16 只读核查，差一步写 Excel）：
+      `21世纪电气目录` → `二十世紀電氣目録-ユーレカ・エヴリカ-`（bgm 255209；注意它其实是《二十世纪电气目录》，
+      改 B 列标题必须同步重命名 `images\21世纪电气目录\`，否则图片目录对不上）；
+      `记忆管理局` → bgm 358568（不是 2020 那部同名短片）；`无职转生2上半` →
+      `無職転生Ⅱ ～異世界行ったら本気だす～`（bgm 373247，第1クール）；`无职转生3上半` →
+      `無職転生Ⅲ ～異世界行ったら本気だす～`（bgm 501963，整季）。检索名为空时会回退用标题去搜。
+- [ ] 2 行海报 URL 仍指向 `cover-nobg.png`（2026-11-16 核查，实际是**两个角色**）：
+      **星野爱**（目录里只有 `cover-nobg.png`，一旦点「撤销去底」就会退成占位图 → 需要补一张原图 `cover.jpg`）；
+      **今井绿**（目录里 `cover.jpg` 在，改回原图零风险，`applyCutout` 渲染时仍会自动用去底图）。
+- [ ] `辛恩·诺赞`（行 248）与 `辛・诺赞`（行 243）是同一角色的重复卡，前者的图片目录是空的 ——
+      合并要么删行（走应用内删除，避免 `anime.id` 漂移），要么补图。
+- [x] **两组「并存实现」已合并**（2026-11-16）：`src/services/rankingService.ts` 与
+      `features/ranking/ranking-service.ts` 是逐行副本，雷达图改指向 features 后旧文件已删。
+      可选后续：统一并列口径（改 mid-rank，会让每维 138–167 条百分位变动 1–11pp，**必须先补测试**）；
+      把 `nearbyRanking` 收编成 `rankNeighbors()`（零 UI 变化，但当前无测试，且要保留「编辑中实时预览」）。
+- [x] **`calcOverall` 已统一到 `core/overall.ts`**（2026-11-16）：5 份算法 + 5 处适配器收敛成
+      `calcOverall` / `calcEntryOverall`，`ai-helpers` 不再回退 `DEFAULT_DIMENSIONS`；
+      2000 组随机模板对拍逐位相等。剩下 `core/math.ts` 的同名死函数（仅测试引用）待删。
 - [ ] **源表里那 64 行垃圾还没清**：程序加载时会静默丢弃，导出时进「异常行」表。
       ⚠️ 删行会让 `anime.id = 'excel-<行号>'` 漂移 —— 必须走应用里的删除
       （`deleteExcelRow` + `shiftLocalRefsAfterRowDelete` 会一起迁移 localStorage 引用），**不要在 Excel 里手工删**
@@ -693,8 +763,8 @@ atrim + concat 拼够 35 秒 → audio/{角色名}/voice.mp3
 ## 9. 验证手段速查
 
 ```bash
-npx tsc --noEmit                 # 类型（注意：不含 server/，见 5.9）
-npx vitest run                   # 单测（434）
+npx tsc --noEmit                 # 类型（不含 plugins/*.mjs，见 5.9）
+npx vitest run                   # 单测（当前 935+；完整数字以实际输出为准）
 npm run build:api                # server/ 的语法检查 + 打包
 node .review/check-poster.js     # 抽查 Excel 的 posterUrl
 node .review/check-category.js   # 看 category 的派生结果

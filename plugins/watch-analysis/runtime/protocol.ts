@@ -45,8 +45,13 @@ export interface WatchAnalyzeOptions {
   maxSheets?: number
   /** 单图像素预算；默认 360000（800×450 ≈ 233 token） */
   budgetPixels?: number
-  /** 台词来源：auto 走字幕轨/ASR，off 完全不要台词 */
-  transcript?: 'auto' | 'off'
+  /**
+   * 台词来源：
+   *   - `auto`（默认）只找字幕轨 / 同目录字幕文件 —— 快；
+   *   - `asr` 字幕优先，没有就跑本地语音识别（MOSS，一集 24 分钟约 10 分钟）；
+   *   - `off` 完全不要台词。
+   */
+  transcript?: 'auto' | 'off' | 'asr'
   /** 只分析这一段（秒） */
   from?: number
   to?: number
@@ -112,9 +117,11 @@ export interface WatchWorkerResult {
     source: string
     model?: string
     /** 完整台词（句粒度），按时间排序 */
-    segments: Array<{ start: number; end: number; text: string }>
+    segments: Array<{ start: number; end: number; text: string; speaker?: string }>
     /** 字符数，用于报告里的"台词密度" */
     chars: number
+    /** 说话人数量（只有说话人分离的 ASR 会给） */
+    speakers?: number
     /** 引擎自报的不可信提示 */
     notes?: string[]
   }

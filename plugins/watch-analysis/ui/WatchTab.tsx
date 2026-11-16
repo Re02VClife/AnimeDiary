@@ -24,7 +24,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, FC, ReactNode } from 'react'
-import { Alert, Button, Empty, Progress, Spin, Tag, Tooltip, Typography } from 'antd'
+import { Alert, Button, Empty, Progress, Segmented, Spin, Tag, Tooltip, Typography } from 'antd'
 import {
   CheckCircleOutlined,
   InfoCircleOutlined,
@@ -87,6 +87,14 @@ const panelStyle: CSSProperties = {
 
 const mutedTextStyle: CSSProperties = { color: 'var(--text-secondary)', fontSize: 12 }
 
+/**
+ * 台词来源。
+ *
+ * 默认 `auto` **不跑 ASR**：一集 24 分钟本地 MOSS 要 10 分钟左右，不能让"顺手拉个片"
+ * 变成"等十分钟"。只有用户显式选「语音识别」才在没字幕时兜底转写。
+ */
+type TranscriptMode = 'auto' | 'asr' | 'off'
+
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
@@ -109,6 +117,8 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
   const [depsError, setDepsError] = useState<string | null>(null)
   /** 点「重新检查」时自增，触发依赖自检 effect 重跑 */
   const [depsEpoch, setDepsEpoch] = useState(0)
+  /** 台词来源：只影响下一次「开始分析」 */
+  const [transcriptMode, setTranscriptMode] = useState<TranscriptMode>('auto')
 
   // ── 已落盘报告 ──
   const [report, setReport] = useState<WatchReport | null>(null)
@@ -248,14 +258,14 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
     setReport(null)
     pollFailuresRef.current = 0
     try {
-      const started = await analyze(animeKey, episode, undefined, videoFile)
+      const started = await analyze(animeKey, episode, { transcript: transcriptMode }, videoFile)
       setJobId(started.jobId)
     } catch (e) {
       setFailed(`启动分析失败：${errorText(e)}`)
     } finally {
       setStarting(false)
     }
-  }, [animeKey, episode, videoFile])
+  }, [animeKey, episode, videoFile, transcriptMode])
 
   /**
    * 取消是「请求」不是「结果」：服务端把任务标成 cancelled 后，状态轮询会看到
@@ -288,6 +298,20 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
     () => (deps ? deps.deps.filter((d) => !d.required && !d.ok) : []),
     [deps],
   )
+
+  /**
+   * 本地 MOSS 是否就绪。`undefined` = 服务端没给这一项（旧版本），按「未知」处理、
+   * 不禁用选项 —— 总比把其实能用的人挡在外面强。
+   */
+  const asrReady = useMemo<boolean | undefined>(() => {
+    const dep = deps?.deps.find((d) => d.id === 'asr')
+    return dep ? dep.ok : undefined
+  }, [deps])
+
+  // 依赖明确说 MOSS 不可用时，别让「语音识别」这个选项悬在半空
+  useEffect(() => {
+    if (asrReady === false && transcriptMode === 'asr') setTranscriptMode('auto')
+  }, [asrReady, transcriptMode])
 
   const canRun = deps?.canRun === true
   const running = jobId !== null
@@ -460,6 +484,33 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
           </Button>
         )}
       </header>
+
+      {/* ── 台词来源（只影响下一次运行，不改已有报告）── */}
+      {!running && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <Typography.Text style={mutedTextStyle}>台词来源</Typography.Text>
+          <Segmented
+            size="small"
+            value={transcriptMode}
+            onChange={(value) => setTranscriptMode(value as TranscriptMode)}
+            options={[
+              { label: '字幕文件', value: 'auto' },
+              { label: '语音识别', value: 'asr', disabled: asrReady === false },
+              { label: '不要', value: 'off' },
+            ]}
+          />
+          {transcriptMode === 'asr' && (
+            <Typography.Text style={mutedTextStyle}>
+              没有字幕时用本地 MOSS 转写（含说话人分离）；一集 24 分钟约 10 分钟
+            </Typography.Text>
+          )}
+          {asrReady === false && (
+            <Typography.Text style={mutedTextStyle}>
+              本地 MOSS 未就绪，见上方「可选依赖」
+            </Typography.Text>
+          )}
+        </div>
+      )}
 
       {/* ── 依赖状态 ── */}
       {checkingDeps && (

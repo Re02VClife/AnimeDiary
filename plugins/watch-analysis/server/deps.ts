@@ -216,38 +216,77 @@ function detectMee(python: DependencyStatus): DependencyStatus {
   }
 }
 
-/** ASR：当前只做"配了没有"的判断，真正的转写走 dsh-video-storyboard 的配置链。 */
-function detectAsr(): DependencyStatus {
-  const candidates = [
-    path.join(process.env.USERPROFILE ?? '', '.dsh', 'asr.json'),
-    path.join(process.env.HOME ?? '', '.dsh', 'asr.json'),
-  ].filter((p) => p && !p.startsWith(path.join('', '.dsh')))
-  for (const file of candidates) {
-    try {
-      if (!fs.existsSync(file)) continue
-      const cfg = JSON.parse(fs.readFileSync(file, 'utf8'))
-      if (cfg?.baseUrl) {
-        return {
-          id: 'asr',
-          label: '语音识别（ASR）',
-          ok: true,
-          required: false,
-          version: cfg.model,
-          path: file,
-          detail: cfg.baseUrl,
-        }
-      }
-    } catch {
-      // 配置坏了当没配，下面统一报
+/**
+ * 本地语音识别（MOSS-Transcribe-Diarize）。
+ *
+ * 为什么探测的是"专用 conda env"而不是 PATH 里的 python：MOSS 要 torch + transformers
+ * + 1.7GB 权重，本机放在 `conda env moss` 里，系统 python 装不了也没必要装。
+ *
+ * 候选列表与 `adapters/transcript-moss.mjs` 的 `pythonCandidates` / `modelCandidates`
+ * **必须保持一致**（那边是运行时用，这边是自检用）。改一处要同步另一处。
+ */
+function detectMoss(): DependencyStatus {
+  const home = process.env.USERPROFILE ?? process.env.HOME ?? ''
+  const condaPrefix = process.env.CONDA_PREFIX
+  const pythonCandidates = [
+    process.env.ANIMEDIARY_MOSS_PYTHON,
+    condaPrefix && /[\\/]envs[\\/]moss$/i.test(condaPrefix) ? path.join(condaPrefix, 'python.exe') : undefined,
+    ...['miniconda3', 'anaconda3', '.conda'].flatMap((root) => (
+      home
+        ? [path.join(home, root, 'envs', 'moss', 'python.exe'), path.join(home, root, 'envs', 'moss', 'bin', 'python')]
+        : []
+    )),
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0)
+
+  let pythonPath: string | undefined
+  let packageVersion: string | undefined
+  for (const exe of pythonCandidates) {
+    if (!fs.existsSync(exe)) continue
+    const r = run(exe, ['-c', 'import moss_transcribe_diarize as m; print(getattr(m, "__version__", "unknown"))'])
+    if (!r?.ok) continue
+    pythonPath = exe
+    const version = r.out.split(/\r?\n/).pop()?.trim()
+    packageVersion = version && version !== 'unknown' ? version : undefined
+    break
+  }
+
+  const modelCandidates = [
+    process.env.ANIMEDIARY_MOSS_MODEL,
+    'D:\\models\\MOSS-Transcribe-Diarize',
+    home ? path.join(home, 'models', 'MOSS-Transcribe-Diarize') : undefined,
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0)
+  const modelDir = modelCandidates.find((candidate) => fs.existsSync(candidate))
+
+  if (!pythonPath) {
+    return {
+      id: 'asr',
+      label: '语音识别（MOSS 本地）',
+      ok: false,
+      required: false,
+      hint: '设置 ANIMEDIARY_MOSS_PYTHON 指向装了 moss_transcribe_diarize 的 python（通常在 %USERPROFILE%\\miniconda3\\envs\\moss\\python.exe）',
+      detail: '缺它只会少「没有字幕时的台词」；有字幕文件的番照常拿到台词',
+    }
+  }
+  if (!modelDir) {
+    return {
+      id: 'asr',
+      label: '语音识别（MOSS 本地）',
+      ok: false,
+      required: false,
+      version: packageVersion,
+      path: pythonPath,
+      hint: '设置 ANIMEDIARY_MOSS_MODEL 指向权重目录（约 1.7GB，本机放在 D:\\models\\MOSS-Transcribe-Diarize）',
+      detail: 'Python 环境已就绪，只差模型权重',
     }
   }
   return {
     id: 'asr',
-    label: '语音识别（ASR）',
-    ok: false,
+    label: '语音识别（MOSS 本地）',
+    ok: true,
     required: false,
-    hint: '可选：配一个 OpenAI 兼容的 ASR 端点（本地 sherpa 或云端），没配就只有画面、没有台词',
-    detail: '视频自带字幕轨时不需要它',
+    version: packageVersion,
+    path: pythonPath,
+    detail: modelDir,
   }
 }
 
@@ -255,5 +294,5 @@ function detectAsr(): DependencyStatus {
 export function checkDependencies(): DependencyStatus[] {
   const ffmpeg = detectFfmpeg()
   const python = detectPython()
-  return [ffmpeg, python, detectStoryboard(), detectAsr(), detectMee(python)]
+  return [ffmpeg, python, detectStoryboard(), detectMoss(), detectMee(python)]
 }

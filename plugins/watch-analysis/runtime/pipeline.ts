@@ -108,8 +108,11 @@ export function buildReport(
               end: segment.end,
               text: segment.text,
               source: payload.transcript!.source,
+              // 说话人只有 ASR 才有；外挂字幕没有就不写这个字段（别塞 undefined 进去）
+              ...(segment.speaker ? { speaker: segment.speaker } : {}),
             })),
             ...(payload.transcript.notes?.length ? { notes: payload.transcript.notes } : {}),
+            ...(payload.transcript.speakers ? { speakers: payload.transcript.speakers } : {}),
           },
         }
       : {}),

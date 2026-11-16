@@ -51,6 +51,18 @@ export function getActiveDimensions(entry: AnimeEntry): Dimension[] {
 }
 
 /**
+ * 模板维度表（未知 / 缺省 ID → 用户默认模板，回退逻辑在 getTemplate 里）。
+ *
+ * 这是「总评」唯一的维度来源入口：core/overall 的 calcEntryOverall 要一个
+ * `(templateId) => Dimension[]` 解析器，应用内一律传本函数。
+ * 别再各处手写 `getTemplate(id).dimensions` —— 写成 `t ? ... : DEFAULT_DIMENSIONS`
+ * 就会让默认模板的条目绕过用户改过的权重（HANDOVER §6.1 的 bug）。
+ */
+export function getTemplateDimensions(templateId: string | undefined): Dimension[] {
+  return getTemplate(templateId).dimensions;
+}
+
+/**
  * 解析模板里的海报默认焦点（object-position 的两个百分数）→ { x, y }。
  *
  * 用于两处渲染：网格卡片和详情面板。角色立绘是全身竖图（实测宽高比 0.35），

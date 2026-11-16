@@ -4,13 +4,13 @@
  */
 import React, { createContext, useContext, useReducer, useEffect, useCallback, useMemo, useRef } from 'react';
 import { message } from 'antd';
-import type { AnimeCategory, AnimeEntry, AnimeTag } from '../src/types';
+import type { AnimeCategory, AnimeEntry, AnimeTag, Dimension } from '../src/types';
 import { loadAnimeList, updateAnimeEntry, updateAnimeEntries, appendAnimeEntry, batchSaveAllPosters, deleteExcelRow, readRawRows, rebuildOverallColumn } from '../features/anime-data/excel-service';
 import { saveCategory, addToWatchingDeleted, removeFromWatchingDeleted, loadImgHeight, saveImgHeight, exportAllUserData, importUserData, shiftLocalRefsAfterRowDelete, loadWatchingDeleted } from '../features/anime-data/storage-service';
-import { migrateLegacyDimensions, loadTemplates } from '../features/anime-data/template-service';
+import { migrateLegacyDimensions, loadTemplates, getTemplateDimensions } from '../features/anime-data/template-service';
 import { buildTransferWorkbook, parseTransferWorkbook, exportFileName, mergeImportedTemplates, SHEET_ANIME } from '../features/anime-data/excel-transfer';
 import { getVisibleCategories, DEFAULT_TEMPLATE_ID } from '../src/types';
-import { calcOverall as computeOverall } from '../core/overall';
+import { calcEntryOverall } from '../core/overall';
 import { sameTagName } from '../core/tag-name';
 import { rankByDimension } from '../features/ranking/ranking-service';
 import type { ScoreRange, ScoreFocus } from '../features/ranking/score-distribution';
@@ -444,11 +444,21 @@ export const AnimeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     if (state.sortByDim) {
       if (state.sortByDim === 'overall') {
-        // 总评是计算值，不存于 scores 中，需单独处理
-        const calcOv = (entry: AnimeEntry): number =>
-          computeOverall(entry.scores, activeTemplate?.dimensions || []);
+        // 总评是计算值，不存于 scores 中，需单独处理。
+        // 维度来源按**条目自身模板**（上面已按 activeTemplateId 过滤，正常路径与
+        // 「当前激活模板」完全等价；模板被删/激活 ID 失效时也能正确回退）。
+        // 模板解析结果在本次计算内缓存：getTemplateDimensions 会读 localStorage，
+        // 逐条调用会把排序变成 N 次 JSON.parse。
+        const dimsCache = new Map<string | undefined, Dimension[]>();
+        const resolveDims = (templateId: string | undefined): Dimension[] => {
+          const cached = dimsCache.get(templateId);
+          if (cached) return cached;
+          const dims = getTemplateDimensions(templateId);
+          dimsCache.set(templateId, dims);
+          return dims;
+        };
         list = [...list]
-          .map((a) => ({ entry: a, ov: calcOv(a) }))
+          .map((a) => ({ entry: a, ov: calcEntryOverall(a, resolveDims) }))
           .filter((x) => x.ov > 0)
           .sort((a, b) => state.sortOrder === 'asc' ? a.ov - b.ov : b.ov - a.ov)
           .map((x) => x.entry);

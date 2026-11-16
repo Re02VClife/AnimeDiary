@@ -13,8 +13,8 @@ import {
   Tag, Table, Empty, Typography, Space, Avatar, Tooltip, Divider,
 } from 'antd';
 import { useAnimeContext } from '../../../context/AnimeContext';
-import { getTemplate } from '../../../features/anime-data/template-service';
-import { calcOverall } from '../../../core/overall';
+import { getTemplateDimensions } from '../../../features/anime-data/template-service';
+import { calcEntryOverall } from '../../../core/overall';
 import {
   DEFAULT_SCORE_MAPPING,
   SCORE_MAPPING_LIMITS,
@@ -111,9 +111,11 @@ const BangumiSyncModal: React.FC<{ open: boolean; onClose: () => void }> = ({ op
   const [records, setRecords] = useState<UploadRecord[]>([]);
   const [doneCount, setDoneCount] = useState(0);
 
-  const overallOf = useCallback((entry: AnimeEntry): number => (
-    calcOverall(entry.scores, getTemplate(entry.templateId).dimensions)
-  ), []);
+  /** 条目总评：维度来源统一走 getTemplateDimensions（与网格/侧栏/详情同一口径） */
+  const overallOf = useCallback(
+    (entry: AnimeEntry): number => calcEntryOverall(entry, getTemplateDimensions),
+    [],
+  );
 
   const refreshAccount = useCallback(async () => {
     try {

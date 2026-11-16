@@ -9,7 +9,7 @@
 import type { AnimeEntry } from '../../src/types';
 import { aiJSON, AIError } from './llm-service';
 import { extractKeywords } from '../../core/text';
-import { getScore, calcOverall, calcTasteDeviation, fmtDims, getDimensionsForList } from './ai-helpers';
+import { getScore, calcTasteDeviation, fmtDims, getDimensionsForList } from './ai-helpers';
 import type { DeviationData, PreferenceProfile, ProfileMode, AnimeReviewAnalysis } from './ai-types';
 import { PROFILE_SCHEMA, REVIEW_SCHEMA } from './ai-types';
 import type { AIRun } from './ai-runtime';

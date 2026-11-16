@@ -59,7 +59,7 @@ interface ShotRow {
  */
 function collectText(
   shot: Shot,
-  segments: ReadonlyArray<{ start: number; end: number; text: string }>,
+  segments: ReadonlyArray<{ start: number; end: number; text: string; speaker?: string }>,
 ): string {
   const own = shot.text?.trim()
   if (own) return own
@@ -69,9 +69,11 @@ function collectText(
     if (seg.start >= shot.end) break
     if (seg.end <= shot.start) continue
     const text = seg.text.trim()
-    if (text) parts.push(text)
+    if (!text) continue
+    // 说话人编号是 ASR 给的（S01/S02），带上才能看出"这句换人了"
+    parts.push(seg.speaker ? `${seg.speaker}: ${text}` : text)
   }
-  return parts.join(' ')
+  return parts.join('  ')
 }
 
 /** 小动感曲线：整集折线，横轴是时间码，纵轴是逐帧变化分 */

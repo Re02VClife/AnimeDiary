@@ -5,13 +5,14 @@ import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import type { AnimeEntry, AnimeTag, DimensionScore, DimensionReview, AnimeCategory, BangumiSearchItem, Dimension, DetailLayoutConfig, ReviewMeta, ReviewTimeline } from '../types';
 import { DEFAULT_DIMENSIONS, DIMENSION_LABEL_MAP, CATEGORY_CONFIG, DEFAULT_FIELD_CONFIG, DEFAULT_DETAIL_LAYOUT, CHARACTER_TEMPLATE_ID } from '../types';
-import { getTemplate, loadTemplates, updateTemplate, parsePosterFocus } from '../../features/anime-data/template-service';
+import { getTemplate, getTemplateDimensions, loadTemplates, updateTemplate, parsePosterFocus } from '../../features/anime-data/template-service';
 import type { TemplateFieldConfig } from '../types';
 import { fetchPoster, savePosterUrlToExcel } from '../../features/anime-data/excel-service';
 import { loadImages, saveImage as saveImageToLocal } from '../services/imageService';
 import { addToPosterBlacklist, loadPosterBlacklist, savePosterOverride, loadPosterPositions, savePosterPosition } from '../../features/anime-data/storage-service';
 import { formatReleaseDateCn, parseReleaseDate } from '../../core/date';
 import { round2, formatScore, fmt2 } from '../../core/math';
+import { calcEntryOverall } from '../../core/overall';
 import { singleAnimeAnalysis, autoTag } from '../../features/ai-analysis';
 import type { SingleAnimeAnalysisResult, AutoTagResult } from '../../features/ai-analysis';
 import { hasAIConfig, getAIPermission } from '../../features/ai-analysis';
@@ -321,19 +322,10 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
     return Array.from(titles).map((t) => ({ value: t, label: t }));
   }, [allAnime]);
 
-  // 计算任意条目的加权总评（与 AnimeGrid.calcOverall 同逻辑，修改需同步；用于角色卡 Tooltip）
-  const calcCardOverall = (entry: AnimeEntry): number => {
-    const dims = getTemplate(entry.templateId).dimensions.filter((d) => d.key !== 'overall');
-    if (dims.length === 0) return 0;
-    const hasWeights = dims.some((d) => d.weight > 0);
-    const eff = hasWeights ? dims.filter((d) => d.weight > 0) : dims.map((d) => ({ ...d, weight: 1 / dims.length }));
-    let tw = 0, ws = 0;
-    for (const d of eff) {
-      const s = entry.scores.find((sc) => sc.dimensionKey === d.key)?.score ?? 0;
-      if (s > 0) { ws += s * d.weight; tw += d.weight; }
-    }
-    return tw > 0 ? ws / tw : 0;
-  };
+  // 任意条目的加权总评（用于角色卡 Tooltip）。维度来源与网格/侧栏完全一致，
+  // 统一走 core/overall 的 calcEntryOverall，别再在这里手抄加权循环。
+  const calcCardOverall = (entry: AnimeEntry): number =>
+    calcEntryOverall(entry, getTemplateDimensions);
 
   // 点击角色标签：已建卡 → 跳转角色卡；未建卡 → 新建角色卡并进入编辑
   const handleCharacterClick = (name: string) => {
@@ -838,26 +830,27 @@ const AnimeDetailModal: React.FC<AnimeDetailModalProps> = ({
   };
 
 
-  // 计算总评（使用当前选中模板的维度和权重）
+  /**
+   * 计算总评（使用当前选中模板的维度和权重）。
+   *
+   * ⚠️ 这里不能写 `templateId ? getTemplate(templateId) : null`。
+   *
+   * 番剧条目的 templateId 是 **undefined**（默认模板的条目不写模板ID），那样写会让
+   * t 变成 null，再被 `|| DEFAULT_DIMENSIONS` 兜到**代码里硬编码的维度权重**上，
+   * 于是用户在「维度管理」里改过的权重在这里被整个忽略 —— 表现就是
+   * 同一部番：卡片按用户权重显示一个总评、详情面板按默认权重显示另一个。
+   * 维度来源统一交给 getTemplateDimensions（内部 getTemplate 会回退用户默认模板）。
+   *
+   * equalWeightFallback: false 保留本面板既有显示语义：模板里一个正权重维度都没有时
+   * 显示「-」，不像卡片/侧栏那样退化成等权平均。正常模板下两边完全一致。
+   */
   const overallScore = useMemo(() => {
-    /**
-     * ⚠️ 这里不能写 `templateId ? getTemplate(templateId) : null`。
-     *
-     * 番剧条目的 templateId 是 **undefined**（默认模板的条目不写模板ID），那样写会让
-     * t 变成 null，再被 `|| DEFAULT_DIMENSIONS` 兜到**代码里硬编码的维度权重**上，
-     * 于是用户在「维度管理」里改过的权重在这里被整个忽略 —— 表现就是
-     * 同一部番：卡片按用户权重显示一个总评、详情面板按默认权重显示另一个。
-     *
-     * getTemplate(undefined) 本来就会回退到用户的默认模板，直接交给它。
-     */
-    const templateDims = getTemplate(templateId).dimensions;
-    const dims = templateDims.filter((d) => d.key !== 'overall' && d.weight > 0);
-    let tw = 0, ws = 0;
-    for (const dim of dims) {
-      const score = scores.find((s) => s.dimensionKey === dim.key)?.score ?? 0;
-      if (score > 0) { ws += score * dim.weight; tw += dim.weight; }
-    }
-    return tw > 0 ? fmt2(ws / tw, '-') : '-';
+    const value = calcEntryOverall(
+      { scores, templateId },
+      getTemplateDimensions,
+      { equalWeightFallback: false },
+    );
+    return value > 0 ? fmt2(value, '-') : '-';
   }, [scores, templateId]);
 
   // 更新维度分数（统一收敛到两位小数，杜绝 7.500000000000001 这类浮点噪声）

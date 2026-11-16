@@ -3,27 +3,28 @@
  */
 import type { AnimeEntry, Dimension } from '../../src/types';
 import { DEFAULT_DIMENSIONS } from '../../src/types';
-import { getTemplate } from '../anime-data/template-service';
+import { getTemplate, getTemplateDimensions } from '../anime-data/template-service';
+import { calcOverall as calcWeightedOverall, calcEntryOverall } from '../../core/overall';
 
 /** 获取番剧某维度的分数 */
 export function getScore(a: AnimeEntry, dimKey: string): number {
   return a.scores.find((s) => s.dimensionKey === dimKey)?.score ?? 0;
 }
 
-/** 计算加权总评（使用指定模板维度权重表，默认 DEFAULT_DIMENSIONS） */
+/**
+ * 计算加权总评（算法本体在 core/overall，这里只决定维度来源）。
+ *
+ * - **不传 dimensions**：用条目自身模板的维度权重（getTemplate 会回退用户默认模板），
+ *   与网格卡片 / 侧栏排行 / 详情面板同一口径。
+ *   旧实现在这里固定用 DEFAULT_DIMENSIONS（代码里硬编码的权重），用户改过模板权重后
+ *   AI 算出的总评就和界面上不是一个数 —— 就是 HANDOVER §6.1 那个 bug 的 AI 侧副本。
+ * - **传 dimensions**：按传入的维度表算。跨模板的批量统计（getDimensionsForList）必须
+ *   用同一把尺，否则每部番各用自己模板的权重，平均值之间没有可比性。
+ */
 export function calcOverall(a: AnimeEntry, dimensions?: Dimension[]): number {
-  let total = 0;
-  let totalWeight = 0;
-  const dims = dimensions || DEFAULT_DIMENSIONS;
-  for (const dim of dims) {
-    if (dim.key === 'overall') continue;
-    const s = getScore(a, dim.key);
-    if (s > 0) {
-      total += s * dim.weight;
-      totalWeight += dim.weight;
-    }
-  }
-  return totalWeight > 0 ? total / totalWeight : 0;
+  return dimensions
+    ? calcWeightedOverall(a.scores, dimensions)
+    : calcEntryOverall(a, getTemplateDimensions);
 }
 
 /**
@@ -33,7 +34,8 @@ export function calcOverall(a: AnimeEntry, dimensions?: Dimension[]): number {
 export function calcTasteDeviation(a: AnimeEntry): number | null {
   const bgm = a.bangumiScore;
   if (bgm === undefined || bgm <= 0) return null;
-  const overall = getScore(a, 'overall') || calcOverall(a, a.templateId ? getTemplate(a.templateId).dimensions : undefined);
+  // 不传 dimensions：跟随 calcOverall 的默认口径（条目所属模板，默认模板条目走用户默认模板）
+  const overall = getScore(a, 'overall') || calcOverall(a);
   const vibe = getScore(a, 'vibe');
   if (overall <= 0 || vibe <= 0) return null;
   return (overall * 0.4 + vibe * 0.6) - bgm;

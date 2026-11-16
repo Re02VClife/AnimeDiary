@@ -9,7 +9,7 @@ import ReactECharts from 'echarts-for-react';
 import { useMemo } from 'react';
 import type { AnimeEntry } from '../types';
 import { getActiveDimensions } from '../../features/anime-data/template-service';
-import { buildPercentileMap, getPercentileScores } from '../services/rankingService';
+import { buildPercentileMap, getPercentileScores } from '../../features/ranking/ranking-service';
 import { fmt2 } from '../../core/math';
 
 interface RadarChartProps {

@@ -95,6 +95,25 @@ describe('buildReport', () => {
     expect(report.transcript?.notes).toEqual(['ep03.ass'])
   })
 
+  it('ASR 台词的说话人编号要透传，外挂字幕不该凭空多出 speaker 字段', () => {
+    const report = buildReport(makePayload({
+      transcript: {
+        source: 'asr-moss',
+        segments: [
+          { start: 0, end: 2, text: '第一句', speaker: 'S01' },
+          { start: 2, end: 4, text: '第二句' },
+        ],
+        chars: 6,
+        speakers: 1,
+      },
+    }), REQ, '1')
+    expect(report.transcript?.source).toBe('asr-moss')
+    expect(report.engine.transcript).toBe('asr-moss')
+    expect(report.transcript?.segments[0].speaker).toBe('S01')
+    expect(report.transcript?.segments[1]).not.toHaveProperty('speaker')
+    expect(report.transcript?.speakers).toBe(1)
+  })
+
   it('音轨响度映射到 loudness（不是 audio —— 那个留给配乐证据）', () => {
     const report = buildReport(makePayload(), REQ, '1')
     expect(report.loudness).toEqual({ mean: -21.8, peak: -21.5, series: [1, 2, 3], step: 0.1, silences: [[10, 12]] })

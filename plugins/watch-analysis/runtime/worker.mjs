@@ -50,6 +50,11 @@ function log(message) {
   process.stderr.write(`[watch-worker] ${message}\n`)
 }
 
+/** 台词字符数：报告里的「台词密度」和预算估算都用它 */
+function countChars(segments) {
+  return segments.reduce((n, segment) => n + (segment.text ? segment.text.length : 0), 0)
+}
+
 /** 把异常转成可序列化的形状，别把 Error 对象直接 JSON.stringify（会变成 {}） */
 function describeError(error) {
   if (error instanceof Error) {
@@ -211,11 +216,14 @@ async function main() {
     }
     timing.danmaku = (Date.now() - danmakuStarted) / 1000
 
-    // ── 4. 字幕（可选）──
+    // ── 4. 台词（可选）──
+    // 顺序：同目录字幕文件 →（只有用户选了「语音识别」才）MOSS 本地 ASR。
+    // 默认 auto **不跑 ASR**：一集 24 分钟 MOSS 要 10 分钟左右，顺手补台词不值得等；
+    // 没有字幕的番要台词，得在面板上显式选「语音识别」。
     let transcript
     if (options.transcript !== 'off') {
-      emit({ type: 'progress', phase: 'transcript', percent: 97, message: '查找字幕' })
       const transcriptStarted = Date.now()
+      emit({ type: 'progress', phase: 'transcript', percent: 96, message: '查找字幕文件' })
       try {
         const { transcriptSubtitleProvider } = await import('../adapters/transcript-subtitle.mjs')
         const result = await transcriptSubtitleProvider.transcribe(video, {})
@@ -223,16 +231,44 @@ async function main() {
           transcript = {
             source: result.source,
             segments: result.segments,
-            chars: result.segments.reduce((n, s) => n + s.text.length, 0),
+            chars: countChars(result.segments),
             notes: result.notes,
           }
         } else {
-          log('没有找到可用字幕文件（内嵌字幕轨与 ASR 由后续版本补）')
+          log(`没有可用字幕文件（${result.notes?.join('；') ?? '目录里没找到 .ass/.srt/.vtt'}）`)
         }
       } catch (error) {
         // 字幕失败不能拖垮整个分析：画面才是主体
         log(`字幕解析失败（继续）：${error instanceof Error ? error.message : error}`)
       }
+
+      if (!transcript && options.transcript === 'asr') {
+        emit({ type: 'progress', phase: 'transcript', percent: 97, message: '本地语音识别（MOSS）准备中' })
+        try {
+          const { transcriptMossProvider } = await import('../adapters/transcript-moss.mjs')
+          const result = await transcriptMossProvider.transcribe(video, {
+            onLog: (message) => emit({ type: 'progress', phase: 'transcript', percent: 98, message }),
+          })
+          if (result.segments.length > 0) {
+            transcript = {
+              source: result.source,
+              segments: result.segments,
+              chars: countChars(result.segments),
+              speakers: result.speakers,
+              notes: result.notes,
+            }
+            log(`语音识别: ${result.segments.length} 句 / ${result.speakers ?? 0} 位说话人`)
+          } else {
+            log(`语音识别没有结果（继续）：${result.notes?.join('；') ?? '未知原因'}`)
+          }
+        } catch (error) {
+          // ASR 失败同样不能拖垮分析：画面 + 弹幕已经够写一份报告了
+          log(`语音识别失败（继续）：${error instanceof Error ? error.message : error}`)
+        }
+      } else if (!transcript) {
+        log('跳过语音识别：默认不开（要台词请在面板上选「语音识别」）')
+      }
+
       timing.transcript = (Date.now() - transcriptStarted) / 1000
     }
 

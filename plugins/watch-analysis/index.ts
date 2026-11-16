@@ -43,7 +43,7 @@ export interface WatchPlugin {
 export const watchAnalysisPlugin: WatchPlugin = {
   id: 'watch-analysis',
   title: '拉片分析',
-  version: '0.1.0',
+  version: '0.2.0',
 
   registerRoutes(router, host) {
     registerWatchRoutes(router, host)

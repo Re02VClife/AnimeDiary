@@ -13,7 +13,7 @@
 
 import type { AnimeCategory, AnimeEntry } from '../../src/types';
 import { CHARACTER_TEMPLATE_ID } from '../../src/types';
-import { calcOverall } from '../../core/overall';
+import { calcEntryOverall } from '../../core/overall';
 import { sameTagName } from '../../core/tag-name';
 import type { AIPermission } from '../../core/ai-permission';
 import { normalizeAIPermission } from '../../core/ai-permission';
@@ -24,7 +24,7 @@ import {
   type AppToolRuntime,
   type AppToolSpec,
 } from '../../core/app-tools';
-import { getTemplate } from '../anime-data/template-service';
+import { getTemplate, getTemplateDimensions } from '../anime-data/template-service';
 import {
   formatTrackDuration,
   normalizeForMatch,
@@ -125,7 +125,7 @@ function requireEntry(list: AnimeEntry[], title: string): AnimeEntry {
 
 function overviewOf(entry: AnimeEntry): number {
   try {
-    return Math.round(calcOverall(entry.scores, getTemplate(entry.templateId).dimensions) * 100) / 100;
+    return Math.round(calcEntryOverall(entry, getTemplateDimensions) * 100) / 100;
   } catch {
     return 0;
   }

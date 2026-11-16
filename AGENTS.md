@@ -1,7 +1,7 @@
 # AGENTS.md
 
 > 面向在本仓库工作的 AI 编码代理。取代旧 `CLAUDE.md`。
-> 最后核对：2026-11-16 · v1.3.36。细节见 `README.md` / `HANDOVER.md` / `AI.md`。
+> 最后核对：2026-11-16 · v1.3.37。细节见 `README.md` / `HANDOVER.md` / `AI.md`。
 > **注意：从 1.3.36 起热更新分发不了插件功能**（`plugins/` 和 `dsh-video-storyboard` 不在
 > 热更新 zip 里），改了 `plugins/` 必须覆盖整个程序目录，见 `HANDOVER.md` §0.2。
 
@@ -50,6 +50,9 @@ tests/      Vitest；specs/ 旧需求快照；docs/ 截图
 换切镜/字幕/动感/配乐引擎 = 只加一个 adapter，pipeline 不动。
 它的 worker 是独立 ESM 子进程（`runtime/worker.mjs`），因为 `dsh-video-storyboard` 是纯 ESM
 而主进程是 CJS bundle，且解码一集会吃满 CPU。打包靠 `asarUnpack`（子进程读不到 asar 内文件）。
+台词来源：同目录字幕文件优先（快且准）；没有字幕时可选 **MOSS 本地 ASR**
+（`adapters/transcript-moss.mjs`，需 conda env + 1.7GB 权重，一集 24 分钟约 10 分钟）——
+**默认不跑**，必须在面板上显式选「语音识别」。
 
 
 ```text
@@ -91,8 +94,8 @@ QQ 音乐 ←→ /api/music/* ←→ server/music-qq.ts ←→ core/music-links.
 - 模板存 `anime_diary_templates`，当前模板 `anime_diary_active_template`；
   `TEMPLATE_JSON` 是 **42/AQ**（19/T 是历史误用列，禁写）。
 - 颜色只用 CSS 变量 `var(--xxx)`，变量在 `src/theme/presets.ts`。
-- 排名有两份：`features/ranking`（Sidebar/Context）与 `src/services/rankingService`
-  （RadarChart）；改前 grep，最好合并。
+- **排名唯一入口**：`features/ranking/ranking-service.ts`（Sidebar / Context / RadarChart 都走它）。
+  `AnimeDetailModal.nearbyRanking` 是同模板邻邻口径，语义不同、别合并。
 - **AI 写工具**：契约在 `core/app-tools.ts`，执行器在 `features/ai-analysis/app-tools.ts`。
   写工具必须标 `effect: 'write'`，且只能回调 `host.saveAnime`（即 `handleSaveAnime`），
   不得另开 Excel 写入路径；音乐绑定 `app_music_bind` 是侧车数据的例外，走 `host.bindMusic`
