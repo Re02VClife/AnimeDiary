@@ -52,9 +52,35 @@ export const REVIEW_TIMEOUT_MS = 300_000
 
 export interface DescribeResult {
   text: string
-  usage: { promptTokens: number; completionTokens: number; totalTokens: number }
+  usage: {
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+    /** 推理模型的思维链 token（有的 provider 没有） */
+    reasoningTokens?: number
+  }
   model: string
 }
+
+/**
+ * 生成过程中的进度事件。
+ *
+ * 为什么需要它：这条链路以前是**一次同步请求**，中途什么都拿不到，
+ * 用户只能对着"已用 87 秒"猜模型在干嘛（实测一集要 110–180 秒）。
+ * 这三段是服务端真实知道的节点：整理输入 → 调模型 → 解析落盘。
+ * 模型内部吐字的进度由 routes 那一层从流式响应转成 `delta` 事件，不经过这里。
+ */
+export type ReviewProgressEvent =
+  | {
+      type: 'phase'
+      phase: 'collect' | 'call' | 'parse'
+      message: string
+      /** 交给模型的输入规模（`call` 阶段才有），UI 拿来做"正在看 6 张图"这种文案 */
+      sheets?: number
+      episodes?: number[]
+      shots?: number
+    }
+  | { type: 'done'; review: AiReview; cached: boolean }
 
 export interface ReviewGeneratorOptions {
   store: WatchStore
@@ -74,7 +100,11 @@ export interface ReviewGeneratorOptions {
 }
 
 export interface ReviewGenerator {
-  generate(req: ReviewRequest, signal?: AbortSignal): Promise<{ review: AiReview; cached: boolean }>
+  generate(
+    req: ReviewRequest,
+    signal?: AbortSignal,
+    onEvent?: (event: ReviewProgressEvent) => void,
+  ): Promise<{ review: AiReview; cached: boolean }>
   read(req: ReviewRequest): AiReview | null
 }
 
@@ -456,7 +486,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       return opts.reviewStore.read(req.key, req.scope)
     },
 
-    async generate(req, signal) {
+    async generate(req, signal, onEvent) {
       const startedAt = Date.now()
       const scope = req.scope
       const allReports = opts.store.listEpisodes(req.key)
@@ -476,7 +506,13 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
 
       // 缓存：同一份报告 + 同一个模型 + 同一版提示词，不重复花钱
       const existing = opts.reviewStore.read(req.key, scope)
-      if (!req.options?.force && existing) return { review: existing, cached: true }
+      if (!req.options?.force && existing) {
+        onEvent?.({ type: 'done', review: existing, cached: true })
+        return { review: existing, cached: true }
+      }
+
+      // 命中缓存就没有"整理输入"这一步，collect 事件放在缓存判断之后
+      onEvent?.({ type: 'phase', phase: 'collect', message: '正在整理拉片报告与分镜图' })
 
       // ── 收集图片（每集配额 + 集内均匀采样）──
       // 旧实现是"顺序取前 N 张"：多集时前面的集吃满配额、后面的集一张都看不到；
@@ -516,6 +552,15 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
         throw new Error('找不到任何分镜图：报告存在但图片丢失，请重新做一次拉片分析')
       }
 
+      onEvent?.({
+        type: 'phase',
+        phase: 'call',
+        message: `把 ${images.length} 张分镜图和 ${selected.length} 集报告交给模型`,
+        sheets: images.length,
+        episodes: selected.map((r) => r.episode),
+        shots: selected.reduce((n, r) => n + r.shots.length, 0),
+      })
+
       // ── 调模型 ──
       const userContext = req.userContext ?? { title: req.key }
       const { system, prompt } = buildPrompt(userContext.title || req.key, scope, selected, sheetsByEpisode, userContext)
@@ -540,6 +585,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       }
 
       // ── 解析 ──
+      onEvent?.({ type: 'phase', phase: 'parse', message: '解析模型输出、校验时间码与引用' })
       const parsed = extractJson(result.text)
       if (!parsed || typeof parsed !== 'object') {
         // 只报"没返回 JSON"等于什么都没说 —— 把输出结尾带进错误里，
@@ -574,6 +620,12 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
         model: result.model,
         promptVersion: REVIEW_PROMPT_VERSION,
         tokens: result.usage.totalTokens,
+        usage: {
+          promptTokens: result.usage.promptTokens,
+          completionTokens: result.usage.completionTokens,
+          ...(result.usage.reasoningTokens ? { reasoningTokens: result.usage.reasoningTokens } : {}),
+          totalTokens: result.usage.totalTokens,
+        },
         elapsedMs: Date.now() - startedAt,
         created: new Date().toISOString(),
         appVersion: opts.appVersion,
@@ -592,6 +644,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       }
 
       opts.reviewStore.write(review)
+      onEvent?.({ type: 'done', review, cached: false })
       return { review, cached: false }
     },
   }

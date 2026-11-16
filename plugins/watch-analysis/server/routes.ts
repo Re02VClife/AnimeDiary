@@ -547,13 +547,138 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
       if (!closed) controller.abort()
     })
 
+    const requestPayload = {
+      key,
+      scope,
+      userContext: body?.userContext && typeof body.userContext === 'object' ? body.userContext : undefined,
+      options: body?.options && typeof body.options === 'object' ? body.options : undefined,
+    }
+
+    /*
+     * ── 流式（SSE）：真进度 ──
+     *
+     * 前端带 `Accept: text/event-stream` 才走这条；不带就是原来的同步 JSON 接口
+     * （旧前端/脚本仍然能用）。事件三类：
+     *   phase —— 服务端真实知道的阶段（整理输入 / 交给模型 / 解析落盘）
+     *   delta —— 模型吐字进度（chars = 正文累计字符，reasoningChars = 思维链累计）
+     *   done / error
+     */
+    if (String((req.headers as any)?.accept || '').includes('text/event-stream')) {
+      res.statusCode = 200
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+      res.setHeader('Cache-Control', 'no-cache, no-transform')
+      res.setHeader('Connection', 'keep-alive')
+      res.setHeader('X-Accel-Buffering', 'no')
+      if (typeof res.flushHeaders === 'function') res.flushHeaders()
+
+      const write = (payload: unknown) => {
+        if (closed) return
+        res.write(`data: ${JSON.stringify(payload)}\n\n`)
+      }
+
+      let contentChars = 0
+      let reasoningChars = 0
+
+      const describeStreaming = async ({
+        system,
+        prompt,
+        images,
+        jsonMode,
+        maxTokens,
+        timeoutMs,
+        signal,
+      }: {
+        system: string
+        prompt: string
+        images: string[]
+        jsonMode: boolean
+        maxTokens: number
+        timeoutMs: number
+        signal?: AbortSignal
+      }) => {
+        const messages = [
+          { role: 'system' as const, content: system },
+          {
+            role: 'user' as const,
+            content: [
+              { type: 'text' as const, text: prompt },
+              ...images.map((url) => ({
+                type: 'image_url' as const,
+                image_url: { url, detail: 'high' as const },
+              })),
+            ],
+          },
+        ]
+
+        try {
+          const result = await getClient().chatStream(
+            { messages, maxTokens, jsonMode, timeoutMs, purpose: 'watch-review', signal },
+            (event) => {
+              if (event.type === 'reasoning') reasoningChars += event.text?.length ?? 0
+              else if (event.type === 'delta') contentChars += event.text?.length ?? 0
+              else return
+              write({ type: 'delta', chars: contentChars, reasoningChars })
+            },
+          )
+          return {
+            text: result.content,
+            usage: {
+              promptTokens: result.usage.promptTokens,
+              completionTokens: result.usage.completionTokens,
+              totalTokens: result.usage.totalTokens,
+              ...(result.usage.reasoningTokens ? { reasoningTokens: result.usage.reasoningTokens } : {}),
+            },
+            model: result.model,
+          }
+        } catch (error) {
+          if (controller.signal.aborted) throw error
+          // 有的网关对「JSON 输出 + stream」直接 400。看进度不该把功能弄没：退回一次性生成，
+          // 前端会看到阶段文案变成「流式不可用」，仍然能拿到结果。
+          write({ type: 'phase', phase: 'call', message: '流式不可用，改用一次性生成' })
+          const result = await getClient().chat({
+            messages, maxTokens, jsonMode, timeoutMs, purpose: 'watch-review', signal,
+          })
+          contentChars = result.content.length
+          write({ type: 'delta', chars: contentChars, reasoningChars: 0 })
+          return {
+            text: result.content,
+            usage: {
+              promptTokens: result.usage.promptTokens,
+              completionTokens: result.usage.completionTokens,
+              totalTokens: result.usage.totalTokens,
+              ...(result.usage.reasoningTokens ? { reasoningTokens: result.usage.reasoningTokens } : {}),
+            },
+            model: result.model,
+          }
+        }
+      }
+
+      const streamingGenerator = createReviewGenerator({
+        store,
+        reviewStore,
+        appVersion,
+        describe: describeStreaming,
+      })
+
+      try {
+        await streamingGenerator.generate(requestPayload, controller.signal, (event) => {
+          if (event.type === 'phase') write(event)
+          else write({ type: 'done', review: event.review, cached: event.cached })
+        })
+      } catch (e) {
+        // 用户主动取消时不发 error：前端已经断开，写了也没人收
+        if (!controller.signal.aborted) {
+          write({ type: 'error', message: e instanceof Error ? e.message : String(e) })
+        }
+      } finally {
+        closed = true
+        res.end()
+      }
+      return
+    }
+
     try {
-      const { review, cached } = await getReviewGenerator().generate({
-        key,
-        scope,
-        userContext: body?.userContext && typeof body.userContext === 'object' ? body.userContext : undefined,
-        options: body?.options && typeof body.options === 'object' ? body.options : undefined,
-      }, controller.signal)
+      const { review, cached } = await getReviewGenerator().generate(requestPayload, controller.signal)
       closed = true
       sendJson(res, 200, { ok: true, review, cached })
     } catch (e) {

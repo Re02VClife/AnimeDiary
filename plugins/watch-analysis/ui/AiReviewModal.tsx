@@ -43,6 +43,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Progress,
   Segmented,
   Select,
   Space,
@@ -72,14 +73,14 @@ import type {
 import { formatTokens } from './BudgetBar'
 import {
   DEFAULT_REVIEW_BUDGET,
-  generateReview,
+  generateReviewStream,
   getExistingReview,
   getReviewMeta,
   isAbortError,
   listAnalyzedEpisodes,
   resolveVideoFile,
 } from './review-api'
-import type { ReviewGenerateRequest, ReviewMeta } from './review-api'
+import type { ReviewGenerateRequest, ReviewMeta, ReviewStreamEvent } from './review-api'
 
 /* ─────────────────────────────────────────────────────────
  * Props
@@ -229,7 +230,7 @@ function buildScoreRows(review: AiReview | null, userContext?: ReviewUserContext
   })
 }
 
-/** 生成中的轮换文案：后端是同步接口没有真实进度，用「已经跑了多久」估算一个可信的说法 */
+/** 生成中的轮换文案：SSE 还没吐第一个事件时的兜底（旧服务端 / 网络慢） */
 function progressText(elapsedSeconds: number): string {
   if (elapsedSeconds < 3) return '正在整理拉片报告与分镜图…'
   const sheet = Math.min(8, Math.floor(elapsedSeconds / 6) + 1)
@@ -237,6 +238,40 @@ function progressText(elapsedSeconds: number): string {
   if (elapsedSeconds < 90) return '正在把画面、台词和时间码对上…'
   if (elapsedSeconds < 150) return '正在组织影评正文与维度评分…'
   return '模型还在写，这篇有点长，再等等…'
+}
+
+/**
+ * 生成中的真实进度：阶段 + 已吐字数（由 SSE 事件驱动，不是按秒猜）。
+ *
+ * `reasoningChars` 与 `chars` 分开：推理模型会先思考几十秒、正文一个字都没有，
+ * 混成一个数会让人以为卡死。
+ */
+interface GenerationProgress {
+  phase: 'collect' | 'call' | 'parse' | 'done'
+  message: string
+  chars: number
+  reasoningChars: number
+  /** `call` 阶段才有：这次实际交给模型的图数与集数 */
+  sheets?: number
+  episodes?: number[]
+}
+
+/**
+ * 进度条百分比。
+ *
+ * ⚠️ 这是**估算**：模型不会告诉我们"还剩多少"。但和以前"只按秒数轮换文案"的区别是，
+ * 这里的增长由**真实事件**驱动（阶段切换、已生成字符数），不是纯猜。
+ * 字符数长时间不动时用时间做下限，避免进度条看着像卡死。
+ */
+function estimatePercent(progress: GenerationProgress | null, elapsedSeconds: number): number {
+  if (!progress) return Math.min(60, Math.round((elapsedSeconds / 120) * 60))
+  if (progress.phase === 'done') return 100
+  if (progress.phase === 'parse') return 92
+  if (progress.phase === 'collect') return 8
+  const produced = progress.chars + progress.reasoningChars * 0.35
+  const fromChars = 15 + Math.min(72, (produced / 4000) * 72)
+  const fromTime = 15 + Math.min(60, elapsedSeconds * 0.4)
+  return Math.min(90, Math.round(Math.max(fromChars, fromTime)))
 }
 
 /* ─────────────────────────────────────────────────────────
@@ -821,20 +856,32 @@ const TimelineSection: FC<{
 }
 
 /**
- * 底部元信息。
+ * 底部元信息：模型 / 提示词版本 / 用时 / token / 生成时间。
  *
- * 「用时」目前**没有契约字段**（`AiReview` 里没有耗时），所以只有本次面板里
- * 现场生成过才显示实测秒数，读历史记录时显示「—」—— 不编数。
+ * 两处口径：
+ *   - **用时**：本次刚生成完用实测秒数；读历史记录时用落盘的 `elapsedMs`
+ *     （2026-11-16 起会写；更早的记录没有，如实显示「—」）。
+ *   - **token**：有 `usage` 分项就显示「输入 / 输出 / 共」，老记录只有总数。
  */
 const MetaSection: FC<{ review: AiReview; elapsedSeconds: number | null }> = ({
   review,
   elapsedSeconds,
 }) => {
+  const seconds =
+    elapsedSeconds ??
+    (typeof review.elapsedMs === 'number' && review.elapsedMs > 0
+      ? Math.round(review.elapsedMs / 1000)
+      : null)
+  const usage = review.usage
+  const tokenPart = usage
+    ? `输入 ${formatTokens(usage.promptTokens)} / 输出 ${formatTokens(usage.completionTokens)} / 共 ${formatTokens(usage.totalTokens)} token`
+    : `${formatTokens(review.tokens)} token`
+
   const parts = [
     review.model || '未知模型',
     `提示词 v${review.promptVersion || '未知'}`,
-    elapsedSeconds === null ? '用时 —' : `用时 ${elapsedSeconds} 秒`,
-    `${formatTokens(review.tokens)} token`,
+    seconds === null ? '用时 —' : `用时 ${seconds} 秒`,
+    tokenPart,
     formatDateTime(review.created),
   ]
   return (
@@ -900,6 +947,8 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
   const [cached, setCached] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [generatedSeconds, setGeneratedSeconds] = useState<number | null>(null)
+  /** 流式进度（SSE 事件驱动）；null = 还没收到第一个事件 */
+  const [progress, setProgress] = useState<GenerationProgress | null>(null)
 
   /** 进行中的生成请求；关面板/取消/换范围时 abort */
   const abortRef = useRef<AbortController | null>(null)
@@ -940,6 +989,7 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
     setCached(false)
     setGeneratedSeconds(null)
     setElapsed(0)
+    setProgress(null)
     setForce(false)
   }, [open, animeKey, initialEpisode])
 
@@ -1176,6 +1226,7 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
       setCached(false)
       setGeneratedSeconds(null)
       setElapsed(0)
+      setProgress(null)
       const startedAt = Date.now()
 
       const payload: ReviewGenerateRequest = {
@@ -1195,7 +1246,33 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
       }
 
       try {
-        const result = await generateReview(payload, controller.signal)
+        const result = await generateReviewStream(
+          payload,
+          controller.signal,
+          (event: ReviewStreamEvent) => {
+            if (event.type === 'phase') {
+              setProgress({
+                phase: event.phase,
+                message: event.message,
+                chars: 0,
+                reasoningChars: 0,
+                sheets: event.sheets,
+                episodes: event.episodes,
+              })
+            } else if (event.type === 'delta') {
+              setProgress((current) => current
+                ? { ...current, chars: event.chars, reasoningChars: event.reasoningChars }
+                : {
+                    phase: 'call',
+                    message: '模型正在生成',
+                    chars: event.chars,
+                    reasoningChars: event.reasoningChars,
+                  })
+            } else if (event.type === 'done') {
+              setProgress({ phase: 'done', message: '完成', chars: 0, reasoningChars: 0 })
+            }
+          },
+        )
         setReview(result.review)
         setCached(result.cached)
         setGenerateError(null)
@@ -1259,7 +1336,9 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
     <div data-testid="review-generating" style={{ ...PANEL_STYLE, marginBottom: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <Spin size="small" />
-        <span style={{ color: 'var(--text-primary)', fontSize: 13 }}>{progressText(elapsed)}</span>
+        <span style={{ color: 'var(--text-primary)', fontSize: 13 }}>
+          {progress?.message || progressText(elapsed)}
+        </span>
         <Tag
           style={{
             marginInlineEnd: 0,
@@ -1270,13 +1349,33 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
         >
           {elapsed} 秒
         </Tag>
+        {progress && progress.phase === 'call' && (
+          <Tag data-testid="review-progress-chars" style={{ marginInlineEnd: 0 }}>
+            {progress.chars > 0
+              ? `已生成 ${formatTokens(progress.chars)} 字`
+              : progress.reasoningChars > 0
+                ? `思考中 ${formatTokens(progress.reasoningChars)} 字`
+                : '等待模型首字…'}
+          </Tag>
+        )}
         <span style={{ flex: 1 }} />
         <Button size="small" danger icon={<StopOutlined />} onClick={cancelGeneration}>
           取消
         </Button>
       </div>
+      <Progress
+        percent={estimatePercent(progress, elapsed)}
+        status="active"
+        showInfo={false}
+        strokeColor="var(--brand-primary)"
+        trailColor="var(--bg-quaternary)"
+        style={{ margin: 0 }}
+      />
       <span style={MUTED_STYLE}>
-        影评是同步接口，可能要跑 30–180 秒；关掉面板会中断这次请求。
+        {progress?.phase === 'call' && progress.sheets
+          ? `模型正在看 ${progress.sheets} 张分镜${progress.episodes?.length ? `（${progress.episodes.length} 集）` : ''}。`
+          : ''}
+        阶段与字数由服务端实时推送；关掉面板会中断这次请求。
       </span>
     </div>
   ) : null
@@ -1680,7 +1779,7 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
           )}
         </div>
         <span style={MUTED_STYLE}>
-          生成是同步的，期间可以关面板取消；重新生成前，已有结果不会被覆盖。
+          生成过程中会实时显示阶段与已生成字数；关掉面板会中断这次请求。
         </span>
       </div>
     </div>

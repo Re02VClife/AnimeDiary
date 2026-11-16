@@ -1,6 +1,6 @@
 # AnimeDiary 进度与交接
 
-> 最后更新：**2026-11-16** · 当前版本 **1.3.37**
+> 最后更新：**2026-11-16** · 当前版本 **1.3.38**
 >
 > ⚠️ **从 1.3.36 起热更新不够用了**：新增的「拉片分析 / AI 影评」插件带 `plugins/`
 > 和 `dsh-video-storyboard` 依赖，**热更新 zip 里没有这些**。每次升级必须覆盖整个
@@ -152,6 +152,26 @@ ANIMEDIARY_MOSS_MODEL    D:\models\MOSS-Transcribe-Diarize
 代码在 `plugins/`，模型与 `moss_transcribe_diarize` 包在本机（`D:\MOSS-Transcribe-Diarize`，
 pip install -e 进 conda env），**都不进仓库**。
 
+### 0.7 影评的真实进度与 token 账单（2026-11-16 晚加）
+
+以前生成影评是一次**同步请求**（一集 110–180 秒），中途什么都拿不到，面板只能按秒数轮换文案猜。
+现在改成 SSE：
+
+| 事件 | 内容 | 谁产生 |
+|---|---|---|
+| `phase` | `collect`（整理输入）/ `call`（交给模型，带图数与集数）/ `parse`（解析校验） | `server/review.ts` 的真实节点 |
+| `delta` | `chars`（正文累计字符）/ `reasoningChars`（思维链累计）**分开** | 网关流式响应 |
+| `done` / `error` | 最终影评（含 usage）/ 错误原文 | 服务端 |
+
+- 前端进度条 = 阶段基数 + 已生成字数估算（`estimatePercent`）。**仍然是估算**，但增长由真实事件驱动，
+  而且面板会显示「已生成 1,234 字」/「思考中 …」——推理模型先想几十秒时不会看着像卡死。
+- `/api/watch/review` **不带** `Accept: text/event-stream` 时仍然是原来的 JSON 接口（旧前端/脚本兼容）。
+- 网关若不支持「JSON 输出 + stream」（有的直接 400）：服务端**自动退回一次性生成**，前端文案变成
+  「流式不可用，改用一次性生成」，功能不会因为要进度而断掉。
+- `AiReview` 新增 `usage`（`promptTokens` / `completionTokens` / `reasoningTokens?` / `totalTokens`）；
+  `elapsedMs` 本来就在落盘，现在历史记录也会显示「用时 116 秒」（以前一律 `—`）。
+  面板底部变成：`模型 · 提示词版本 · 用时 · 输入 3,144 / 输出 13,517 / 共 16,661 token · 时间`。
+
 ---
 
 ## 1. 一分钟上手
@@ -172,7 +192,7 @@ pip install -e 进 conda env），**都不进仓库**。
 
 ```bash
 npx tsc --noEmit    # 唯一类型检查（注意：不覆盖 plugins/*.mjs，那些用 node --check）
-npx vitest run      # 959 通过 / 63 个文件（另有 6 个跳过：需 AI_LIVE=1 才跑）
+npx vitest run      # 963 通过 / 63 个文件（另有 6 个跳过：需 AI_LIVE=1 才跑）
 ```
 
 ---

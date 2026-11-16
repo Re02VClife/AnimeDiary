@@ -143,6 +143,116 @@ export async function generateReview(
 }
 
 /**
+ * 生成过程中的进度事件。
+ *
+ * 服务端在 SSE 里推的是这三类（见 `server/routes.ts` 的 review 分支）：
+ *   - `phase`：服务端**真实知道**的阶段（整理输入 / 交给模型 / 解析落盘）
+ *   - `delta`：模型吐字进度。`chars` 是正文累计字符，`reasoningChars` 是思维链累计
+ *     （推理模型会先想很久，正文一个字都没有 —— 两种情况要分开显示，不能让人以为卡死）
+ *   - `done` / `error`
+ */
+export type ReviewStreamEvent =
+  | {
+      type: 'phase'
+      phase: 'collect' | 'call' | 'parse'
+      message: string
+      sheets?: number
+      episodes?: number[]
+      shots?: number
+    }
+  | { type: 'delta'; chars: number; reasoningChars: number }
+  | { type: 'done'; review: AiReview; cached: boolean }
+  | { type: 'error'; message: string }
+
+/**
+ * 生成影评（流式，带真实进度）。
+ *
+ * 与 `generateReview`（同步 JSON）的区别：这里带 `Accept: text/event-stream`，
+ * 服务端会边跑边推 `phase` / `delta`，前端能显示「正在看 6 张分镜图」「已生成 1234 字」。
+ * 服务端不支持 SSE 时（旧版本）自动降级成一次 JSON 响应 —— 功能不能因为"要进度"而断掉。
+ *
+ * 取消：`signal` 直接透传给 fetch；abort 时抛 AbortError，调用方按取消处理。
+ */
+export async function generateReviewStream(
+  request: ReviewGenerateRequest,
+  signal: AbortSignal | undefined,
+  onEvent: (event: ReviewStreamEvent) => void,
+): Promise<GenerateReviewResult> {
+  let resp: Response
+  try {
+    resp = await fetch(`${API_BASE}/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify(request),
+      signal,
+    })
+  } catch (e) {
+    if (isAbortError(e)) throw e
+    throw new Error(`连不上本地分析服务：${errorText(e)}`)
+  }
+
+  const contentType = resp.headers.get('content-type') || ''
+
+  // 旧服务端 / 中间层把 SSE 缓冲掉：退回一次 JSON，进度就只有「首尾两帧」
+  if (!contentType.includes('text/event-stream')) {
+    const body = (await readJson(resp)) as {
+      ok?: boolean
+      review?: AiReview
+      cached?: boolean
+      error?: string
+    }
+    if (!resp.ok || !body.ok || !body.review) {
+      throw new Error(body.error || `HTTP ${resp.status}`)
+    }
+    const done: GenerateReviewResult = { review: body.review, cached: body.cached === true }
+    onEvent({ type: 'done', ...done })
+    return done
+  }
+
+  if (!resp.body) throw new Error('服务端没有返回可读的流')
+
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let result: GenerateReviewResult | null = null
+
+  /** 一个 SSE 事件块（`data: {...}` 可多行）；解析失败的行直接跳过，不让脏数据打断整条流 */
+  const handleChunk = (raw: string): void => {
+    for (const line of raw.split(/\r?\n/)) {
+      if (!line.startsWith('data:')) continue
+      const payload = line.slice(5).trim()
+      if (!payload) continue
+      let event: ReviewStreamEvent
+      try {
+        event = JSON.parse(payload) as ReviewStreamEvent
+      } catch {
+        continue
+      }
+      if (event.type === 'error') throw new Error(event.message || '生成失败（服务端没有给原因）')
+      if (event.type === 'done') result = { review: event.review, cached: event.cached }
+      onEvent(event)
+    }
+  }
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let index = buffer.indexOf('\n\n')
+    while (index >= 0) {
+      handleChunk(buffer.slice(0, index))
+      buffer = buffer.slice(index + 2)
+      index = buffer.indexOf('\n\n')
+    }
+  }
+  if (buffer.trim()) handleChunk(buffer)
+
+  const finished = result as GenerateReviewResult | null
+  if (!finished) throw new Error('服务端没有返回影评结果（流被提前关闭）')
+  return finished
+}
+
+/**
  * 读已生成的影评。
  *
  * 契约里「没有结果」是 `200 + { ok:false, error }`，**不是**请求失败，所以这里

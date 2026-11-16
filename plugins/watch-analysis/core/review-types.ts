@@ -70,6 +70,17 @@ export interface ReviewInputs {
   dialogueLines: number
 }
 
+/** 本次调用的 token 分项。老记录只有 `tokens` 总数，读出来时按总数兜底。 */
+export interface AiReviewUsage {
+  /** 输入（含分镜图，图片 token 算在这里） */
+  promptTokens: number
+  /** 输出（正文 + JSON 结构） */
+  completionTokens: number
+  /** 推理模型的思维链 token（有的 provider 才算得出来） */
+  reasoningTokens?: number
+  totalTokens: number
+}
+
 export interface AiReview {
   /** 结构版本；改了字段就 +1，旧记录读出来要能判断"要不要重跑" */
   schema: 1
@@ -80,8 +91,10 @@ export interface AiReview {
   model: string
   /** 提示词版本（改了提示词就等于换了把尺子，同样要记） */
   promptVersion: string
-  /** 本次消耗的 token（含图片） */
+  /** 本次消耗的 token（含图片）。2026-11-16 起同时有 `usage` 分项，这个字段保留兼容 */
   tokens: number
+  /** token 分项（输入/输出/思维链）。老记录没有，前端要能只看 tokens */
+  usage?: AiReviewUsage
   /** 本次生成耗时（毫秒）；历史记录里读出来可以显示"这篇花了多久" */
   elapsedMs?: number
   created: string

@@ -410,6 +410,68 @@ describe('createReviewGenerator', () => {
     expect(prompt).not.toContain('【台词')
   })
 
+  it('生成过程发阶段事件，token 分项写进结果（进度与账单都要真）', async () => {
+    const { store } = seedReport(1)
+    const reviewStore = createReviewStore(dir)
+    const describe = vi.fn(async () => ({
+      text: modelJson(),
+      usage: { promptTokens: 3000, completionTokens: 5000, reasoningTokens: 1200, totalTokens: 8000 },
+      model: 'fake-vision-model',
+    }))
+    const generator = createReviewGenerator({
+      store,
+      reviewStore,
+      appVersion: '1.3.37',
+      describe,
+    })
+
+    const events: Array<Record<string, unknown>> = []
+    const { review } = await generator.generate(
+      { key: KEY, scope: { kind: 'series' } },
+      undefined,
+      (event) => events.push(event as unknown as Record<string, unknown>),
+    )
+
+    // 顺序即用户看到的顺序：整理输入 → 交给模型 → 解析落盘 → 完成
+    expect(events.map((event) => (event.type === 'phase' ? event.phase : event.type))).toEqual([
+      'collect',
+      'call',
+      'parse',
+      'done',
+    ])
+    // call 阶段要告诉前端"在看多少张图、多少集"（UI 拿它写文案）
+    expect(events[1]).toMatchObject({ sheets: 1, episodes: [1], shots: 2 })
+
+    expect(review.tokens).toBe(8000)
+    expect(review.usage).toEqual({
+      promptTokens: 3000,
+      completionTokens: 5000,
+      reasoningTokens: 1200,
+      totalTokens: 8000,
+    })
+  })
+
+  it('缓存命中时也会发一次 done（cached=true），且不调模型', async () => {
+    const { store } = seedReport(1)
+    const reviewStore = createReviewStore(dir)
+    const { generator, describeMock } = makeGenerator({ store, reviewStore })
+
+    await generator.generate({ key: KEY, scope: { kind: 'series' } })
+    expect(describeMock).toHaveBeenCalledTimes(1)
+
+    const events: Array<Record<string, unknown>> = []
+    const second = await generator.generate(
+      { key: KEY, scope: { kind: 'series' } },
+      undefined,
+      (event) => events.push(event as unknown as Record<string, unknown>),
+    )
+    expect(second.cached).toBe(true)
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ type: 'done', cached: true })
+    // 第二次没有重新花钱
+    expect(describeMock).toHaveBeenCalledTimes(1)
+  })
+
   it('elapsedMs 落盘（历史记录要能显示这篇花了多久）', async () => {
     const { store } = seedReport(1)
     const reviewStore = createReviewStore(dir)

@@ -43,7 +43,7 @@ vi.mock('echarts-for-react', async () => {
 
 /* ── mock：影评 HTTP 客户端（组件只 import 这些函数） ── */
 const apiMocks = vi.hoisted(() => ({
-  generateReview: vi.fn(),
+  generateReviewStream: vi.fn(),
   getExistingReview: vi.fn(),
   getReviewMeta: vi.fn(),
   listAnalyzedEpisodes: vi.fn(),
@@ -55,7 +55,7 @@ vi.mock('../../../plugins/watch-analysis/ui/review-api', async (importOriginal) 
     await importOriginal<typeof import('../../../plugins/watch-analysis/ui/review-api')>()
   return {
     ...actual,
-    generateReview: apiMocks.generateReview,
+    generateReviewStream: apiMocks.generateReviewStream,
     getExistingReview: apiMocks.getExistingReview,
     getReviewMeta: apiMocks.getReviewMeta,
     listAnalyzedEpisodes: apiMocks.listAnalyzedEpisodes,
@@ -162,7 +162,7 @@ beforeEach(() => {
     budgetLimit: 2_000_000,
   })
   apiMocks.resolveVideoFile.mockResolvedValue('D:\\anime\\葬送的芙莉莲\\01.mp4')
-  apiMocks.generateReview.mockResolvedValue({ review: REVIEW, cached: false })
+  apiMocks.generateReviewStream.mockResolvedValue({ review: REVIEW, cached: false })
 })
 
 afterEach(() => {
@@ -376,7 +376,7 @@ describe('AiReviewModal', () => {
 
   it('生成失败：错误 Alert 显示后端原文，并给重试入口', async () => {
     const failure = '模型没有返回合法 JSON，影评生成失败（可以重试一次）'
-    apiMocks.generateReview.mockRejectedValue(new Error(failure))
+    apiMocks.generateReviewStream.mockRejectedValue(new Error(failure))
 
     await mountModal()
 
@@ -396,8 +396,67 @@ describe('AiReviewModal', () => {
     expect(findButton('重试')).not.toBeUndefined()
   })
 
+  it('生成中显示真实进度：阶段文案 + 已生成字数 + 图数', async () => {
+    let release: (() => void) | null = null
+    apiMocks.generateReviewStream.mockImplementation(
+      async (
+        _request: unknown,
+        _signal: unknown,
+        onEvent: (event: Record<string, unknown>) => void,
+      ) => {
+        onEvent({
+          type: 'phase',
+          phase: 'call',
+          message: '把 6 张分镜图和 3 集报告交给模型',
+          sheets: 6,
+          episodes: [1, 2, 3],
+        })
+        onEvent({ type: 'delta', chars: 1234, reasoningChars: 0 })
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+        return { review: REVIEW, cached: false }
+      },
+    )
+
+    await mountModal()
+    await waitFor(() => bodyText().includes('还没有生成过影评'))
+
+    const generateButton = findButton('生成影评')
+    await act(async () => {
+      generateButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    await waitFor(() => bodyText().includes('已生成 1,234 字'))
+    // 阶段文案来自 SSE 事件，不是按秒数猜的那套
+    expect(bodyText()).toContain('把 6 张分镜图和 3 集报告交给模型')
+    expect(bodyText()).toContain('模型正在看 6 张分镜')
+
+    await act(async () => {
+      release?.()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    await waitFor(() => bodyText().includes('评分对比'))
+  })
+
+  it('元信息：有 usage 时显示输入/输出/共，历史记录用 elapsedMs 显示用时', async () => {
+    apiMocks.getExistingReview.mockResolvedValue({
+      ...REVIEW,
+      elapsedMs: 115568,
+      usage: { promptTokens: 3144, completionTokens: 13517, totalTokens: 16661 },
+    } satisfies AiReview)
+
+    await mountModal()
+    await waitFor(() => bodyText().includes('评分对比'))
+
+    const meta = document.body.querySelector('[data-testid="review-meta"]')
+    expect(meta?.textContent).toContain('输入 3,144 / 输出 13,517 / 共 16,661 token')
+    // 历史记录也能量出"这篇花了多久"（以前一律显示 —）
+    expect(meta?.textContent).toContain('用时 116 秒')
+  })
+
   it('缓存命中：顶部提示「这是上次生成的结果」并给重新生成', async () => {
-    apiMocks.generateReview.mockResolvedValue({ review: REVIEW, cached: true })
+    apiMocks.generateReviewStream.mockResolvedValue({ review: REVIEW, cached: true })
 
     await mountModal()
 
