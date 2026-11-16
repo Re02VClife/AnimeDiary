@@ -644,19 +644,33 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       })
 
       try {
-        const result = await opts.describe({
+        /*
+         * 推理模型会先花几千 token 思考，4000 的输出预算经常被思维链吃掉 ——
+         * 实测 6 集里有 2 集（E3/E5）因此返回半截 JSON，parseEpisodeBrief 直接失败。
+         * 这里给到 8000；还是不行就用 12000 再要一次（只在失败时多花一次调用）。
+         */
+        const attempt = (maxTokens: number) => opts.describe({
           system,
           prompt,
           images,
           jsonMode: true,
-          maxTokens: 4000,
+          maxTokens,
           timeoutMs: REVIEW_TIMEOUT_MS,
           signal,
         })
+
+        const result = await attempt(8000)
         addUsage(totalUsage, result.usage)
-        const brief = parseEpisodeBrief(result.text, report.episode)
+        let brief = parseEpisodeBrief(result.text, report.episode)
+        if (!brief) {
+          const retry = await attempt(12000)
+          addUsage(totalUsage, retry.usage)
+          brief = parseEpisodeBrief(retry.text, report.episode)
+          if (!brief) {
+            failures.push(`E${report.episode} 的小结无法解析（重试后仍失败，输出 ${retry.text.length} 字符）`)
+          }
+        }
         if (brief) briefs.push(brief)
-        else failures.push(`E${report.episode} 的小结无法解析`)
       } catch (error) {
         // 用户取消要立刻停，不能继续烧后面的集
         if (signal?.aborted) throw error
