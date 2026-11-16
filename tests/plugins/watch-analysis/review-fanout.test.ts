@@ -26,6 +26,7 @@ describe('buildEpisodeBriefPrompt', () => {
       dialogueLines: ['  [00:12] S01: 台词'],
       danmakuLines: [],
       userScores: '剧情 8 / 作画 7.5',
+      dimensions: ['剧情', '作画', '音声'],
     })
 
     expect(system).toContain('单集')
@@ -33,6 +34,8 @@ describe('buildEpisodeBriefPrompt', () => {
     expect(prompt).toContain('E3')
     expect(prompt).toContain('"points"')
     expect(prompt).toContain('剧情 8 / 作画 7.5')
+    // 维度白名单必须真的写进 prompt（否则模型会自己编维度）
+    expect(prompt).toContain('剧情 / 作画 / 音声')
     // 子任务不该被要求写整篇正文
     expect(prompt).not.toContain('"markdown"')
   })

@@ -49,6 +49,13 @@ export interface BriefPromptInput {
   /** 弹幕行（已抽样） */
   danmakuLines: string[]
   userScores: string
+  /**
+   * 允许评的维度（模板维度）。
+   *
+   * 用户没打分时也必须传默认八维 —— 不传的话模型会自己编「角色 / 搞笑 / 演出」
+   * （2026-11-17 实测踩到，雷达图上多出三条不存在的轴）。
+   */
+  dimensions: string[]
 }
 
 const BRIEF_SYSTEM = [
@@ -107,7 +114,7 @@ export function buildEpisodeBriefPrompt(input: BriefPromptInput): { system: stri
     '}',
     '',
     'points 给 3–6 条；scores 只给你有把握的维度；quotes 0–3 条；caveats 0–3 条。',
-    '维度名只能用用户已经打过分的那几个（见上），不要新增或改名。',
+    '维度**只能用这几个**（一个字都不要改）：' + input.dimensions.join(' / '),
   ].join('\n')
 
   return { system: BRIEF_SYSTEM, prompt }

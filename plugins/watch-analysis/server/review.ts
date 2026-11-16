@@ -54,6 +54,14 @@ const MAX_SHEETS_LIMIT = 1000
  */
 const SINGLE_REQUEST_SHEET_BUDGET = 60
 
+/**
+ * 用户没打分时的维度兜底（必须与默认模板一致）。
+ *
+ * fanout 的子任务 prompt 用它做白名单；不传的话模型会自己编
+ * 「角色 / 搞笑 / 演出」这类不存在的维度（2026-11-17 实测踩到）。
+ */
+const FALLBACK_DIMENSIONS = ['剧情', '作画', '音声', '制作', '沉浸', '人设', '深度', '电波']
+
 /** 默认预算：200 万 token（和单集拉片的上限一致，影评通常只花几千） */
 const DEFAULT_BUDGET = 2_000_000
 
@@ -604,6 +612,13 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
     const briefs: EpisodeBrief[] = []
     const totalUsage = { promptTokens: 0, completionTokens: 0, reasoningTokens: 0, totalTokens: 0 }
     const failures: string[] = []
+    /*
+     * 维度白名单：用户打过分就用模板维度；没打分也必须给默认八维。
+     * 之前这里是「有就传、没有就空」，结果子任务 prompt 没有约束，模型编出
+     * 「角色 / 搞笑 / 演出」三条不存在的轴（2026-11-17 实测）。
+     */
+    const userDimensions = Object.keys(userContext.scores ?? {})
+    const dimensions = userDimensions.length > 0 ? userDimensions : FALLBACK_DIMENSIONS
 
     for (let index = 0; index < selected.length; index += 1) {
       const report = selected[index]
@@ -625,6 +640,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
         sheetCount: images.length,
         ...episodeMaterial(report),
         userScores: userScoreText(userContext),
+        dimensions,
       })
 
       try {
@@ -672,7 +688,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       },
       userReview: userContext.review,
       episodes: selected.map((report) => report.episode),
-      dimensions: Object.keys(userContext.scores ?? {}),
+      dimensions,
     })
 
     const result = await opts.describe({
