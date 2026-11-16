@@ -219,8 +219,14 @@ export const StoryboardViewer: FC<StoryboardViewerProps> = ({ report }) => {
     [],
   )
 
-  const renderRow = (row: ShotRow): ReactNode => {
+  const renderRow = (row: ShotRow, previous?: ShotRow): ReactNode => {
     const active = activeShot === row.shot.i
+    /*
+     * 一句台词经常横跨好几个镜头（尤其短镜头），逐行重复显示会满屏都是同一句话
+     * （2026-11-17 用户截图里 5 行全是「S03: 君に思っていたの、ひそかにずっと」）。
+     * 连续重复只显示「同上」。
+     */
+    const repeated = Boolean(row.text) && row.text === previous?.text
     return (
       <div
         key={`${row.shot.i}-${row.shot.start}`}
@@ -269,12 +275,16 @@ export const StoryboardViewer: FC<StoryboardViewerProps> = ({ report }) => {
         <span style={metaStyle}>动感 {row.motion === null ? '—' : row.motion.toFixed(1)}</span>
         <span style={sepStyle}>·</span>
         {row.text ? (
-          <Typography.Text
-            ellipsis={{ tooltip: row.text }}
-            style={{ flex: 1, minWidth: 0, color: 'var(--text-secondary)', fontSize: 12 }}
-          >
-            {row.text}
-          </Typography.Text>
+          repeated ? (
+            <span style={{ ...metaStyle, flex: 1, minWidth: 0, color: 'var(--text-muted)' }}>同上</span>
+          ) : (
+            <Typography.Text
+              ellipsis={{ tooltip: row.text }}
+              style={{ flex: 1, minWidth: 0, color: 'var(--text-secondary)', fontSize: 12 }}
+            >
+              {row.text}
+            </Typography.Text>
+          )
         ) : (
           <span style={{ ...metaStyle, flex: 1, minWidth: 0, color: 'var(--text-muted)' }}>（无台词）</span>
         )}
@@ -342,7 +352,7 @@ export const StoryboardViewer: FC<StoryboardViewerProps> = ({ report }) => {
                   <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>没有对应宫格图的镜头：</span>
                 )}
 
-                {group.rows.map(renderRow)}
+                {group.rows.map((row, index) => renderRow(row, group.rows[index - 1]))}
               </div>
             )
           })}

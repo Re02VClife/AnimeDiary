@@ -66,33 +66,12 @@ function describeError(error) {
 /**
  * 从切点推导**真实镜头**区间。
  *
- * 为什么需要：grid6 渲染器是按时间抽格子（每格 1.2 秒），它返回的 `shots` 其实是格子。
- * 以前直接拿它当镜头，结果一集 597 个真实镜头变成 1200 个"1.2 秒镜头"，
- * 档位（tier）全是 2 —— 用户一眼就看出不对（2026-11-17 反馈）。
- * 真实镜头 = 相邻切点之间的区间。
+ * 实现搬到了 adapters/shot-builder.mjs（纯 ESM、可单测）：
+ * 它会合并间隔 < 0.3 秒的误检切点 —— hsv-diff 对闪白/运动特别敏感，
+ * 实测一集能检出 212 个 < 0.2 秒的"镜头"（2026-11-17 用户反馈"分得太密"）。
  */
-function buildShotsFromCuts(cuts, duration) {
-  const points = (cuts ?? [])
-    .map((cut) => Number(cut.t))
-    .filter((t) => Number.isFinite(t) && t > 0.05 && t < duration - 0.05)
-    .sort((a, b) => a - b)
-
-  const boundaries = [0, ...points, duration]
-  const shots = []
-  for (let index = 0; index < boundaries.length - 1; index += 1) {
-    const start = boundaries[index]
-    const end = boundaries[index + 1]
-    if (end - start < 0.05) continue
-    shots.push({
-      i: shots.length,
-      start: Math.round(start * 100) / 100,
-      end: Math.round(end * 100) / 100,
-      duration: Math.round((end - start) * 100) / 100,
-      // grid6 没有分档语义；保留字段兼容，UI 不再显示"档位"
-      tier: 2,
-    })
-  }
-  return shots
+async function loadShotBuilder() {
+  return (await import('../adapters/shot-builder.mjs')).buildShotsFromCuts
 }
 
 /**
@@ -372,7 +351,7 @@ async function main() {  const requestPath = process.argv[2]
      */
     const gridFrames = renderPolicy === 'grid6' ? rendered.shots : undefined
     const reportShots = renderPolicy === 'grid6'
-      ? attachCells(buildShotsFromCuts(cutResult.cuts, info.duration), rendered.shots)
+      ? attachCells((await loadShotBuilder())(cutResult.cuts, info.duration), rendered.shots)
       : rendered.shots
 
     const payload = {
