@@ -20,12 +20,26 @@
  * 降级约定（照抄 ports/transcript.ts）：缺 Python / 缺权重 / 转写失败 / 没识别出内容，
  * 一律返回**空 segments + notes**，不抛错 —— pipeline 会继续，报告里如实写"没有台词"。
  */
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import fs from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 
+const runFile = promisify(execFile)
+
 export const MOSS_SOURCE = 'asr-moss'
+
+/**
+ * 单段最长秒数。
+ *
+ * 24 分钟整段喂给模型实测 **CUDA OOM**：要分配 20.97GB，而卡只有 10GB
+ * （2026-11-17 用户反馈"没有台词"的根因）。180 秒一段约 2.7GB，稳。
+ * 代价是每段都要重新加载一次模型（约 2 秒）。
+ */
+const CHUNK_SECONDS = 180
 
 /** bridge 脚本和本文件同目录；打包后一起被 asarUnpack 出去 */
 const BRIDGE_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'moss_bridge.py')
@@ -38,6 +52,15 @@ function timeoutForDuration(duration) {
   const seconds = Number(duration)
   const base = Number.isFinite(seconds) && seconds > 0 ? seconds * 1.5 + 300 : 900
   return Math.round(Math.min(45 * 60, Math.max(10 * 60, base)) * 1000)
+}
+
+/** 抽 16k 单声道 wav（分段转写用；bridge 自己能读容器，但切段交给 ffmpeg 更稳） */
+async function extractAudio(input, output, opts = {}) {
+  const args = ['-y', '-loglevel', 'error']
+  if (opts.start !== undefined) args.push('-ss', String(opts.start))
+  if (opts.duration !== undefined) args.push('-t', String(opts.duration))
+  args.push('-i', input, '-vn', '-ac', '1', '-ar', '16000', output)
+  await runFile('ffmpeg', args, { windowsHide: true, timeout: 300_000, maxBuffer: 8 * 1024 * 1024 })
 }
 
 function errorMessage(error) {
@@ -316,6 +339,64 @@ export function runMossBridge({
 }
 
 /**
+ * 分段转写：24 分钟整段喂给模型会 **CUDA OOM**（实测要分配 20.97GB，卡只有 10GB），
+ * 所以按 `CHUNK_SECONDS` 切开逐段跑。每段独立加载模型（约 2 秒）、独立说话人编号。
+ */
+async function transcribeChunked({ runtime, video, opts, onLog }) {
+  const dir = await mkdtemp(path.join(tmpdir(), 'moss-chunks-'))
+  const full = path.join(dir, 'full.wav')
+  const duration = Number(video.duration)
+  const total = Math.max(1, Math.ceil(duration / CHUNK_SECONDS))
+  const merged = []
+  const notes = []
+
+  try {
+    onLog?.('本地语音识别：抽取音轨（16k 单声道）')
+    await extractAudio(video.file, full)
+
+    for (let index = 0; index < total; index += 1) {
+      if (opts.signal?.aborted) break
+      const start = index * CHUNK_SECONDS
+      const length = Math.min(CHUNK_SECONDS, duration - start)
+      const chunk = path.join(dir, `chunk-${index}.wav`)
+      opts.onProgress?.(index, total)
+      onLog?.(`本地语音识别：第 ${index + 1}/${total} 段`)
+
+      try {
+        await extractAudio(full, chunk, { start, duration: length })
+        const result = await runMossBridge({
+          python: runtime.python,
+          bridge: runtime.bridge,
+          model: runtime.model,
+          file: chunk,
+          timeoutMs: timeoutForDuration(length),
+          signal: opts.signal,
+          onLog,
+        })
+        if (!result?.ok) {
+          notes.push(`第 ${index + 1}/${total} 段失败：${result?.error || '未知原因'}`)
+          continue
+        }
+        for (const segment of result.segments ?? []) {
+          merged.push({
+            ...segment,
+            start: Number(segment.start) + start,
+            end: Number(segment.end) + start,
+          })
+        }
+      } finally {
+        await rm(chunk, { force: true }).catch(() => {})
+      }
+    }
+
+    if (notes.length > 0) notes.unshift('分段转写有失败段，台词可能不完整')
+    return { segments: merged, notes }
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+/**
  * 工厂：测试可以注入 `runtime()` / `runBridge()`，生产用默认实现。
  * 这也让「环境没装好」和「装好了但转写失败」两条降级路径都能被单测覆盖。
  */
@@ -355,6 +436,30 @@ export function createTranscriptMossProvider(deps = {}) {
       const onLog = typeof opts.onLog === 'function' ? opts.onLog : undefined
       // 「加载模型」那句由 bridge 的 stderr（`[moss] device=`）触发，这里不重复喊一遍
       opts.onProgress?.(0, 3)
+
+      const duration = Number(video.duration)
+      if (Number.isFinite(duration) && duration > CHUNK_SECONDS) {
+        // 长音频分段，避免 CUDA OOM（见 CHUNK_SECONDS 注释）
+        const chunked = await transcribeChunked({ runtime, video, opts, onLog })
+        const segments = mapMossSegments(chunked.segments)
+        if (segments.length === 0) {
+          return {
+            segments: [],
+            source: MOSS_SOURCE,
+            notes: [`MOSS 分段转写没有结果：${chunked.notes.join('；') || '未知原因'}`],
+          }
+        }
+        opts.onProgress?.(3, 3)
+        return {
+          segments,
+          source: MOSS_SOURCE,
+          notes: [
+            `MOSS 本地转写（分 ${Math.ceil(duration / CHUNK_SECONDS)} 段，含说话人分离）；每段独立编号，同一人可能编号不同`,
+            ...chunked.notes,
+          ],
+          speakers: countSpeakers(segments),
+        }
+      }
 
       const result = await runBridge({
         python: runtime.python,
