@@ -25,15 +25,14 @@ const API_BASE = '/api/watch'
 export const DEFAULT_REVIEW_BUDGET = 2_000_000
 
 /**
- * 影评默认看几张分镜图（与后端 `DEFAULT_MAX_SHEETS` 对齐）。
+ * 影评默认**每集**看几张分镜图（与后端 `DEFAULT_MAX_SHEETS` 的口径不同：后端是总数）。
  *
- * 2026-11-17 用户要求：上限 1000、推荐 100–500。
- * 整部番时按集数平分：100 张 / 6 集 → 每集 16 张。
- * 注意单次请求的图不能真拉满（1000 张 ≈ 250MB 请求体），想一次看几百张要用分集模式。
+ * 2026-11-17 实测：单集 200 张 = 117 秒 / 17.2 万输入 token，完全可行。
+ * 整季时前端会按集数累加（6 集 × 200 = 1200 张），后端上限 6000。
  */
-export const DEFAULT_REVIEW_SHEETS = 100
+export const DEFAULT_REVIEW_SHEETS = 20
 
-/** 单次影评最多看几张图（与后端 `MAX_SHEETS_LIMIT` 对齐） */
+/** **每集**最多看几张图（整季会按集数累加，后端硬上限 6000） */
 export const MAX_REVIEW_SHEETS = 1000
 
 /**

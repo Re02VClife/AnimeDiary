@@ -1352,13 +1352,22 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
       setRunId(null)
       runStartedAtRef.current = Date.now()
 
+      /*
+       * UI 上是「每集几张」，后端 `maxSheets` 是「整次总数」——
+       * 这里按参与生成的集数换算（6 集 × 200 = 1200）。
+       */
+      const episodeCount =
+        scope.kind === 'series'
+          ? Math.max(1, selectedEpisodes.length || episodes.length || 1)
+          : 1
+
       const payload: ReviewGenerateRequest = {
         key: animeKey,
         scope,
         userContext: { ...(userContext ?? {}), title: userContext?.title || title },
         options: {
           budget,
-          maxSheets,
+          maxSheets: Math.max(1, maxSheets) * episodeCount,
           mode,
           force: options?.force ?? force,
           ...(scope.kind === 'series' && selectedEpisodes.length > 0
@@ -1797,7 +1806,7 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
 
         {/* AI 看图数量 + 生成方式 */}
         <section style={SECTION_STYLE}>
-          <span style={SECTION_TITLE_STYLE}>AI 看图数量</span>
+          <span style={SECTION_TITLE_STYLE}>每集看图数量</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <InputNumber
               min={1}
@@ -1814,7 +1823,7 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
               style={{ width: 120 }}
             />
             <span style={MUTED_STYLE}>
-              张 · 推荐 100–500；整部番按集数平分（6 集 × 100 张 → 每集 16 张）
+              张/集 · 整部番按集数累加（6 集 × 200 = 1200 张）
             </span>
           </div>
 
@@ -1836,8 +1845,8 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
           </div>
 
           <span style={MUTED_STYLE}>
-            上下文不是瓶颈（模型 1M），单次请求的瓶颈是**请求体大小**：每张 1280×1080 约 250KB，
-            1000 张 ≈ 250MB。想一次看几百张请用「分集收集」；只想快就保持单次 + 100 张左右。
+            实测：单集 200 张 = 117 秒 / 17.2 万输入 token，请求体约 50MB，不报错。
+            每集超过 60 张时建议用「分集收集」—— 单次调用塞 1200 张会到 300MB，网关会拒收。
           </span>
         </section>
 

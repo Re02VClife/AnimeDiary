@@ -44,7 +44,7 @@ const MAX_IMAGE_BYTES = 4 * 1024 * 1024
 const DEFAULT_MAX_SHEETS = 100
 
 /** 单次影评最多看几张图（用户可配上限，推荐 100–500） */
-const MAX_SHEETS_LIMIT = 1000
+const MAX_SHEETS_LIMIT = 6000
 
 /**
  * 单次请求的图片预算：超过它就该走 fanout。
