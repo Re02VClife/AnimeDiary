@@ -419,6 +419,7 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
     const settings = watchSettings.write({
       ...(body?.cpuPercent !== undefined ? { cpuPercent: Number(body.cpuPercent) } : {}),
       ...(typeof body?.priority === 'string' ? { priority: body.priority } : {}),
+      ...(body?.asrChunkSeconds !== undefined ? { asrChunkSeconds: Number(body.asrChunkSeconds) } : {}),
       ...(body?.asrLowMemory !== undefined ? { asrLowMemory: body.asrLowMemory === true } : {}),
     })
     sendJson(res, 200, {
