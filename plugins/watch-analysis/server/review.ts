@@ -285,7 +285,7 @@ function buildPrompt(
   const userDimensions = Object.keys(userContext.scores ?? {})
   const dimensionList = userDimensions.length > 0
     ? userDimensions.join(' / ')
-    : '剧情 / 作画 / 声音 / 制作 / 沉浸 / 人设 / 深度 / 电波'
+    : '剧情 / 作画 / 音声 / 制作 / 沉浸 / 人设 / 深度 / 电波'
 
   const prompt = [
     `【作品】${title}`,

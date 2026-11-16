@@ -1,6 +1,6 @@
 # AnimeDiary 进度与交接
 
-> 最后更新：**2026-11-17** · 当前版本 **1.3.40**
+> 最后更新：**2026-11-17** · 当前版本 **1.3.41**
 >
 > ⚠️ **从 1.3.36 起热更新不够用了**：新增的「拉片分析 / AI 影评」插件带 `plugins/`
 > 和 `dsh-video-storyboard` 依赖，**热更新 zip 里没有这些**。每次升级必须覆盖整个
@@ -172,6 +172,18 @@ pip install -e 进 conda env），**都不进仓库**。
   `elapsedMs` 本来就在落盘，现在历史记录也会显示「用时 116 秒」（以前一律 `—`）。
   面板底部变成：`模型 · 提示词版本 · 用时 · 输入 3,144 / 输出 13,517 / 共 16,661 token · 时间`。
 
+**维度口径（2026-11-17 修）**：雷达图的轴以**番剧模板维度**为准。
+
+用户截图暴露了两个问题：出现 `frameCount` 轴（张数在 Excel 里有列，但不是评分维度）、
+「音声」和「声音」各一条轴。根因是宿主直接拿 Excel 的 `scores` 翻标签：
+
+- 宿主 `App.tsx` 改用 `buildTemplateScores(entry.scores, getTemplateDimensions(templateId))`
+  （`features/anime-data/dimension-scores.ts`）：**模板维度是权威列表**，模板里没有的 key
+  自动消失、标签用模板的；`overall` 跳过（它由其它维度加权算出来）。
+- 插件侧 `buildScoreRows`：有用户分时**只列模板维度**，AI 多编出来的维度不显示；
+  并把旧名「声音」归一到「音声」（老影评是按旧兜底列表生成的）。
+- `review.ts` 的兜底维度列表也从「声音」改成「音声」，新生成的影评直接对齐模板。
+
 **实测（2026-11-16，第一次跑通整季六集影评）**：`学生会也有洞！` E1–E6，648 个镜头 / 6 张图，
 总耗时 **99.8 秒** —— 其中**思维链 86 秒**（10,306 字符）、正文只用了 13 秒（3,243 字符）。
 token：**输入 18,489 / 输出 8,344（含思维链 6,596）/ 共 26,833**。
@@ -254,7 +266,7 @@ token：**输入 18,489 / 输出 8,344（含思维链 6,596）/ 共 26,833**。
 
 ```bash
 npx tsc --noEmit    # 唯一类型检查（注意：不覆盖 plugins/*.mjs，那些用 node --check）
-npx vitest run      # 979 通过 / 64 个文件（另有 6 个跳过：需 AI_LIVE=1 才跑）
+npx vitest run      # 986 通过 / 65 个文件（另有 6 个跳过：需 AI_LIVE=1 才跑）
 ```
 
 ---
@@ -851,7 +863,7 @@ atrim + concat 拼够 35 秒 → audio/{角色名}/voice.mp3
 
 ```bash
 npx tsc --noEmit                 # 类型（不含 plugins/*.mjs，见 5.9）
-npx vitest run                   # 单测（当前 935+；完整数字以实际输出为准）
+npx vitest run                   # 单测（当前 986；完整数字以实际输出为准）
 npm run build:api                # server/ 的语法检查 + 打包
 node .review/check-poster.js     # 抽查 Excel 的 posterUrl
 node .review/check-category.js   # 看 category 的派生结果

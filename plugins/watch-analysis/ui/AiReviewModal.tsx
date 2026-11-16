@@ -210,23 +210,45 @@ interface ScoreComparison {
  * 维度来源 = AI 给出的维度（顺序即模型的顺序）+ 用户独有、AI 没给的维度。
  * 两边都没有的维度不会凭空出现 —— 不猜模板，只展示真实存在的分。
  */
+/**
+ * 维度别名：老影评里模型按兜底列表写了「声音」，而模板维度叫「音声」。
+ *
+ * 不归一的话同一个维度会出现两条轴（2026-11-17 用户截图里就是「音声」和「声音」各一条）。
+ * 这里只做**已知的历史改名**，不要拿它当"模糊匹配"用。
+ */
+const DIMENSION_ALIASES: Record<string, string> = {
+  声音: '音声',
+}
+
+function canonicalDimension(name: string): string {
+  return DIMENSION_ALIASES[name] ?? name
+}
+
 function buildScoreRows(review: AiReview | null, userContext?: ReviewUserContext): ScoreComparison[] {
   const aiByName = new Map<string, AiDimensionScore>()
   for (const score of review?.scores ?? []) {
-    if (!aiByName.has(score.dimension)) aiByName.set(score.dimension, score)
+    const key = canonicalDimension(score.dimension)
+    if (!aiByName.has(key)) aiByName.set(key, score)
   }
 
-  const userScores = userContext?.scores ?? {}
-  const dimensions: string[] = []
-  for (const dimension of aiByName.keys()) dimensions.push(dimension)
-  for (const dimension of Object.keys(userScores)) {
-    if (!dimensions.includes(dimension)) dimensions.push(dimension)
+  const userScores = new Map<string, number>()
+  for (const [name, value] of Object.entries(userContext?.scores ?? {})) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      userScores.set(canonicalDimension(name), value)
+    }
   }
+
+  /*
+   * 轴以**用户维度（= 番剧模板维度）**为准：
+   *   - 用户有分时只列模板维度 —— AI 多编出来的维度（以及 Excel 里 frameCount 这类
+   *     非评分列）不显示，否则雷达图会被撑出一堆没人评过的轴；
+   *   - 用户没打分时退回 AI 的维度，至少还能看模型评了什么。
+   */
+  const dimensions = userScores.size > 0 ? [...userScores.keys()] : [...aiByName.keys()]
 
   return dimensions.map((dimension) => {
     const ai = aiByName.get(dimension) ?? null
-    const rawUser = userScores[dimension]
-    const user = typeof rawUser === 'number' && Number.isFinite(rawUser) ? rawUser : null
+    const user = userScores.get(dimension) ?? null
     // 差值只保留一位小数：8.6 - 7.0 = 1.6000000000000005 这种浮点尾差不能露给用户
     const diff = ai !== null && user !== null ? Math.round((ai.value - user) * 10) / 10 : null
     return { dimension, ai, user, diff }

@@ -204,8 +204,9 @@ afterEach(() => {
 
 const USER_CONTEXT: ReviewUserContext = {
   title: TITLE,
-  // 剧情 8.0 / 作画 7.9 / 声音 7.0，与 REVIEW.scores 的差值分别是 +1.0 / -0.4 / +1.6
-  scores: { 剧情: 8.0, 作画: 7.9, 声音: 7.0 },
+  // 剧情 8.0 / 作画 7.9 / 音声 7.0，与 REVIEW.scores 的差值分别是 +1.0 / -0.4 / +1.6
+  // （模板里叫「音声」，不是「声音」—— 这就是 2026-11-17 用户截图里多出一条轴的那个 bug）
+  scores: { 剧情: 8.0, 作画: 7.9, 音声: 7.0 },
   review: '整体很稳，第三集最好。',
   tags: ['奇幻', '公路片'],
   watchedEpisodes: 3,
@@ -310,11 +311,11 @@ describe('AiReviewModal', () => {
     )
     expect(diffs).toEqual(['+1.0', '-0.4', '+1.6'])
 
-    // 差值 ≥1 的「剧情 / 声音」高亮，「作画」不高亮
+    // 差值 ≥1 的「剧情 / 音声」高亮，「作画」不高亮
     const highlighted = rows
       .filter((row) => row.getAttribute('data-highlight') === 'true')
       .map((row) => row.getAttribute('data-dimension'))
-    expect(highlighted).toEqual(['剧情', '声音'])
+    expect(highlighted).toEqual(['剧情', '音声'])
 
     // 只有 evidence 为空的「作画」挂「无证据」，有证据的不能误标
     const noEvidence = rows
@@ -396,6 +397,28 @@ describe('AiReviewModal', () => {
       (node) => node.textContent,
     )
     expect(diffs).toEqual(['—', '—', '—'])
+  })
+
+  it('维度轴以模板为准：AI 写的旧名「声音」归一到「音声」，不会出现两条轴', async () => {
+    // REVIEW.scores 里是「声音」（早期兜底列表的叫法），用户分是模板的「音声」
+    apiMocks.getExistingReview.mockResolvedValue(REVIEW)
+
+    await mountModal()
+
+    await waitFor(() => bodyText().includes('评分对比'))
+
+    const rows = Array.from(document.body.querySelectorAll('[data-testid="score-row"]'))
+    // 只有用户（模板）的 3 个维度，不会多出「声音」这条
+    expect(rows).toHaveLength(3)
+    const names = rows.map((row) => row.getAttribute('data-dimension'))
+    expect(names).toEqual(['剧情', '作画', '音声'])
+    expect(names).not.toContain('声音')
+
+    // AI 的「声音 8.6」被正确归一到「音声」这一行（而不是变成一条没有分数的空轴）
+    const aiScores = Array.from(document.body.querySelectorAll('[data-testid="ai-score"]')).map(
+      (node) => node.textContent,
+    )
+    expect(aiScores[2]).toBe('8.6')
   })
 
   it('生成失败：错误 Alert 显示后端原文，并给重试入口', async () => {

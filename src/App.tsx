@@ -16,8 +16,9 @@ import CharacterCompleteModal from '../features/character-complete/CharacterComp
 import CharacterCutoutModal from '../features/image-management/CharacterCutoutModal';
 import TemplateManager from './components/TemplateManager';
 import ExcelEditor from './components/ExcelEditor';
-import { loadTemplates } from '../features/anime-data/template-service';
-import { getVisibleCategories, DIMENSION_LABEL_MAP } from './types';
+import { getTemplateDimensions, loadTemplates } from '../features/anime-data/template-service';
+import { buildTemplateScores } from '../features/anime-data/dimension-scores';
+import { getVisibleCategories } from './types';
 import AppIcon from './theme/AppIcon';
 import AISettings from '../features/ai-analysis/AISettings';
 import AIChatDrawer from './components/AIChatDrawer';
@@ -132,19 +133,17 @@ const App: React.FC = () => {
    * 这是 AI 影评质量的关键输入：有了用户自己的维度分和评价，
    * 模型才能说「我在哪里不同意你」，而不是给一堆 7.5–9 的空洞分数。
    * 注意它只用于**提示词锚点**，不会反向写回 Excel。
+   *
+   * ⚠️ 维度**以番剧模板为准**（`buildTemplateScores`）。以前是拿 Excel 的 `scores`
+   * 直接翻标签，结果雷达图里出现了 `frameCount`（张数不是评分维度）和「音声/声音」两条轴。
+   * 模板维度同时决定了 AI 要评哪几项 —— `review.ts` 用这里的 key 拼 `dimensionList`。
    */
   const aiReviewUserContext = useMemo(() => {
     if (!aiReviewAnime) return undefined;
-    const scores: Record<string, number> = {};
-    for (const score of aiReviewAnime.scores) {
-      if (!score.dimensionKey || !Number.isFinite(score.score)) continue;
-      // **必须转成中文标签**：Excel 里存的是 `plot`/`animation` 这类 key，
-      // 而 AI 返回的 dimension 是「剧情」「作画」。雷达图按名字对齐，
-      // 不转的话用户那条序列永远是空的（实测踩到的 bug）。
-      // 自定义模板的 key 不在默认映射里时保留原 key，至少不会丢数据。
-      const label = DIMENSION_LABEL_MAP[score.dimensionKey] ?? score.dimensionKey;
-      scores[label] = score.score;
-    }
+    const scores = buildTemplateScores(
+      aiReviewAnime.scores,
+      getTemplateDimensions(aiReviewAnime.templateId),
+    );
     return {
       title: aiReviewAnime.title,
       ...(Object.keys(scores).length > 0 ? { scores } : {}),
