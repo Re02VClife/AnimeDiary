@@ -38,6 +38,58 @@ function estimateFrames(video, from, to) {
   return Math.max(1, Math.round((end - from) * fps))
 }
 
+/**
+ * 闪白/闪光过滤：切点帧的亮度是**单帧尖峰**（比前后 3 帧都高一截），且前后亮度本身接近。
+ *
+ * 真剪前后的亮度是"换了一个稳定水平"（黑场转白场、白天转夜晚），前后不会回落到同一水平；
+ * 而闪白只是闪一下，前后画面其实连着 —— 这正是 hsv-diff 最容易误判的一类。
+ * 数据来自 scanShots 的 `means`（逐帧 V 均值）。
+ */
+const FLASH_WINDOW = 3
+const FLASH_DELTA = 28
+const FLASH_STEADY = 12
+
+function average(values) {
+  if (values.length === 0) return 0
+  return values.reduce((sum, value) => sum + value, 0) / values.length
+}
+
+/** 这一帧是不是"只闪一下" */
+export function isFlashFrame(means, index) {
+  if (!Array.isArray(means) || index <= 0 || index >= means.length) return false
+  const value = Number(means[index])
+  if (!Number.isFinite(value)) return false
+
+  const before = means
+    .slice(Math.max(0, index - FLASH_WINDOW), index)
+    .map(Number)
+    .filter(Number.isFinite)
+  const after = means
+    .slice(index + 1, Math.min(means.length, index + 1 + FLASH_WINDOW))
+    .map(Number)
+    .filter(Number.isFinite)
+  if (before.length === 0 || after.length === 0) return false
+
+  const beforeAvg = average(before)
+  const afterAvg = average(after)
+  return (
+    value - beforeAvg > FLASH_DELTA &&
+    value - afterAvg > FLASH_DELTA &&
+    Math.abs(beforeAvg - afterAvg) < FLASH_STEADY
+  )
+}
+
+/**
+ * 过滤掉闪白切点。`raw.means` 是逐帧亮度均值，帧号 = round(t * fps)。
+ * 拿不到 means（老版本/降级）时原样返回，不猜。
+ */
+export function filterFlashCuts(raw, fps) {
+  const cuts = Array.isArray(raw?.cuts) ? raw.cuts : []
+  const means = Array.isArray(raw?.means) ? raw.means : null
+  if (!means || !(fps > 0)) return cuts
+  return cuts.filter((cut) => !isFlashFrame(means, Math.round(Number(cut.t) * fps)))
+}
+
 export const cutHsvProvider = {
   /** 稳定 id —— 会写进报告的 `engine.cut`，改名等于让历史报告对不上 */
   id: 'hsv',
@@ -75,9 +127,13 @@ export const cutHsvProvider = {
       input: video.file,
       fps,
       threshold: opts.threshold ?? 'auto',
-      // **0 = 不合并近邻**。默认 0.35s 会把快闪（动画里 0.2–0.3s 一个镜头）成对吞掉，
-      // 而我们的场景恰恰要留下快闪 —— 档位算法会用密度把它们排成小格子。
-      minGap: 0,
+      /*
+       * 近邻抑制：以前是 0（注释说"要留下快闪"），但实测一集产生 **212 个 <0.2 秒**的
+       * "镜头"（2026-11-17 用户反馈"分得太密"）。动画剪辑里短于 6 帧（0.25s）的连切
+       * 基本都是闪白/运动误检，留在扫描阶段就把它们并掉，比事后修补更干净
+       * （报告的 `cuts` 数量也才可信）。
+       */
+      minGap: 0.25,
       start: from,
       ...(to !== undefined ? { end: to } : {}),
       signal: opts.signal,
@@ -87,7 +143,11 @@ export const cutHsvProvider = {
       },
     })
 
-    const cuts = (raw.cuts ?? []).map((c) => ({ t: c.t, score: c.score }))
-    return { cuts, raw }
+    // 闪白/闪光二次过滤：切点帧亮度是单帧尖峰，前后都回落到同一水平
+    const filtered = filterFlashCuts(raw, fps)
+    // 让 raw 与 cuts 保持一致（storyboard 策略会复用 raw.precomputed）
+    if (raw && Array.isArray(raw.cuts)) raw.cuts = filtered
+
+    return { cuts: filtered.map((c) => ({ t: c.t, score: c.score })), raw }
   },
 }
