@@ -11,7 +11,7 @@
  * 不用默认值硬编 —— 老报告/降级跑出来的报告本来就可能没有这些。
  */
 import { useCallback, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, FC } from 'react'
+import type { CSSProperties, FC, ReactNode } from 'react'
 import { Empty, Image, Typography } from 'antd'
 import ReactECharts from 'echarts-for-react'
 import type { Shot, WatchReport } from '../core/types'
@@ -177,6 +177,29 @@ export const StoryboardViewer: FC<StoryboardViewerProps> = ({ report }) => {
     })
   }, [report])
 
+  /**
+   * 按「宫格图」分组：每张图后面紧跟它覆盖的镜头。
+   *
+   * 2026-11-17 用户反馈：图和镜头清单上下分开、各自滚动，"看着完全不搭"。
+   * 现在图在上、它对应的镜头紧跟在下 —— 滚到哪张图就看到哪些镜头。
+   */
+  const groups = useMemo<Array<{ sheetIndex: number; rows: ShotRow[] }>>(() => {
+    const bySheet = new Map<number, ShotRow[]>()
+    for (const row of rows) {
+      const key = row.sheetIndex ?? -1
+      const list = bySheet.get(key) ?? []
+      list.push(row)
+      bySheet.set(key, list)
+    }
+    return [...bySheet.entries()]
+      .sort((a, b) => {
+        if (a[0] < 0) return 1
+        if (b[0] < 0) return -1
+        return a[0] - b[0]
+      })
+      .map(([sheetIndex, groupRows]) => ({ sheetIndex, rows: groupRows }))
+  }, [rows])
+
   const activeSheet = useMemo(() => {
     if (activeShot === null) return -1
     const row = rows.find((r) => r.shot.i === activeShot)
@@ -196,6 +219,69 @@ export const StoryboardViewer: FC<StoryboardViewerProps> = ({ report }) => {
     [],
   )
 
+  const renderRow = (row: ShotRow): ReactNode => {
+    const active = activeShot === row.shot.i
+    return (
+      <div
+        key={`${row.shot.i}-${row.shot.start}`}
+        data-testid="shot-row"
+        data-shot-index={row.shot.i}
+        role="button"
+        tabIndex={0}
+        onClick={() => handleRowClick(row.shot.i, row.sheetIndex)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            handleRowClick(row.shot.i, row.sheetIndex)
+          }
+        }}
+        className={active ? 'wa-shot-row wa-shot-row--active' : 'wa-shot-row'}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '6px 10px',
+          borderRadius: 'var(--radius-sm)',
+          borderLeft: `2px solid ${active ? 'var(--brand-primary)' : 'transparent'}`,
+          background: active ? 'var(--bg-quaternary)' : 'transparent',
+          cursor: 'pointer',
+        }}
+      >
+        <span style={{ ...metaStyle, color: 'var(--text-primary)', fontWeight: 600, minWidth: 44 }}>
+          #{row.shot.i + 1}
+        </span>
+        <span style={sepStyle}>·</span>
+        <span style={{ ...metaStyle, fontFamily: 'var(--font-mono)' }}>
+          {formatTimecode(row.shot.start)} → {formatTimecode(row.shot.end)}
+        </span>
+        <span style={sepStyle}>·</span>
+        <span style={metaStyle}>{formatDuration(row.shot.end - row.shot.start)}</span>
+        <span style={sepStyle}>·</span>
+        {row.shot.cell ? (
+          // 有 cell 就标出它落在第几张图的第几格 —— 这就是"镜头和图的对应关系"
+          <span data-testid="shot-cell" style={metaStyle}>
+            图 {row.shot.cell.sheet + 1} · 格 {row.shot.cell.y * 2 + row.shot.cell.x + 1}
+          </span>
+        ) : (
+          <span style={metaStyle}>档位 {row.shot.tier}</span>
+        )}
+        <span style={sepStyle}>·</span>
+        <span style={metaStyle}>动感 {row.motion === null ? '—' : row.motion.toFixed(1)}</span>
+        <span style={sepStyle}>·</span>
+        {row.text ? (
+          <Typography.Text
+            ellipsis={{ tooltip: row.text }}
+            style={{ flex: 1, minWidth: 0, color: 'var(--text-secondary)', fontSize: 12 }}
+          >
+            {row.text}
+          </Typography.Text>
+        ) : (
+          <span style={{ ...metaStyle, flex: 1, minWidth: 0, color: 'var(--text-muted)' }}>（无台词）</span>
+        )}
+      </div>
+    )
+  }
+
   const curve = report.motion?.curve
   const hasMotion = Array.isArray(curve) && curve.length > 0
 
@@ -203,132 +289,64 @@ export const StoryboardViewer: FC<StoryboardViewerProps> = ({ report }) => {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {hasMotion && <MotionCurve curve={curve} />}
 
-      {/* ── 宫格图区 ── */}
       <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-          <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>分镜宫格图</span>
+          <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>分镜 + 镜头</span>
           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            共 {report.sheets.length} 张 · {report.shots.length} 个镜头（点击图片放大）
+            共 {report.sheets.length} 张 · {report.shots.length} 个镜头（点击镜头跳到它所在的图）
           </span>
         </div>
-        {report.sheets.length === 0 ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="这份报告没有宫格图" />
-        ) : (
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-              gap: 12,
-            }}
-          >
-            {report.sheets.map((sheet, index) => (
-              <div
-                key={sheet.file || index}
-                data-sheet-index={index}
-                ref={(el) => {
-                  sheetRefs.current[index] = el
-                }}
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 4,
-                  padding: 6,
-                  borderRadius: 'var(--radius-md)',
-                  border: `2px solid ${activeSheet === index ? 'var(--brand-primary)' : 'var(--border-primary)'}`,
-                  background: 'var(--bg-secondary)',
-                  overflow: 'hidden',
-                }}
-              >
-                <Image
-                  src={sheetUrl(report.key, report.episode, index, sheet.file)}
-                  alt={`第 ${index + 1} 张宫格图（${sheet.cells} 格）`}
-                  width="100%"
-                  style={{ display: 'block', borderRadius: 'var(--radius-sm)' }}
-                  preview={{ mask: '查看大图' }}
-                />
-                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                  第 {index + 1} 张 · {sheet.cells} 格 · {sheet.width}×{sheet.height}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
 
-      {/* ── 镜头清单 ── */}
-      <section style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-          <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>镜头清单</span>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            点击某一行跳到对应宫格图；每行标了它落在第几张图、第几格
-          </span>
-        </div>
-        {rows.length === 0 ? (
+        {groups.length === 0 && (
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="这份报告没有镜头数据" />
-        ) : (
-          rows.map((row) => {
-            const active = activeShot === row.shot.i
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          {groups.map((group) => {
+            const sheet = group.sheetIndex >= 0 ? report.sheets[group.sheetIndex] : undefined
             return (
               <div
-                key={`${row.shot.i}-${row.shot.start}`}
-                data-testid="shot-row"
-                data-shot-index={row.shot.i}
-                role="button"
-                tabIndex={0}
-                onClick={() => handleRowClick(row.shot.i, row.sheetIndex)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    handleRowClick(row.shot.i, row.sheetIndex)
-                  }
-                }}
-                className={active ? 'wa-shot-row wa-shot-row--active' : 'wa-shot-row'}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '6px 10px',
-                  borderRadius: 'var(--radius-sm)',
-                  borderLeft: `2px solid ${active ? 'var(--brand-primary)' : 'transparent'}`,
-                  background: active ? 'var(--bg-quaternary)' : 'transparent',
-                  cursor: 'pointer',
-                }}
+                key={group.sheetIndex}
+                data-testid="sheet-group"
+                style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
               >
-                <span style={{ ...metaStyle, color: 'var(--text-primary)', fontWeight: 600, minWidth: 44 }}>
-                  #{row.shot.i + 1}
-                </span>
-                <span style={sepStyle}>·</span>
-                <span style={{ ...metaStyle, fontFamily: 'var(--font-mono)' }}>
-                  {formatTimecode(row.shot.start)} → {formatTimecode(row.shot.end)}
-                </span>
-                <span style={sepStyle}>·</span>
-                <span style={metaStyle}>{formatDuration(row.shot.end - row.shot.start)}</span>
-                <span style={sepStyle}>·</span>
-                {row.shot.cell ? (
-                  // 有 cell 就标出它落在第几张图的第几格 —— 这就是"镜头和图的对应关系"
-                  <span data-testid="shot-cell" style={metaStyle}>
-                    图 {row.shot.cell.sheet + 1} · 格 {row.shot.cell.y * 2 + row.shot.cell.x + 1}
-                  </span>
-                ) : (
-                  <span style={metaStyle}>档位 {row.shot.tier}</span>
-                )}
-                <span style={sepStyle}>·</span>
-                <span style={metaStyle}>动感 {row.motion === null ? '—' : row.motion.toFixed(1)}</span>
-                <span style={sepStyle}>·</span>
-                {row.text ? (
-                  <Typography.Text
-                    ellipsis={{ tooltip: row.text }}
-                    style={{ flex: 1, minWidth: 0, color: 'var(--text-secondary)', fontSize: 12 }}
+                {sheet ? (
+                  <div
+                    data-sheet-index={group.sheetIndex}
+                    ref={(el) => {
+                      sheetRefs.current[group.sheetIndex] = el
+                    }}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                      padding: 6,
+                      borderRadius: 'var(--radius-md)',
+                      border: `2px solid ${activeSheet === group.sheetIndex ? 'var(--brand-primary)' : 'var(--border-primary)'}`,
+                      background: 'var(--bg-secondary)',
+                      maxWidth: 640,
+                    }}
                   >
-                    {row.text}
-                  </Typography.Text>
+                    <Image
+                      src={sheetUrl(report.key, report.episode, group.sheetIndex, sheet.file)}
+                      alt={`第 ${group.sheetIndex + 1} 张宫格图（${sheet.cells} 格）`}
+                      width="100%"
+                      style={{ display: 'block', borderRadius: 'var(--radius-sm)' }}
+                      preview={{ mask: '查看大图' }}
+                    />
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                      第 {group.sheetIndex + 1} 张 · {sheet.cells} 格 · {sheet.width}×{sheet.height}
+                    </span>
+                  </div>
                 ) : (
-                  <span style={{ ...metaStyle, flex: 1, minWidth: 0, color: 'var(--text-muted)' }}>（无台词）</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>没有对应宫格图的镜头：</span>
                 )}
+
+                {group.rows.map(renderRow)}
               </div>
             )
-          })
-        )}
+          })}
+        </div>
       </section>
     </div>
   )

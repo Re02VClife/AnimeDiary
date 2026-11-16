@@ -119,14 +119,28 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
   const [depsEpoch, setDepsEpoch] = useState(0)
   /** 台词来源：只影响下一次「开始分析」 */
   const [readSubtitle, setReadSubtitle] = useState(true)
-  /** 没字幕文件时是否用本地 MOSS 兜底（= `transcript: 'asr'`） */
-  const [asrFallback, setAsrFallback] = useState(false)
+  /**
+   * 没字幕文件时是否用本地 MOSS 兜底。
+   *
+   * **默认开**（依赖就绪时）：用户装了 ASR 就是想要台词，默认关着会让人以为 ASR 没生效
+   * （2026-11-17 反馈）。用户手动关掉后按用户的选择。
+   */
+  const [asrFallback, setAsrFallback] = useState<boolean | null>(null)
   /** 宫格图张数上下限；null / 0 = 自动（每 80 秒一张） */
   const [minSheets, setMinSheets] = useState<number | null>(null)
   const [maxSheets, setMaxSheets] = useState<number | null>(null)
 
+  /** 本地 MOSS 是否就绪。`undefined` = 服务端没给（旧版本），按「未知」处理、不禁用选项 */
+  const asrReady = useMemo<boolean | undefined>(() => {
+    const dep = deps?.deps.find((d) => d.id === 'asr')
+    return dep ? dep.ok : undefined
+  }, [deps])
+
+  /** 依赖就绪时默认用 ASR 兜底；用户手动关掉就按用户的 */
+  const effectiveAsr = asrFallback ?? asrReady === true
+
   /** 派生：不让用户在三选一和两个开关之间来回理解 */
-  const transcriptMode: TranscriptMode = !readSubtitle ? 'off' : asrFallback ? 'asr' : 'auto'
+  const transcriptMode: TranscriptMode = !readSubtitle ? 'off' : effectiveAsr ? 'asr' : 'auto'
 
   // ── 性能预留（落盘在服务端，改完立即生效于下一次分析）──
   const [perf, setPerf] = useState<WatchSettingsResponse | null>(null)
@@ -372,18 +386,9 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
     [deps],
   )
 
-  /**
-   * 本地 MOSS 是否就绪。`undefined` = 服务端没给这一项（旧版本），按「未知」处理、
-   * 不禁用选项 —— 总比把其实能用的人挡在外面强。
-   */
-  const asrReady = useMemo<boolean | undefined>(() => {
-    const dep = deps?.deps.find((d) => d.id === 'asr')
-    return dep ? dep.ok : undefined
-  }, [deps])
-
   // 依赖明确说 MOSS 不可用时，别让「语音识别」这个开关悬在半空
   useEffect(() => {
-    if (asrReady === false && asrFallback) setAsrFallback(false)
+    if (asrReady === false && asrFallback === true) setAsrFallback(false)
   }, [asrReady, asrFallback])
 
   /** 按当前设置估算这一次会出多少张图（只有已经分析过、知道片长时才算得出来） */
@@ -634,12 +639,12 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
             <Typography.Text style={mutedTextStyle}>没字幕时用语音识别</Typography.Text>
             <Switch
               size="small"
-              checked={asrFallback}
+              checked={effectiveAsr}
               disabled={!readSubtitle || asrReady === false}
-              onChange={setAsrFallback}
+              onChange={(value) => setAsrFallback(value)}
               aria-label="语音识别兜底"
             />
-            {asrFallback && (
+            {effectiveAsr && (
               <Typography.Text style={mutedTextStyle}>
                 本地 MOSS 转写（含说话人分离）；一集 24 分钟约 10 分钟
               </Typography.Text>

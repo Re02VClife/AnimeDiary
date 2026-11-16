@@ -1,7 +1,7 @@
 # AGENTS.md
 
 > 面向在本仓库工作的 AI 编码代理。取代旧 `CLAUDE.md`。
-> 最后核对：2026-11-17 · v1.3.48。细节见 `README.md` / `HANDOVER.md` / `AI.md`。
+> 最后核对：2026-11-17 · v1.3.49。细节见 `README.md` / `HANDOVER.md` / `AI.md`。
 > **注意：从 1.3.36 起热更新分发不了插件功能**（`plugins/` 和 `dsh-video-storyboard` 不在
 > 热更新 zip 里），改了 `plugins/` 必须覆盖整个程序目录，见 `HANDOVER.md` §0.2。
 
