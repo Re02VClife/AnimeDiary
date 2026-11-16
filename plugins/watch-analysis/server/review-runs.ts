@@ -129,6 +129,7 @@ export function createReviewRunManager(opts: ReviewRunManagerOptions): ReviewRun
             // done：generate 的 onEvent 已经带上结果，这里先记下来
             snapshot.status = 'done'
             snapshot.phase = 'done'
+            snapshot.message = '完成'
             snapshot.review = event.review
             snapshot.cached = event.cached
           })
@@ -137,6 +138,7 @@ export function createReviewRunManager(opts: ReviewRunManagerOptions): ReviewRun
           if (snapshot.status === 'running') {
             snapshot.status = 'done'
             snapshot.phase = 'done'
+            snapshot.message = '完成'
             snapshot.review = result.review
             snapshot.cached = result.cached
           }
