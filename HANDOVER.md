@@ -1,11 +1,109 @@
 # AnimeDiary 进度与交接
 
-> 最后更新：**2026-11-07** · 当前版本 **1.3.6** · 前端走热更新；桌面安装包已重新打包并发布到
-> GitHub Releases（tag `v1.3.6`，`AnimeDiary-Setup-1.3.6.exe`），因为主进程新增了标题栏外观缓存，
-> 热更新覆盖不到壳层
+> 最后更新：**2026-11-16** · 当前版本 **1.3.36**
+>
+> ⚠️ **从 1.3.36 起热更新不够用了**：新增的「拉片分析 / AI 影评」插件带 `plugins/`
+> 和 `dsh-video-storyboard` 依赖，**热更新 zip 里没有这些**。每次升级必须覆盖整个
+> 程序目录（详见 §0.2），只发热更新会看到新界面但没有 `/api/watch/*` 路由。
 >
 > 这份文档面向"接手的人 / 下一个 AI 会话"，只写**当前状态、怎么发版、坑在哪**。
 > 2026-06 那次架构重构的完整记录在 [`progress.md`](progress.md) —— 那是历史存档，不要改写它。
+
+---
+
+## 0. 2026-11 大更新：拉片分析 + AI 影评
+
+### 0.1 新增了什么
+
+`plugins/watch-analysis/` —— 自包含插件，两个入口（都在番剧详情页的按钮行）：
+
+- **📽️ 拉片分析**：切镜扫描 → 2×3 六格宫格图（1280×1080）→ 弹幕聚合 → 预算记账
+- **🎬 AI 影评**：分镜图 + 你自己的 8 维评分 + 弹幕 →  multimodal 模型 → 图文影评 + 时间轴
+
+插件内部严格单向分层：`core → ports → adapters → runtime → server → ui`。
+六个 Port（Cut/Transcript/Motion/Music/Sheet/Vision）都可换 adapter，pipeline 不动。
+主应用只在 `server/api-routes.ts` 接触它一处（`registerWatchRoutes` + 注入 `resolveLocalFile`）。
+
+### 0.2 部署方式变了（**这是最容易踩的**）
+
+热更新 zip 只含 `dist/` + `server/`，**不含 `plugins/` 和 `node_modules/dsh-video-storyboard`**。
+所以升级必须覆盖整个程序目录：
+
+```powershell
+Get-Process AnimeDiary | Stop-Process -Force
+robocopy release\win-unpacked E:\AnimeDiary /E
+# 关键：清掉旧前端缓存，否则启动仍优先加载 web-update 里的旧 dist
+Remove-Item "$env:APPDATA\anime-diary\web-update" -Recurse -Force
+Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue   # 见 §0.5 第 7 条
+Start-Process E:\AnimeDiary\AnimeDiary.exe
+```
+
+> 用户实际跑的是 **`E:\AnimeDiary` 绿色版目录**（无注册表卸载项）。旧的
+> `E:\AnimeDiary.bak-1.3.6` 是回滚备份，含原 `web-update` 快照。
+
+### 0.3 本机额外装的东西（不进仓库）
+
+| 东西 | 位置 | 用途 |
+|---|---|---|
+| `dsh-video-storyboard` | `node_modules/`（package.json 依赖） | 切镜扫描 + `probeVideo`；2×3 排版**不用**它 |
+| MOSS-Transcribe-Diarize | `D:\MOSS-Transcribe-Diarize`（代码）+ `D:\models\MOSS-Transcribe-Diarize`（1.71GB 权重） | 日语语音转写 + **说话人分离** |
+| conda env `moss` | `C:\Users\24628\miniconda3\envs\moss` | Python 3.12 + torch 2.10.0+cu128 |
+| OXR OCR（可选，不稳定） | 在线 `https://47.243.130.113/v1`，key 见其手册 | 文档/图片 OCR；502 = 显卡在跑 Qwen |
+
+MOSS 通过 `plugins/watch-analysis/adapters/moss_bridge.py` 桥接（输入音频路径 →
+stdout 一行 JSON，日志走 stderr），和 `ocr_bridge.py` 是同一个思路：
+
+```bash
+"C:\Users\24628\miniconda3\envs\moss\python.exe" \
+  plugins/watch-analysis/adapters/moss_bridge.py <audio.wav> \
+  --model D:\models\MOSS-Transcribe-Diarize
+```
+
+输出格式：
+
+```json
+{"ok":true,"segments":[{"start":0.0,"end":7.22,"speaker":"S01","text":"おもし満点。文学賞など多数受賞。"}]}
+```
+
+实测：加载 3.8s、推理 0.4× 实时（60s 音频 → 24s）、显存约 3–4GB。
+
+### 0.4 数据落在哪
+
+```text
+%USERPROFILE%\Documents\AnimeDiary\
+├── 番评分.xlsx         ← 唯一真源；**AI 的评分绝不写进去**
+├── watch-reports/      ← 每集报告 + 分镜图（sheets/epN/*.jpg）
+├── ai-reviews/         ← 影评（series.json / ep01.json …）
+└── local-library.json  ← 本地番剧库绑定
+```
+
+### 0.5 这一轮踩过的坑（都修了，重做时会再遇到）
+
+1. **Kazumi 的 HLS 分片被当成"集"**：`1/seg_00000.ts …` 共 1774 个分片，`VIDEO_EXT`
+   收了 `.ts` → 一部 6 集的番变 1774 集，拉片只分析了 7 秒。修法：`isVideoFile` 里
+   `HLS_SEGMENT = /^seg_?\d+\.(ts|m4s)$/i` 直接排除。整集合并：
+   `ffmpeg -i playlist.m3u8 -c copy out.mp4`（0.7 秒/集）。
+2. **影评 JSON 被截断**：`maxTokens=6000` 装不下 8 维度 + 正文 → 解析失败。提到 12000。
+   后来又发现**上游约 140 秒会掐断长输出**（不是 maxTokens 的问题，输出才 5789 字符），
+   所以提示词强制「正文 1000 字以内 / timeline ≤6 / reason ≤40 字」。
+3. **请求超时**：网关默认 `timeoutMs=120000`，影评实测 110–180 秒。改了
+   `ai-config.json` 的 `timeoutMs`，并在 `review.ts` 里显式传 `REVIEW_TIMEOUT_MS = 300_000`。
+4. **雷达图对不齐**：Excel 里是 `plot`/`animation` 英文 key，AI 返回「剧情」「作画」，
+   按名字匹配永远空。`App.tsx` 用 `DIMENSION_LABEL_MAP` 翻成中文再传进 `userContext`。
+5. **正文重复图片**：模型连着引用同一张图的几个格子 → 正文出现三四张一样的图。
+   同一 sheet 只插一次，重复降级成「（见上图）」。
+6. **模型漏写扩展名**：写 `{{sheet:ep01-1}}` 而不是 `ep01-1.jpg` → 一张图都插不进去。
+   替换时按「原样 → 补 `.jpg` → 补 `.png`」依次找。
+7. **`ELECTRON_RUN_AS_NODE` 污染**：从 DSH（本身是 Electron 应用）的 shell 里启动
+   AnimeDiary，会继承 `ELECTRON_RUN_AS_NODE=1`，Electron 退化成纯 Node，`app` 为
+   undefined 直接静默退出。启动前必须 `Remove-Item Env:ELECTRON_RUN_AS_NODE`。
+   **用户自己双击启动不受影响**，只有脚本/agent 会踩。
+8. **换渲染器后旧图残留**：storyboard 出 PNG（49 张）→ 换 grid6 出 JPG（18 张），
+   旧 PNG 留在目录里。worker 渲染前用 `cleanPreviousSheets` 清同前缀旧文件。
+9. **弹幕找不到文件**：合并后的 `01.mp4` 在番剧根目录，而 `danmaku.json` 在
+   `1/` 子目录。`findDanmakuFile` 要按集号推导：`01.mp4` → `1/danmaku.json`。
+10. **弹幕广告**：每集开头刷几十条「交流群1047615969 欢迎加入（打扰致歉）」，
+    过滤规则：含「群/交流/欢迎加入/打扰」且有 5 位以上数字 → 丢弃。
 
 ---
 
@@ -17,21 +115,31 @@
 | 主数据 | `%USERPROFILE%\Documents\AnimeDiary\番评分.xlsx`（**不入 git**） |
 | 图片 | 同目录 `images\{番剧名}\` |
 | 备份 | 同目录 `backups\`（滚动快照，当前 16 个） |
-| 安装位置 | `E:\AnimeDiary\AnimeDiary.exe` |
-| 热更新源 | `E:\AnimeDiary-updates`（硬编码在 `electron/main.js:77`） |
+| 安装位置 | `E:\AnimeDiary\AnimeDiary.exe` —— **绿色版目录**（无注册表卸载项），升级靠覆盖 |
+| 热更新源 | `E:\AnimeDiary-updates`（硬编码在 `electron/main.js:77`）；**但插件功能热更新分发不了**，见 §0.2 |
 | 内置 API | 固定端口 **51730** |
+| 插件 | `plugins/watch-analysis/`（拉片 + AI 影评），自带 ESM worker 子进程 |
 | 开发 | `npm run dev:web`（浏览器 5173） / `npm run dev`（Electron） |
 
 质量门禁只有两个，**没有 linter**：
 
 ```bash
-npx tsc --noEmit    # 唯一类型检查
-npx vitest run      # 582 通过 / 35 个文件（另有 6 个跳过：需 AI_LIVE=1 才跑）
+npx tsc --noEmit    # 唯一类型检查（注意：不覆盖 plugins/*.mjs，那些用 node --check）
+npx vitest run      # 934 通过 / 61 个文件（另有 6 个跳过：需 AI_LIVE=1 才跑）
 ```
 
 ---
 
 ## 2. 发版流程（改完代码必走这套）
+
+> **1.3.36 之后有两种情况，别弄混：**
+>
+> | 改了什么 | 怎么发 |
+> |---|---|
+> | 只改前端 / `server/` | 热更新（下面这套） |
+> | **改了 `plugins/`、依赖、`electron/`、`preload.js`** | **必须重打安装包并覆盖程序目录（§0.2）** |
+>
+> 热更新 zip 里没有 `plugins/` 和 `dsh-video-storyboard`，发了也跑不起来。
 
 前端走"热更新包"分发，**不是重新打包 Electron**：
 
@@ -118,6 +226,13 @@ node .review/cdp.js .review/steps-xxx.json      # 自定义 steps：eval / wait 
 ## 4. 项目结构
 
 ```
+plugins/watch-analysis/   自包含插件：拉片分析 + AI 影评（详见 §0）
+  core/                   纯逻辑与类型（Port 契约、预算、报告 schema）
+  ports/                  六个可替换接口（Cut/Transcript/Motion/Music/Sheet/Vision）
+  adapters/               引擎实现（cut-hsv / render-grid23 / danmaku-kazumi / transcript-subtitle …）
+  runtime/                worker ESM 子进程 + job 管理 + 协议
+  server/                 13 个路由 / 落盘 / 影评生成
+  ui/                     面板组件（WatchTab / StoryboardViewer / AiReviewModal / WatchPanel）
 core/                     纯工具函数（math/color/text/date/character）
   voice-clips.ts             语音：静音检测解析 + 片段挑选（纯函数，可单测）
   voice-search.ts            语音：B 站候选打分排序（纯函数，可单测）

@@ -1,7 +1,9 @@
 # AGENTS.md
 
 > 面向在本仓库工作的 AI 编码代理。取代旧 `CLAUDE.md`。
-> 最后核对：2026-11-16 · v1.3.26。细节见 `README.md` / `HANDOVER.md` / `AI.md`。
+> 最后核对：2026-11-16 · v1.3.36。细节见 `README.md` / `HANDOVER.md` / `AI.md`。
+> **注意：从 1.3.36 起热更新分发不了插件功能**（`plugins/` 和 `dsh-video-storyboard` 不在
+> 热更新 zip 里），改了 `plugins/` 必须覆盖整个程序目录，见 `HANDOVER.md` §0.2。
 
 ## 项目
 
@@ -141,7 +143,18 @@ Copy-Item release\web-update\latest.json E:\AnimeDiary-updates\ -Force
 桌面端要**启动两次**才生效：第一遍下载、第二遍才跑新版本；重启前先确认 `AnimeDiary` 进程数为 0，
 否则单实例锁会让第二遍直接不启动（跑的还是第一遍的旧代码）。
 
-> 只改 `electron/`、`preload.js` 或依赖时热更新覆盖不到，必须重打安装包（`npm run build`）。
+> **热更新覆盖不到的改动一律要重打安装包**：`electron/`、`preload.js`、依赖、
+> **以及 `plugins/`**（它要 `asarUnpack` 和 `dsh-video-storyboard`）。插件改动还必须
+> **覆盖整个程序目录**并清掉旧前端缓存：
+>
+> ```bash
+> npm run build
+> Get-Process AnimeDiary | Stop-Process -Force
+> robocopy release\win-unpacked E:\AnimeDiary /E
+> Remove-Item "$env:APPDATA\anime-diary\web-update" -Recurse -Force   # 否则仍加载旧 dist
+> ```
+>
+> 细节见 `HANDOVER.md` §0.2。
 
 ## 维护
 
