@@ -245,6 +245,8 @@ export async function getDeps(): Promise<DepsResponse> {
 export interface WatchSettings {
   cpuPercent: number
   priority: 'normal' | 'below-normal' | 'low'
+  /** ASR 分段秒数（60–600，默认 180）：显存小调小，24 分钟整段会 CUDA OOM */
+  asrChunkSeconds: number
   asrLowMemory: boolean
 }
 
@@ -253,6 +255,7 @@ export interface ResolvedPerformance {
   threads: number
   cores: number
   cpuPercent: number
+  asrChunkSeconds: number
 }
 
 export interface WatchSettingsResponse {
@@ -280,6 +283,7 @@ export async function getWatchSettings(): Promise<WatchSettingsResponse | null> 
         priority: body.settings.priority === 'normal' || body.settings.priority === 'low'
           ? body.settings.priority
           : 'below-normal',
+        asrChunkSeconds: Number(body.settings.asrChunkSeconds) || 180,
         asrLowMemory: body.settings.asrLowMemory === true,
       },
       file: typeof body.file === 'string' ? body.file : undefined,
@@ -290,6 +294,7 @@ export async function getWatchSettings(): Promise<WatchSettingsResponse | null> 
             threads: Number(body.resolved.threads) || 1,
             cores: Number(body.resolved.cores) || 1,
             cpuPercent: Number(body.resolved.cpuPercent) || 50,
+            asrChunkSeconds: Number(body.resolved.asrChunkSeconds) || 180,
           }
         : undefined,
     }

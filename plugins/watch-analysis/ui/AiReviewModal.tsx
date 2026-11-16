@@ -118,6 +118,9 @@ export interface AiReviewModalProps {
 /** 影评生成方式（与 `ReviewOptions.mode` 对齐） */
 type ReviewMode = 'auto' | 'single' | 'fanout'
 
+/** 生成配置的存储键（只影响配置页的默认值，不进 Excel） */
+const REVIEW_CONFIG_KEY = 'anime-diary:ai-review-config'
+
 /** 任务书要求 1000–1100，取中间值：正文 + 双栏对比都放得下 */
 const MODAL_WIDTH = 1080
 
@@ -970,6 +973,13 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
    * fanout = 每集一个子任务 + 最后汇总（省单请求上下文，但调用次数多）。
    */
   const [mode, setMode] = useState<ReviewMode>('auto')
+  /**
+   * 是否把用户评分/点评发给 AI。
+   *
+   * 默认 **false（盲评）**：2026-11-17 用户反馈「AI 曲线几乎贴着我的曲线」——
+   * 带着用户分生成时，模型会往用户的分靠。想看 AI 独立判断，就别给它看。
+   */
+  const [showUserToAi, setShowUserToAi] = useState(false)
   const [force, setForce] = useState(false)
   const [meta, setMeta] = useState<ReviewMeta | null>(null)
 
@@ -998,6 +1008,39 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
 
   /** 读已有影评 / 集号的请求仍用 abort（这些是纯读，关面板就该断） */
   const abortRef = useRef<AbortController | null>(null)
+
+  /* ── 生成配置持久化（localStorage）── */
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(REVIEW_CONFIG_KEY)
+      if (!raw) return
+      const saved = JSON.parse(raw) as Partial<{
+        budget: number
+        maxSheets: number
+        mode: ReviewMode
+        showUserToAi: boolean
+      }>
+      if (typeof saved.budget === 'number' && saved.budget >= 1000) setBudget(saved.budget)
+      if (typeof saved.maxSheets === 'number' && saved.maxSheets >= 1) {
+        setMaxSheets(Math.min(MAX_REVIEW_SHEETS, Math.round(saved.maxSheets)))
+      }
+      if (saved.mode === 'auto' || saved.mode === 'single' || saved.mode === 'fanout') setMode(saved.mode)
+      if (typeof saved.showUserToAi === 'boolean') setShowUserToAi(saved.showUserToAi)
+    } catch {
+      // 坏数据不影响使用，保持默认
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        REVIEW_CONFIG_KEY,
+        JSON.stringify({ budget, maxSheets, mode, showUserToAi }),
+      )
+    } catch {
+      // 存不进（隐私模式 / 配额满）就只影响下次的默认值
+    }
+  }, [budget, maxSheets, mode, showUserToAi])
 
   /* ── 打开/换番/换初始集：重置面板状态，避免看到上一部番的影评 ── */
   useEffect(() => {
@@ -1369,6 +1412,7 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
           budget,
           maxSheets: Math.max(1, maxSheets) * episodeCount,
           mode,
+          blind: !showUserToAi,
           force: options?.force ?? force,
           ...(scope.kind === 'series' && selectedEpisodes.length > 0
             ? { episodes: selectedEpisodes }
@@ -1400,6 +1444,7 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
       budget,
       maxSheets,
       mode,
+      showUserToAi,
       force,
       selectedEpisodes,
       manualFile,
@@ -1848,6 +1893,24 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
             实测：单集 200 张 = 117 秒 / 17.2 万输入 token，请求体约 50MB，不报错。
             每集超过 60 张时建议用「分集收集」—— 单次调用塞 1200 张会到 300MB，网关会拒收。
           </span>
+        </section>
+
+        {/* 盲评 */}
+        <section style={SECTION_STYLE}>
+          <span style={SECTION_TITLE_STYLE}>AI 参考你的评分</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <Switch
+              checked={showUserToAi}
+              onChange={setShowUserToAi}
+              checkedChildren="开启"
+              unCheckedChildren="盲评"
+            />
+            <span style={MUTED_STYLE}>
+              {showUserToAi
+                ? 'AI 会看到你的维度评分和评价 —— 它可能顺着你说，分数会贴近你'
+                : '盲评：AI 不知道你打了多少分（默认）；生成的分数才是独立判断'}
+            </span>
+          </div>
         </section>
 
         {/* 预算 */}

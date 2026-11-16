@@ -282,7 +282,7 @@ describe('createReviewGenerator', () => {
       .rejects.toThrow(/没有影评正文/)
   })
 
-  it('用户上下文会进提示词（评分对比是产品核心，不能丢）', async () => {
+  it('默认盲评：用户评分 / 评价不进提示词（否则 AI 会顺着用户说话）', async () => {
     const { store } = seedReport(1)
     const reviewStore = createReviewStore(dir)
     const { generator, describeMock } = makeGenerator({ store, reviewStore })
@@ -291,6 +291,26 @@ describe('createReviewGenerator', () => {
       key: KEY,
       scope: { kind: 'series' },
       userContext: { title: '测试番', scores: { 剧情: 8.5 }, review: '我觉得节奏很好', tags: ['治愈'] },
+    })
+    const prompt: string = describeMock.mock.calls[0][0].prompt
+    const system: string = describeMock.mock.calls[0][0].system
+    expect(prompt).not.toContain('剧情 8.5')
+    expect(prompt).not.toContain('我觉得节奏很好')
+    expect(prompt).not.toContain('治愈')
+    expect(prompt).toContain('盲评')
+    expect(system).toContain('独立判断')
+  })
+
+  it('显式关闭盲评时，用户上下文会进提示词（评分对比是产品核心）', async () => {
+    const { store } = seedReport(1)
+    const reviewStore = createReviewStore(dir)
+    const { generator, describeMock } = makeGenerator({ store, reviewStore })
+
+    await generator.generate({
+      key: KEY,
+      scope: { kind: 'series' },
+      userContext: { title: '测试番', scores: { 剧情: 8.5 }, review: '我觉得节奏很好', tags: ['治愈'] },
+      options: { blind: false },
     })
     const prompt: string = describeMock.mock.calls[0][0].prompt
     expect(prompt).toContain('剧情 8.5')

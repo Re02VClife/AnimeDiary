@@ -342,11 +342,11 @@ export function runMossBridge({
  * 分段转写：24 分钟整段喂给模型会 **CUDA OOM**（实测要分配 20.97GB，卡只有 10GB），
  * 所以按 `CHUNK_SECONDS` 切开逐段跑。每段独立加载模型（约 2 秒）、独立说话人编号。
  */
-async function transcribeChunked({ runtime, video, opts, onLog }) {
+async function transcribeChunked({ runtime, video, opts, onLog, chunkSeconds = CHUNK_SECONDS }) {
   const dir = await mkdtemp(path.join(tmpdir(), 'moss-chunks-'))
   const full = path.join(dir, 'full.wav')
   const duration = Number(video.duration)
-  const total = Math.max(1, Math.ceil(duration / CHUNK_SECONDS))
+  const total = Math.max(1, Math.ceil(duration / chunkSeconds))
   const merged = []
   const notes = []
 
@@ -356,8 +356,8 @@ async function transcribeChunked({ runtime, video, opts, onLog }) {
 
     for (let index = 0; index < total; index += 1) {
       if (opts.signal?.aborted) break
-      const start = index * CHUNK_SECONDS
-      const length = Math.min(CHUNK_SECONDS, duration - start)
+      const start = index * chunkSeconds
+      const length = Math.min(chunkSeconds, duration - start)
       const chunk = path.join(dir, `chunk-${index}.wav`)
       opts.onProgress?.(index, total)
       onLog?.(`本地语音识别：第 ${index + 1}/${total} 段`)
@@ -438,9 +438,12 @@ export function createTranscriptMossProvider(deps = {}) {
       opts.onProgress?.(0, 3)
 
       const duration = Number(video.duration)
-      if (Number.isFinite(duration) && duration > CHUNK_SECONDS) {
+      const chunkSeconds = Number(opts.chunkSeconds) > 0
+        ? Math.min(600, Math.max(60, Math.round(Number(opts.chunkSeconds))))
+        : CHUNK_SECONDS
+      if (Number.isFinite(duration) && duration > chunkSeconds) {
         // 长音频分段，避免 CUDA OOM（见 CHUNK_SECONDS 注释）
-        const chunked = await transcribeChunked({ runtime, video, opts, onLog })
+        const chunked = await transcribeChunked({ runtime, video, opts, onLog, chunkSeconds })
         const segments = mapMossSegments(chunked.segments)
         if (segments.length === 0) {
           return {
@@ -454,7 +457,7 @@ export function createTranscriptMossProvider(deps = {}) {
           segments,
           source: MOSS_SOURCE,
           notes: [
-            `MOSS 本地转写（分 ${Math.ceil(duration / CHUNK_SECONDS)} 段，含说话人分离）；每段独立编号，同一人可能编号不同`,
+            `MOSS 本地转写（分 ${Math.ceil(duration / chunkSeconds)} 段，每段 ${chunkSeconds}s，含说话人分离）；每段独立编号，同一人可能编号不同`,
             ...chunked.notes,
           ],
           speakers: countSpeakers(segments),

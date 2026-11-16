@@ -208,6 +208,7 @@ function buildPrompt(
   reports: WatchReport[],
   sheetsByEpisode: Map<number, Array<{ file: string; cells: number }>>,
   userContext: NonNullable<ReviewRequest['userContext']>,
+  blind = false,
 ): { system: string; prompt: string } {
   const system = [
     '你是一位资深的动画评论者，正在为个人番剧记录应用写一篇影评。',
@@ -215,7 +216,9 @@ function buildPrompt(
     '铁律（违反任何一条，这篇影评就作废）：',
     '1. **每个判断都要能指到具体时间码**。说不出时间码的判断不要写。',
     '2. **不写空话**。"画面精美""剧情引人入胜""作画优秀"这类没有信息量的句子一律不要。',
-    '3. **你的评分和用户评分是两回事**。用户已经打了分（见下），你要明确说出你在哪些地方不同意他，而不是复述他的结论。',
+    blind
+      ? '3. **独立判断**：你没有看到用户的评分，按自己的标准打分，不要猜测用户想听什么。'
+      : '3. **你的评分和用户评分是两回事**。用户已经打了分（见下），你要明确说出你在哪些地方不同意他，而不是复述他的结论。',
     '4. **只根据给你的分镜图和台词判断**。没看到的内容不要编造；信息不足就写进 caveats。',
     '5. 分镜图是压缩过的（格子上有编号），你能看到的细节有限；不要假装看清了表情或台词之外的小字。',
     '6. **分镜图底部可能有一条彩色带子，那是音轨/响度可视化，不是画面内容**。不要把它当成场景里的东西来评论。',
@@ -234,9 +237,11 @@ function buildPrompt(
     ? `整部番（已分析 ${reports.map((r) => `E${r.episode}`).join(' / ')}）`
     : `第 ${scope.episode} 集`
 
-  const userScores = userContext.scores && Object.keys(userContext.scores).length > 0
-    ? Object.entries(userContext.scores).map(([k, v]) => `${k} ${v}`).join(' / ')
-    : '（用户还没打分）'
+  const userScores = blind
+    ? '（盲评：没有提供用户评分）'
+    : userContext.scores && Object.keys(userContext.scores).length > 0
+      ? Object.entries(userContext.scores).map(([k, v]) => `${k} ${v}`).join(' / ')
+      : '（用户还没打分）'
 
   const sheetLines: string[] = []
   for (const report of reports) {
@@ -557,7 +562,8 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
     total.totalTokens += usage.totalTokens
   }
 
-  function userScoreText(userContext: NonNullable<ReviewRequest['userContext']>): string {
+  function userScoreText(userContext: NonNullable<ReviewRequest['userContext']>, blind = false): string {
+    if (blind) return '（盲评：未提供用户评分）'
     const entries = Object.entries(userContext.scores ?? {})
     return entries.length > 0 ? entries.map(([name, value]) => `${name} ${value}`).join(' / ') : '（用户还没打分）'
   }
@@ -607,12 +613,13 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       selected: WatchReport[]
       collected: ReturnType<typeof collectImages>
       userContext: NonNullable<ReviewRequest['userContext']>
+      blind: boolean
     },
     signal: AbortSignal | undefined,
     onEvent: ((event: ReviewProgressEvent) => void) | undefined,
     startedAt: number,
   ): Promise<{ review: AiReview; cached: boolean }> {
-    const { req, selected, collected, userContext } = input
+    const { req, selected, collected, userContext, blind } = input
     const title = userContext.title || req.key
     const briefs: EpisodeBrief[] = []
     const totalUsage = { promptTokens: 0, completionTokens: 0, reasoningTokens: 0, totalTokens: 0 }
@@ -644,7 +651,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
         cuts: report.cuts.length,
         sheetCount: images.length,
         ...episodeMaterial(report),
-        userScores: userScoreText(userContext),
+        userScores: userScoreText(userContext, blind),
         dimensions,
       })
 
@@ -700,13 +707,14 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       // 用集号列表而不是区间：只选 E3/E5 时写「E3–E5」会让模型以为 E4 也该有小结
       episodeRange: `${selected.map((report) => `E${report.episode}`).join(' / ')}（${selected.length} 集）`,
       briefs,
-      userScores: userScoreText(userContext),
+      userScores: userScoreText(userContext, blind),
       stats: {
         episodes: selected.length,
         shots: selected.reduce((sum, report) => sum + report.shots.length, 0),
         sheets: collected.images.length,
       },
-      userReview: userContext.review,
+      // 盲评时不把用户写的评价交给汇总（那是用户最主观的判断）
+      userReview: blind ? undefined : userContext.review,
       episodes: selected.map((report) => report.episode),
       dimensions,
     })
@@ -822,7 +830,13 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
         throw new Error('找不到任何分镜图：报告存在但图片丢失，请重新做一次拉片分析')
       }
 
-      const userContext = req.userContext ?? { title: req.key }
+      /*
+       * 盲评（2026-11-17 用户要求）：默认不把用户评分 / 点评发给 AI。
+       * 带着用户分生成时，AI 曲线几乎贴着用户曲线 —— 那不是判断，是复述。
+       */
+      const requestContext = req.userContext ?? { title: req.key }
+      const blind = req.options?.blind !== false
+      const userContext = blind ? { title: requestContext.title } : requestContext
 
       /*
        * 生成方式：
@@ -840,7 +854,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
             : 'single'
 
       if (mode === 'fanout') {
-        return await generateFanout({ req, selected, collected, userContext }, signal, onEvent, startedAt)
+        return await generateFanout({ req, selected, collected, userContext, blind }, signal, onEvent, startedAt)
       }
 
       onEvent?.({
@@ -853,7 +867,14 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       })
 
       // ── 调模型 ──
-      const { system, prompt } = buildPrompt(userContext.title || req.key, scope, selected, collected.sheetsByEpisode, userContext)
+      const { system, prompt } = buildPrompt(
+        userContext.title || req.key,
+        scope,
+        selected,
+        collected.sheetsByEpisode,
+        userContext,
+        blind,
+      )
 
       const result = await opts.describe({
         system,

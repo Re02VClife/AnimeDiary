@@ -683,6 +683,24 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
                 disabled={perfSaving}
                 aria-label="进程优先级"
               />
+              {/* ASR 分段：24 分钟整段会 CUDA OOM，显存小就调小 */}
+              <InputNumber
+                size="small"
+                min={60}
+                max={600}
+                step={30}
+                value={perf.settings.asrChunkSeconds}
+                onChange={(value) => {
+                  if (typeof value === 'number' && Number.isFinite(value)) {
+                    void savePerf({ asrChunkSeconds: Math.min(600, Math.max(60, Math.round(value))) })
+                  }
+                }}
+                addonBefore="识别分段"
+                addonAfter="秒"
+                style={{ width: 170 }}
+                disabled={perfSaving}
+                aria-label="语音识别分段秒数"
+              />
               {perf.resolved && (
                 <Typography.Text style={mutedTextStyle}>
                   {perf.cores} 核 → 抽帧并发 {perf.resolved.concurrency} / ffmpeg 线程 {perf.resolved.threads}

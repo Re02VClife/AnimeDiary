@@ -12,6 +12,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {
   DEFAULT_PERFORMANCE,
+  normalizeAsrChunkSeconds,
   normalizeCpuPercent,
   normalizePriority,
 } from '../core/performance'
@@ -40,6 +41,7 @@ function sanitize(raw: unknown): WatchSettings {
   return {
     cpuPercent: normalizeCpuPercent(record.cpuPercent),
     priority: normalizePriority(record.priority as WatchPriority),
+    asrChunkSeconds: normalizeAsrChunkSeconds(record.asrChunkSeconds),
     asrLowMemory: record.asrLowMemory === true,
   }
 }

@@ -60,6 +60,12 @@ export interface WatchAnalyzeOptions {
    *   - `off` 完全不要台词。
    */
   transcript?: 'auto' | 'off' | 'asr'
+  /**
+   * ASR 分段秒数（60–600，默认 180）。
+   *
+   * 24 分钟整段喂给 MOSS 会 CUDA OOM；显存小调小、显存大调大（少加载几次模型）。
+   */
+  asrChunkSeconds?: number
   /** 只分析这一段（秒） */
   from?: number
   to?: number

@@ -30,7 +30,13 @@ export interface AnalyzerOptions {
    * 每次 analyze 时读一次性能设置（用户可能刚在面板上改过）。
    * 返回的值会：① 作为 options.performance 传给 worker/renderer；② 作为 worker 进程优先级。
    */
-  performance?: () => { concurrency: number; threads: number; priority?: 'normal' | 'below-normal' | 'low' }
+  performance?: () => {
+    concurrency: number
+    threads: number
+    priority?: 'normal' | 'below-normal' | 'low'
+    /** ASR 分段秒数（显存小调小），见 core/performance.ts */
+    asrChunkSeconds?: number
+  }
 }
 
 export interface AnalyzeRequest {
@@ -173,7 +179,12 @@ export function createAnalyzer(opts: AnalyzerOptions): WatchAnalyzer {
       ...request.options,
       outDir,
       prefix,
-      ...(perf ? { performance: { concurrency: perf.concurrency, threads: perf.threads } } : {}),
+      ...(perf
+        ? {
+            performance: { concurrency: perf.concurrency, threads: perf.threads },
+            asrChunkSeconds: perf.asrChunkSeconds,
+          }
+        : {}),
     }
 
     const jobId = jobs.start({

@@ -27,7 +27,19 @@ export interface PerformanceSettings {
   cpuPercent: number
   /** 子进程优先级 */
   priority: WatchPriority
+  /**
+   * ASR 分段秒数（60–600，默认 180）。
+   *
+   * 24 分钟整段喂给 MOSS 会 CUDA OOM（实测要 20.97GB，卡只有 10GB）；
+   * 显存小就调小，显存大可以调大以少加载几次模型（每段重新加载约 2 秒）。
+   */
+  asrChunkSeconds: number
 }
+
+/** ASR 分段的默认值与边界 */
+export const ASR_CHUNK_DEFAULT = 180
+export const ASR_CHUNK_MIN = 60
+export const ASR_CHUNK_MAX = 600
 
 export interface ResolvedPerformance {
   /** 抽帧 ffmpeg 的进程内并发（同时跑几个） */
@@ -38,11 +50,21 @@ export interface ResolvedPerformance {
   cores: number
   /** 归一化后的百分比（非法输入会被夹住） */
   cpuPercent: number
+  /** ASR 分段秒数（已归一化） */
+  asrChunkSeconds: number
 }
 
 export const DEFAULT_PERFORMANCE: PerformanceSettings = {
   cpuPercent: 50,
   priority: 'below-normal',
+  asrChunkSeconds: ASR_CHUNK_DEFAULT,
+}
+
+/** 把 ASR 分段夹进 60–600；非法值回落到默认 180 */
+export function normalizeAsrChunkSeconds(value: unknown): number {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return ASR_CHUNK_DEFAULT
+  return Math.min(ASR_CHUNK_MAX, Math.max(ASR_CHUNK_MIN, Math.round(number)))
 }
 
 /** 把用户的百分比夹进 25–100；非法值回落到默认 50 */
@@ -77,5 +99,11 @@ export function resolvePerformance(
   const ratio = cpuPercent / 100
   const threads = Math.max(1, Math.floor(safeCores * ratio))
   const concurrency = Math.max(1, Math.min(4, Math.floor(threads / 2)))
-  return { concurrency, threads, cores: safeCores, cpuPercent }
+  return {
+    concurrency,
+    threads,
+    cores: safeCores,
+    cpuPercent,
+    asrChunkSeconds: normalizeAsrChunkSeconds(settings?.asrChunkSeconds),
+  }
 }

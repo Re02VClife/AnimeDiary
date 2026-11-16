@@ -187,6 +187,17 @@ async function main() {  const requestPath = process.argv[2]
     const renderStarted = Date.now()
 
     /*
+     * 进度分配：ASR 是最大开销（一集 24 分钟要 6 分钟），以前只给它 96–98% 这 2 个百分点，
+     * 用户看到的是"进度条 98% 却卡了六分钟"（2026-11-17 反馈）。
+     * 开了 ASR 就把 render 压到 40–55、transcript 占 55–95。
+     */
+    const withAsr = options.transcript === 'asr'
+    const renderBase = withAsr ? 40 : 45
+    const renderSpan = withAsr ? 15 : 50
+    const transcriptBase = withAsr ? 55 : 95
+    const transcriptSpan = withAsr ? 40 : 3
+
+    /*
      * 默认密度：每 10 秒一帧。
      *
      * 为什么不按"一个镜头一帧"：实测一集 23.7 分钟的动画切出 597 个镜头，
@@ -224,7 +235,7 @@ async function main() {  const requestPath = process.argv[2]
         emit({
           type: 'progress',
           phase: 'render',
-          percent: 45 + Math.round(ratio * 50),
+          percent: renderBase + Math.round(ratio * renderSpan),
           message: `${stage} ${total > 0 ? `${done}/${total}` : done}`,
         })
       },
@@ -233,7 +244,7 @@ async function main() {  const requestPath = process.argv[2]
     emit({
       type: 'progress',
       phase: 'render',
-      percent: 96,
+      percent: renderBase + renderSpan,
       message: `${rendered.shots.length} 个镜头 → ${rendered.sheets.length} 张图`,
     })
 
@@ -267,7 +278,7 @@ async function main() {  const requestPath = process.argv[2]
 
       // ① 内嵌字幕轨（优先级 0）：mp4/mkv 自带字幕时最省事，不用装 ASR
       if (info.hasSubtitle) {
-        emit({ type: 'progress', phase: 'transcript', percent: 96, message: '提取内嵌字幕轨' })
+        emit({ type: 'progress', phase: 'transcript', percent: transcriptBase, message: '提取内嵌字幕轨' })
         try {
           const { transcriptEmbeddedProvider } = await import('../adapters/transcript-embedded.mjs')
           const result = await transcriptEmbeddedProvider.transcribe(video)
@@ -289,7 +300,7 @@ async function main() {  const requestPath = process.argv[2]
 
       // ② 同目录字幕文件
       if (!transcript) {
-        emit({ type: 'progress', phase: 'transcript', percent: 96, message: '查找字幕文件' })
+        emit({ type: 'progress', phase: 'transcript', percent: transcriptBase, message: '查找字幕文件' })
         try {
           const { transcriptSubtitleProvider } = await import('../adapters/transcript-subtitle.mjs')
           const result = await transcriptSubtitleProvider.transcribe(video, {})
@@ -310,11 +321,29 @@ async function main() {  const requestPath = process.argv[2]
       }
 
       if (!transcript && options.transcript === 'asr') {
-        emit({ type: 'progress', phase: 'transcript', percent: 97, message: '本地语音识别（MOSS）准备中' })
+        emit({ type: 'progress', phase: 'transcript', percent: transcriptBase, message: '本地语音识别（MOSS）准备中' })
         try {
           const { transcriptMossProvider } = await import('../adapters/transcript-moss.mjs')
           const result = await transcriptMossProvider.transcribe(video, {
-            onLog: (message) => emit({ type: 'progress', phase: 'transcript', percent: 98, message }),
+            // 分段进度：ASR 是整条链路里最长的一段（一集约 6 分钟），必须让它动起来
+            onProgress: (done, total) => {
+              const ratio = total > 0 ? Math.min(1, done / total) : 0
+              emit({
+                type: 'progress',
+                phase: 'transcript',
+                percent: transcriptBase + Math.round(ratio * transcriptSpan),
+                message: `语音识别：第 ${Math.min(total || 1, done + 1)}/${total || 1} 段`,
+              })
+            },
+            onLog: (message) =>
+              emit({
+                type: 'progress',
+                phase: 'transcript',
+                // 日志类更新用中值，避免和分段进度来回跳
+                percent: transcriptBase + Math.round(transcriptSpan * 0.5),
+                message,
+              }),
+            ...(Number(options.asrChunkSeconds) > 0 ? { chunkSeconds: Number(options.asrChunkSeconds) } : {}),
           })
           if (result.segments.length > 0) {
             transcript = {
