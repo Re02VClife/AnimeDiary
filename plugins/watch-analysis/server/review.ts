@@ -20,6 +20,12 @@ import type { AiDimensionScore, AiReview, ReviewCitation, ReviewRequest, ReviewS
 import type { WatchReport } from '../core/types'
 import type { ReviewStore } from './review-store'
 import type { WatchStore } from './store'
+import {
+  buildEpisodeBriefPrompt,
+  buildSeriesSummaryPrompt,
+  parseEpisodeBrief,
+} from './review-fanout'
+import type { EpisodeBrief } from './review-fanout'
 
 /** 提示词版本：改了提示词就 +1（影评记录里存它，便于"换尺子后为什么结果变了"复盘） */
 export const REVIEW_PROMPT_VERSION = '1.0.0'
@@ -28,19 +34,25 @@ export const REVIEW_PROMPT_VERSION = '1.0.0'
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024
 
 /**
- * 一次生成最多看几张图。
+ * 一次生成最多看几张图（默认值）。
  *
- * ⚠️ 2026-11-17 从 6 提到 12：**上下文不是瓶颈**（当前模型 1M 上下文），
- * 6 是早期用同步请求时的保守值 —— 那次实测 8 张图 + 长提示词冲到 140 秒，
- * 上游直接把 JSON 掐断在半截。现在改成后台任务 + 300 秒超时，容得下更多图。
- *
- * 仍然不建议无脑拉满：每张 1280×1080 约 250KB，48 张 ≈ 12MB 请求体，
- * 上传和 prefill 都会明显变慢（用户看到的就是"转很久"）。
+ * 2026-11-17 用户要求：上限提到 1000、推荐 100–500。
+ * 上下文确实不是瓶颈（模型 1M），但**单次请求**的图片不能真拉满 ——
+ * 1000 张 ≈ 250MB 请求体，网关会直接拒收。所以这里只管"默认给多少"，
+ * 真要看几百张得靠 `mode: 'fanout'`（每集一个子任务 + 最后汇总）。
  */
-const DEFAULT_MAX_SHEETS = 12
+const DEFAULT_MAX_SHEETS = 100
 
-/** 单次影评最多看几张图（硬上限，防止把请求体撑到网关直接拒收） */
-const MAX_SHEETS_LIMIT = 48
+/** 单次影评最多看几张图（用户可配上限，推荐 100–500） */
+const MAX_SHEETS_LIMIT = 1000
+
+/**
+ * 单次请求的图片预算：超过它就该走 fanout。
+ *
+ * 60 张 ≈ 15MB 请求体（每张 1280×1080 约 250KB，base64 后 330KB），
+ * 再大时上传和 prefill 会成为主要耗时（实测 48 张已要 145 秒）。
+ */
+const SINGLE_REQUEST_SHEET_BUDGET = 60
 
 /** 默认预算：200 万 token（和单集拉片的上限一致，影评通常只花几千） */
 const DEFAULT_BUDGET = 2_000_000
@@ -485,6 +497,250 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
     return picked
   }
 
+  /** 每集配额 + 集内均匀采样：单次模式与 fanout 共用同一份收集逻辑 */
+  function collectImages(selected: WatchReport[], perEpisode: number) {
+    const available = new Map<number, Set<string>>()
+    const sheetsByEpisode = new Map<number, Array<{ file: string; cells: number }>>()
+    const imagesByEpisode = new Map<number, string[]>()
+    const images: string[] = []
+
+    for (const report of selected) {
+      // 所有 sheet 都登记为"可引用"，即使这次没取到图 —— 引用会降级成文字，不会破图
+      available.set(report.episode, new Set(report.sheets.map((sheet) => sheet.file)))
+
+      const meta: Array<{ file: string; cells: number }> = []
+      const dataUrls: string[] = []
+      const total = report.sheets.length
+      if (total > 0) {
+        const take = Math.min(perEpisode, total)
+        // 18 张里取 6 张 → 索引 0/3/6/9/12/15，覆盖开头到结尾
+        const step = total / take
+        for (let index = 0; index < take; index += 1) {
+          const sheet = report.sheets[Math.min(total - 1, Math.floor(index * step))]
+          if (!sheet || meta.some((picked) => picked.file === sheet.file)) continue
+          const filePath = opts.store.sheetFile(report.key, report.episode, sheet.file)
+          if (!filePath) continue
+          const dataUrl = readImageAsDataUrl(filePath)
+          if (!dataUrl) continue
+          images.push(dataUrl)
+          dataUrls.push(dataUrl)
+          meta.push({ file: sheet.file, cells: sheet.cells })
+        }
+      }
+      sheetsByEpisode.set(report.episode, meta)
+      imagesByEpisode.set(report.episode, dataUrls)
+    }
+
+    return { available, sheetsByEpisode, imagesByEpisode, images }
+  }
+
+  function addUsage(
+    total: { promptTokens: number; completionTokens: number; reasoningTokens: number; totalTokens: number },
+    usage: DescribeResult['usage'],
+  ): void {
+    total.promptTokens += usage.promptTokens
+    total.completionTokens += usage.completionTokens
+    total.reasoningTokens += usage.reasoningTokens ?? 0
+    total.totalTokens += usage.totalTokens
+  }
+
+  function userScoreText(userContext: NonNullable<ReviewRequest['userContext']>): string {
+    const entries = Object.entries(userContext.scores ?? {})
+    return entries.length > 0 ? entries.map(([name, value]) => `${name} ${value}`).join(' / ') : '（用户还没打分）'
+  }
+
+  /** 单集素材：镜头 40 条 / 台词 60 句 / 弹幕 30 桶（和整季 prompt 同一口径） */
+  function episodeMaterial(report: WatchReport): {
+    shotLines: string[]
+    dialogueLines: string[]
+    danmakuLines: string[]
+  } {
+    const shotLines = report.shots.slice(0, 40).map((shot) =>
+      `  #${shot.i} ${clock(shot.start)}–${clock(shot.end)}${shot.text ? ` 「${shot.text.slice(0, 40)}」` : ''}`,
+    )
+
+    const segments = report.transcript?.segments ?? []
+    const dialogueLines: string[] = []
+    if (segments.length > 0) {
+      const step = Math.max(1, Math.ceil(segments.length / 60))
+      dialogueLines.push(...segments
+        .filter((_, index) => index % step === 0)
+        .slice(0, 60)
+        .map((segment) => `  [${clock(segment.start)}]${segment.speaker ? ` ${segment.speaker}:` : ''} ${segment.text.slice(0, 60)}`))
+    }
+
+    const danmakuLines: string[] = []
+    const summary = report.danmaku
+    if (summary && summary.buckets.length > 0) {
+      const dense = [...summary.buckets].sort((a, b) => b.count - a.count).slice(0, 10)
+      const evenStep = Math.max(1, Math.floor(summary.buckets.length / 20))
+      const even = summary.buckets.filter((_, index) => index % evenStep === 0).slice(0, 20)
+      const picked = [...new Set([...even, ...dense])].sort((a, b) => a.t - b.t)
+      danmakuLines.push(...picked.map((bucket) => `  [${clock(bucket.t)}] ${bucket.count}条: ${bucket.samples.slice(0, 3).join(' / ')}`))
+    }
+
+    return { shotLines, dialogueLines, danmakuLines }
+  }
+
+  /**
+   * 分集子任务 + 汇总：每集单独看一次（只看这一集的图），最后只发文字小结合成整季影评。
+   *
+   * 这是"单次上限 1000 张"能落地的前提 —— 1000 张塞进一个请求是 250MB，必然被拒；
+   * 拆成每集一个请求后，单请求只承担一集的图（12–100 张）。代价是 N+1 次调用、token 总量更高。
+   */
+  async function generateFanout(
+    input: {
+      req: ReviewRequest
+      selected: WatchReport[]
+      collected: ReturnType<typeof collectImages>
+      userContext: NonNullable<ReviewRequest['userContext']>
+    },
+    signal: AbortSignal | undefined,
+    onEvent: ((event: ReviewProgressEvent) => void) | undefined,
+    startedAt: number,
+  ): Promise<{ review: AiReview; cached: boolean }> {
+    const { req, selected, collected, userContext } = input
+    const title = userContext.title || req.key
+    const briefs: EpisodeBrief[] = []
+    const totalUsage = { promptTokens: 0, completionTokens: 0, reasoningTokens: 0, totalTokens: 0 }
+    const failures: string[] = []
+
+    for (let index = 0; index < selected.length; index += 1) {
+      const report = selected[index]
+      const images = collected.imagesByEpisode.get(report.episode) ?? []
+      onEvent?.({
+        type: 'phase',
+        phase: 'call',
+        message: `子任务 ${index + 1}/${selected.length}：第 ${report.episode} 集（${images.length} 张图）`,
+        sheets: images.length,
+        episodes: [report.episode],
+      })
+
+      const { system, prompt } = buildEpisodeBriefPrompt({
+        title,
+        episode: report.episode,
+        duration: report.video.duration,
+        shots: report.shots.length,
+        cuts: report.cuts.length,
+        sheetCount: images.length,
+        ...episodeMaterial(report),
+        userScores: userScoreText(userContext),
+      })
+
+      try {
+        const result = await opts.describe({
+          system,
+          prompt,
+          images,
+          jsonMode: true,
+          maxTokens: 4000,
+          timeoutMs: REVIEW_TIMEOUT_MS,
+          signal,
+        })
+        addUsage(totalUsage, result.usage)
+        const brief = parseEpisodeBrief(result.text, report.episode)
+        if (brief) briefs.push(brief)
+        else failures.push(`E${report.episode} 的小结无法解析`)
+      } catch (error) {
+        // 用户取消要立刻停，不能继续烧后面的集
+        if (signal?.aborted) throw error
+        failures.push(`E${report.episode}：${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+
+    if (briefs.length === 0) {
+      throw new Error(`分集收集全部失败：${failures.join('；') || '没有可用的分集小结'}`)
+    }
+
+    onEvent?.({
+      type: 'phase',
+      phase: 'call',
+      message: `汇总 ${briefs.length} 集的小结（不再发图）`,
+      sheets: 0,
+      episodes: briefs.map((brief) => brief.episode),
+    })
+
+    const { system, prompt } = buildSeriesSummaryPrompt({
+      title,
+      episodeRange: `E${selected[0].episode}–E${selected[selected.length - 1].episode}（${selected.length} 集）`,
+      briefs,
+      userScores: userScoreText(userContext),
+      stats: {
+        episodes: selected.length,
+        shots: selected.reduce((sum, report) => sum + report.shots.length, 0),
+        sheets: collected.images.length,
+      },
+      userReview: userContext.review,
+      episodes: selected.map((report) => report.episode),
+      dimensions: Object.keys(userContext.scores ?? {}),
+    })
+
+    const result = await opts.describe({
+      system,
+      prompt,
+      images: [],
+      jsonMode: true,
+      maxTokens: 12000,
+      timeoutMs: REVIEW_TIMEOUT_MS,
+      signal,
+    })
+    addUsage(totalUsage, result.usage)
+
+    onEvent?.({ type: 'phase', phase: 'parse', message: '解析汇总结果、校验时间码与引用' })
+    const parsed = extractJson(result.text)
+    if (!parsed || typeof parsed !== 'object') {
+      const tail = result.text.slice(-240).replace(/\s+/g, ' ')
+      throw new Error(`汇总没有返回合法 JSON（输出 ${result.text.length} 字符，结尾：「${tail}」）`)
+    }
+    const record = parsed as Record<string, unknown>
+
+    const scores = normalizeScores(record.scores, selected)
+    const timeline = normalizeTimeline(record.timeline, selected)
+    const citations = normalizeCitations(record.citations, collected.available)
+    const rawMarkdown = str(record.markdown)
+    if (!rawMarkdown) throw new Error('汇总返回了 JSON 但没有影评正文')
+
+    const caveats = strArray(record.caveats)
+    if (failures.length > 0) {
+      caveats.push(`分集收集有 ${failures.length} 集失败：${failures.join('；')}`)
+    }
+    caveats.push(`本篇由 ${briefs.length} 集分集小结汇总生成（共 ${selected.length + 1} 次模型调用）`)
+
+    const review: AiReview = {
+      schema: 1,
+      key: req.key,
+      scope: req.scope,
+      model: result.model,
+      promptVersion: REVIEW_PROMPT_VERSION,
+      tokens: totalUsage.totalTokens,
+      usage: {
+        promptTokens: totalUsage.promptTokens,
+        completionTokens: totalUsage.completionTokens,
+        ...(totalUsage.reasoningTokens > 0 ? { reasoningTokens: totalUsage.reasoningTokens } : {}),
+        totalTokens: totalUsage.totalTokens,
+      },
+      elapsedMs: Date.now() - startedAt,
+      created: new Date().toISOString(),
+      appVersion: opts.appVersion,
+      scores,
+      markdown: replaceSheetPlaceholders(rawMarkdown, req.key, collected.available),
+      timeline,
+      citations,
+      inputs: {
+        episodes: selected.map((report) => report.episode),
+        shots: selected.reduce((sum, report) => sum + report.shots.length, 0),
+        sheets: collected.images.length,
+        dialogueLines: selected.reduce((sum, report) => sum + (report.transcript?.segments.length ?? 0), 0),
+      },
+      ...(str(record.spoiler) ? { spoiler: replaceSheetPlaceholders(str(record.spoiler), req.key, collected.available) } : {}),
+      ...(caveats.length > 0 ? { caveats } : {}),
+    }
+
+    opts.reviewStore.write(review)
+    onEvent?.({ type: 'done', review, cached: false })
+    return { review, cached: false }
+  }
+
   return {
     read(req) {
       return opts.reviewStore.read(req.key, req.scope)
@@ -522,57 +778,51 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       // 旧实现是"顺序取前 N 张"：多集时前面的集吃满配额、后面的集一张都看不到；
       // 单集时只看得到前半集（一集 18 张图只给前 8 张）。这里改成每集按比例分，
       // 且集内跳着取，保证覆盖全片。
-      const available = new Map<number, Set<string>>()
-      const sheetsByEpisode = new Map<number, Array<{ file: string; cells: number }>>()
-      const images: string[] = []
       const maxSheets = Math.max(1, Math.min(MAX_SHEETS_LIMIT, req.options?.maxSheets ?? DEFAULT_MAX_SHEETS))
       const perEpisode = Math.max(1, Math.floor(maxSheets / selected.length))
+      const collected = collectImages(selected, perEpisode)
 
-      for (const report of selected) {
-        // 所有 sheet 都登记为"可引用"，即使这次没取到图 —— 引用会降级成文字，不会破图
-        available.set(report.episode, new Set(report.sheets.map((sheet) => sheet.file)))
-
-        const meta: Array<{ file: string; cells: number }> = []
-        const total = report.sheets.length
-        if (total > 0) {
-          const take = Math.min(perEpisode, total)
-          // 18 张里取 6 张 → 索引 0/3/6/9/12/15，覆盖开头到结尾
-          const step = total / take
-          for (let index = 0; index < take; index += 1) {
-            const sheet = report.sheets[Math.min(total - 1, Math.floor(index * step))]
-            if (!sheet || meta.some((picked) => picked.file === sheet.file)) continue
-            const filePath = opts.store.sheetFile(report.key, report.episode, sheet.file)
-            if (!filePath) continue
-            const dataUrl = readImageAsDataUrl(filePath)
-            if (!dataUrl) continue
-            images.push(dataUrl)
-            meta.push({ file: sheet.file, cells: sheet.cells })
-          }
-        }
-        sheetsByEpisode.set(report.episode, meta)
+      if (collected.images.length === 0) {
+        throw new Error('找不到任何分镜图：报告存在但图片丢失，请重新做一次拉片分析')
       }
 
-      if (images.length === 0) {
-        throw new Error('找不到任何分镜图：报告存在但图片丢失，请重新做一次拉片分析')
+      const userContext = req.userContext ?? { title: req.key }
+
+      /*
+       * 生成方式：
+       *   - 'single'：一次调用，所有图 + 报告一起发；
+       *   - 'fanout'：每集一个子任务（只看这一集的图），最后只发文字小结合成；
+       *   - 'auto'（默认）：多集且总图数超过单请求预算时才拆 —— 单集拆了没意义，
+       *     2 集 20 张也不值得多花一次调用。
+       */
+      const requestedMode = req.options?.mode
+      const mode: 'single' | 'fanout' =
+        requestedMode === 'single' || requestedMode === 'fanout'
+          ? requestedMode
+          : selected.length > 1 && collected.images.length > SINGLE_REQUEST_SHEET_BUDGET
+            ? 'fanout'
+            : 'single'
+
+      if (mode === 'fanout') {
+        return await generateFanout({ req, selected, collected, userContext }, signal, onEvent, startedAt)
       }
 
       onEvent?.({
         type: 'phase',
         phase: 'call',
-        message: `把 ${images.length} 张分镜图和 ${selected.length} 集报告交给模型`,
-        sheets: images.length,
+        message: `把 ${collected.images.length} 张分镜图和 ${selected.length} 集报告交给模型`,
+        sheets: collected.images.length,
         episodes: selected.map((r) => r.episode),
         shots: selected.reduce((n, r) => n + r.shots.length, 0),
       })
 
       // ── 调模型 ──
-      const userContext = req.userContext ?? { title: req.key }
-      const { system, prompt } = buildPrompt(userContext.title || req.key, scope, selected, sheetsByEpisode, userContext)
+      const { system, prompt } = buildPrompt(userContext.title || req.key, scope, selected, collected.sheetsByEpisode, userContext)
 
       const result = await opts.describe({
         system,
         prompt,
-        images,
+        images: collected.images,
         jsonMode: true,
         // 影评正文 + JSON 结构。实测 6000 会被截断（JSON 不完整 → 解析失败），
         // 一篇 24 分钟单集的影评正文 + 8 个维度 + 时间轴经常超 6000 token。
@@ -601,7 +851,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
 
       const scores = normalizeScores(record.scores, selected)
       const timeline = normalizeTimeline(record.timeline, selected)
-      const citations = normalizeCitations(record.citations, available)
+      const citations = normalizeCitations(record.citations, collected.available)
       const rawMarkdown = str(record.markdown)
       if (!rawMarkdown) throw new Error('模型返回了 JSON 但没有影评正文')
 
@@ -634,16 +884,16 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
         created: new Date().toISOString(),
         appVersion: opts.appVersion,
         scores,
-        markdown: replaceSheetPlaceholders(rawMarkdown, req.key, available),
+        markdown: replaceSheetPlaceholders(rawMarkdown, req.key, collected.available),
         timeline,
         citations,
         inputs: {
           episodes: selected.map((r) => r.episode),
           shots: selected.reduce((n, r) => n + r.shots.length, 0),
-          sheets: images.length,
+          sheets: collected.images.length,
           dialogueLines: selected.reduce((n, r) => n + (r.transcript?.segments.length ?? 0), 0),
         },
-        ...(str(record.spoiler) ? { spoiler: replaceSheetPlaceholders(str(record.spoiler), req.key, available) } : {}),
+        ...(str(record.spoiler) ? { spoiler: replaceSheetPlaceholders(str(record.spoiler), req.key, collected.available) } : {}),
         ...(caveats.length > 0 ? { caveats } : {}),
       }
 

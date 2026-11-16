@@ -27,12 +27,14 @@ export const DEFAULT_REVIEW_BUDGET = 2_000_000
 /**
  * 影评默认看几张分镜图（与后端 `DEFAULT_MAX_SHEETS` 对齐）。
  *
- * 整部番时按集数平分：12 张 / 6 集 → 每集 2 张。
+ * 2026-11-17 用户要求：上限 1000、推荐 100–500。
+ * 整部番时按集数平分：100 张 / 6 集 → 每集 16 张。
+ * 注意单次请求的图不能真拉满（1000 张 ≈ 250MB 请求体），想一次看几百张要用分集模式。
  */
-export const DEFAULT_REVIEW_SHEETS = 12
+export const DEFAULT_REVIEW_SHEETS = 100
 
 /** 单次影评最多看几张图（与后端 `MAX_SHEETS_LIMIT` 对齐） */
-export const MAX_REVIEW_SHEETS = 48
+export const MAX_REVIEW_SHEETS = 1000
 
 /**
  * `GET /api/watch/review/meta` 的客户端形状。

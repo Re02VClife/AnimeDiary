@@ -115,6 +115,9 @@ export interface AiReviewModalProps {
  * 常量与通用样式
  * ───────────────────────────────────────────────────────── */
 
+/** 影评生成方式（与 `ReviewOptions.mode` 对齐） */
+type ReviewMode = 'auto' | 'single' | 'fanout'
+
 /** 任务书要求 1000–1100，取中间值：正文 + 双栏对比都放得下 */
 const MODAL_WIDTH = 1080
 
@@ -962,6 +965,11 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
   const [budget, setBudget] = useState(DEFAULT_REVIEW_BUDGET)
   /** 本次给模型看几张分镜图（整部番时按集数平分） */
   const [maxSheets, setMaxSheets] = useState(DEFAULT_REVIEW_SHEETS)
+  /**
+   * 生成方式：auto = 多集且总图数 > 60 时自动分集；
+   * fanout = 每集一个子任务 + 最后汇总（省单请求上下文，但调用次数多）。
+   */
+  const [mode, setMode] = useState<ReviewMode>('auto')
   const [force, setForce] = useState(false)
   const [meta, setMeta] = useState<ReviewMeta | null>(null)
 
@@ -1351,6 +1359,7 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
         options: {
           budget,
           maxSheets,
+          mode,
           force: options?.force ?? force,
           ...(scope.kind === 'series' && selectedEpisodes.length > 0
             ? { episodes: selectedEpisodes }
@@ -1381,6 +1390,7 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
       title,
       budget,
       maxSheets,
+      mode,
       force,
       selectedEpisodes,
       manualFile,
@@ -1785,14 +1795,14 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
           </section>
         )}
 
-        {/* AI 看图数量 */}
+        {/* AI 看图数量 + 生成方式 */}
         <section style={SECTION_STYLE}>
           <span style={SECTION_TITLE_STYLE}>AI 看图数量</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <InputNumber
               min={1}
               max={MAX_REVIEW_SHEETS}
-              step={1}
+              step={10}
               value={maxSheets}
               onChange={(value) =>
                 setMaxSheets(
@@ -1804,12 +1814,30 @@ export const AiReviewModal: FC<AiReviewModalProps> = ({
               style={{ width: 120 }}
             />
             <span style={MUTED_STYLE}>
-              张 · 整部番按集数平分（6 集 × 12 张 → 每集 2 张）
+              张 · 推荐 100–500；整部番按集数平分（6 集 × 100 张 → 每集 16 张）
             </span>
           </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 10 }}>
+            <Select
+              size="small"
+              value={mode}
+              onChange={(value) => setMode(value as ReviewMode)}
+              options={[
+                { value: 'auto', label: '自动（多集且图多时按集拆分）' },
+                { value: 'single', label: '单次全部（一次调用）' },
+                { value: 'fanout', label: '分集收集（每集一次 + 汇总）' },
+              ]}
+              style={{ width: 260 }}
+            />
+            <span style={MUTED_STYLE}>
+              分集模式：每集单独看（只看这一集的图），最后只把文字小结合成 —— 调用次数 = 集数 + 1
+            </span>
+          </div>
+
           <span style={MUTED_STYLE}>
-            上下文不是瓶颈（模型 1M），限制来自**请求体大小与单次耗时**：每张 1280×1080 约 250KB，
-            48 张 ≈ 12MB。想看得更全就调大，想更快就保持 12。
+            上下文不是瓶颈（模型 1M），单次请求的瓶颈是**请求体大小**：每张 1280×1080 约 250KB，
+            1000 张 ≈ 250MB。想一次看几百张请用「分集收集」；只想快就保持单次 + 100 张左右。
           </span>
         </section>
 

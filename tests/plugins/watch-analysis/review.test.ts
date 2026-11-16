@@ -410,6 +410,71 @@ describe('createReviewGenerator', () => {
     expect(prompt).not.toContain('【台词')
   })
 
+  it('fanout：每集一个子任务，最后只用文字小结合成（单请求上下文不爆）', async () => {
+    const { store } = seedReport(1)
+    // 第二集：同一个 DATA_DIR，另一个 store 实例也能读到
+    seedReport(2)
+    const reviewStore = createReviewStore(dir)
+
+    const calls: Array<{ images: number; prompt: string }> = []
+    const describeMock = vi.fn(async (req: any) => {
+      calls.push({ images: req.images.length, prompt: req.prompt })
+      if (req.images.length > 0) {
+        // 子任务：单集小结
+        return {
+          text: JSON.stringify({
+            episode: 1,
+            points: ['[00:12] 第一次切镜'],
+            scores: [{ dimension: '剧情', value: 8.2, reason: '开场干净' }],
+            quotes: [],
+            caveats: [],
+          }),
+          usage: { promptTokens: 1000, completionTokens: 300, totalTokens: 1300 },
+          model: 'fake-vision-model',
+        } satisfies DescribeResult
+      }
+      // 汇总：整季影评（不带图）
+      return {
+        text: modelJson(),
+        usage: { promptTokens: 800, completionTokens: 500, totalTokens: 1300 },
+        model: 'fake-vision-model',
+      } satisfies DescribeResult
+    })
+
+    const generator = createReviewGenerator({
+      store,
+      reviewStore,
+      appVersion: '1.3.26',
+      describe: describeMock,
+    })
+
+    const events: Array<Record<string, unknown>> = []
+    const { review } = await generator.generate(
+      { key: KEY, scope: { kind: 'series' }, options: { mode: 'fanout' } },
+      undefined,
+      (event) => events.push(event as unknown as Record<string, unknown>),
+    )
+
+    // 2 集 + 1 次汇总 = 3 次调用；前两次带图，汇总不带图
+    expect(describeMock).toHaveBeenCalledTimes(3)
+    expect(calls[0].images).toBe(1)
+    expect(calls[1].images).toBe(1)
+    expect(calls[2].images).toBe(0)
+
+    // 每集子任务只拿到自己那一集的素材（这正是"子代理只看一集"的边界）
+    expect(calls[0].prompt).toContain('E1')
+    expect(calls[1].prompt).toContain('E2')
+
+    // usage 累加（1300 × 3），inputs.sheets 是总共发出去的图数
+    expect(review.tokens).toBe(3900)
+    expect(review.usage?.totalTokens).toBe(3900)
+    expect(review.inputs.sheets).toBe(2)
+    expect(review.caveats?.some((caveat) => caveat.includes('分集小结汇总'))).toBe(true)
+
+    // 进度里要能看到"子任务 N/M"
+    expect(events.some((event) => String(event.message ?? '').includes('子任务'))).toBe(true)
+  })
+
   it('生成过程发阶段事件，token 分项写进结果（进度与账单都要真）', async () => {
     const { store } = seedReport(1)
     const reviewStore = createReviewStore(dir)
