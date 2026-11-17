@@ -140,13 +140,23 @@ const App: React.FC = () => {
    */
   const aiReviewUserContext = useMemo(() => {
     if (!aiReviewAnime) return undefined;
-    const scores = buildTemplateScores(
-      aiReviewAnime.scores,
-      getTemplateDimensions(aiReviewAnime.templateId),
-    );
+    const dimensions = getTemplateDimensions(aiReviewAnime.templateId);
+    const scores = buildTemplateScores(aiReviewAnime.scores, dimensions);
+    /*
+     * 维度定义也要传：光给「电波 / 沉浸 / 制作」这几个词，模型只能猜它们指什么
+     * （实测把「电波」理解成"对不上频道"，而模板里的定义是"个人主观综合"）。
+     * 这是**中性说明**，不算用户偏好 —— 盲评时后端也会保留它。
+     */
+    const dimensionHints: Record<string, string> = {};
+    for (const dimension of dimensions) {
+      if (dimension.key === 'overall') continue;
+      if (!dimension.label || !dimension.description) continue;
+      dimensionHints[dimension.label] = dimension.description;
+    }
     return {
       title: aiReviewAnime.title,
       ...(Object.keys(scores).length > 0 ? { scores } : {}),
+      ...(Object.keys(dimensionHints).length > 0 ? { dimensionHints } : {}),
       ...(aiReviewAnime.review ? { review: aiReviewAnime.review } : {}),
       ...(aiReviewAnime.tags.length > 0 ? { tags: aiReviewAnime.tags.map((tag) => tag.name) } : {}),
       ...(aiReviewAnime.bangumiScore != null ? { bangumiScore: aiReviewAnime.bangumiScore } : {}),

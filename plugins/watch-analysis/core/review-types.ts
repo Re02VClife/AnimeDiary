@@ -24,10 +24,25 @@ export type ReviewScope =
 
 /** AI 给某个维度的评分 */
 export interface AiDimensionScore {
-  /** 维度名，沿用模板里的叫法（剧情 / 作画 / 声音 / 制作 / 沉浸 / 人设 / 深度 / 电波 …） */
+  /** 维度名，沿用模板里的叫法（剧情 / 作画 / 音声 / 制作 / 沉浸 / 人设 / 深度 / 电波 …） */
   dimension: string
-  /** 0–10，允许一位小数 */
-  value: number
+  /**
+   * 0–10，允许一位小数；`null` = 模型明确表示"这个维度无从判断"。
+   *
+   * 为什么允许 null：八维里有些维度（尤其音声/沉浸）可能连间接证据都没有。
+   * 以前只能"不给这一项"，UI 看起来像漏了；现在让模型如实给 null + 理由，
+   * 前端显示「未评」而不是一个编出来的分。
+   */
+  value: number | null
+  /**
+   * 这个分的证据强度：
+   *   - `direct`：有直接证据（画面/台词/配乐测量值支持）
+   *   - `inferred`：从其它维度间接推的（例如没有音频，按镜头节奏推"沉浸"）
+   *   - `none`：拿不出证据，只给了 null
+   *
+   * 面板要区分显示 —— 用户得知道哪几个点是 AI 真看了、哪几个是推的。
+   */
+  confidence?: 'direct' | 'inferred' | 'none'
   /** 为什么给这个分（一句话，必须具体，不许"整体不错"） */
   reason: string
   /**
@@ -136,6 +151,14 @@ export interface ReviewUserContext {
   title: string
   /** 用户自己的维度评分：维度名 → 0–10 */
   scores?: Record<string, number>
+  /**
+   * 维度定义（模板里每个维度的 `description`），维度名 → 一句话说明。
+   *
+   * 为什么必须传：光给「电波 / 沉浸 / 制作」这几个词，模型只能猜它们指什么
+   * （实测「电波」被理解成"对不上频道"，而用户的实际定义是"看完的第一印象总分"）。
+   * 有了定义，模型才知道「沉浸」= 音乐、画面、分镜、剧情协同度。
+   */
+  dimensionHints?: Record<string, string>
   /** 用户写的评价正文 */
   review?: string
   /** 用户打的标签 */

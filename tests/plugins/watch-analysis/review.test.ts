@@ -137,8 +137,15 @@ describe('createReviewGenerator', () => {
     expect(review.model).toBe('fake-vision-model')
     expect(review.promptVersion).toBe(REVIEW_PROMPT_VERSION)
     expect(review.tokens).toBe(1500)
-    expect(review.scores).toHaveLength(2)
-    expect(review.scores[0].dimension).toBe('剧情')
+    /*
+     * 模型只给了 2 个维度，但白名单是默认八维 —— 服务端要把缺的补成"未评"，
+     * 这样 UI 能如实显示"这一维 AI 拿不出证据"，而不是看起来像漏渲染。
+     */
+    expect(review.scores).toHaveLength(8)
+    expect(review.scores.find((s) => s.dimension === '剧情')?.value).toBe(7.8)
+    const unrated = review.scores.filter((s) => s.value === null)
+    expect(unrated).toHaveLength(6)
+    expect(unrated.every((s) => s.confidence === 'none')).toBe(true)
     expect(review.inputs.episodes).toEqual([1])
     expect(review.inputs.sheets).toBe(1)
   })
@@ -773,5 +780,108 @@ describe('createReviewGenerator', () => {
     expect(summary).toBeDefined()
     expect(summary!.system).toContain('独立判断')
     expect(summary!.system).not.toContain('不同意他')
+  })
+
+  /* ── 八维齐全 / 配乐证据 / 维度定义（2026-11-17 晚）── */
+
+  it('报告里有配乐证据时，提示词要出现【配乐证据】小节（音声与沉浸的依据）', async () => {
+    const { store } = seedReport(1, {
+      audio: {
+        engine: 'music-evidence-engine@0.1.5',
+        windows: [
+          { from: 0, to: 30, measurements: { loudness: -27.8, onsetRate: 3.9, tempo: 123 } },
+          { from: 30, to: 60, measurements: { loudness: -22, onsetRate: 4.2 } },
+        ],
+        summary: {
+          bpm: 123,
+          tempoStable: true,
+          lufs: -20.5,
+          segments: 2,
+          boundaries: [{ t: 30, jumpDb: 5.7 }],
+          sourcesAvailable: false,
+          caveats: ['未做音源分离'],
+        },
+        notes: ['未做音源分离：无法判断具体乐器/人声'],
+      },
+    })
+    const reviewStore = createReviewStore(dir)
+    const { generator, describeMock } = makeGenerator({ store, reviewStore })
+
+    await generator.generate({ key: KEY, scope: { kind: 'series' } })
+    const { prompt } = describeMock.mock.calls[0][0]
+    expect(prompt).toContain('【配乐证据（本地测量，不是听感）】')
+    expect(prompt).toContain('BPM 123')
+    expect(prompt).toContain('-27.8dB')
+    expect(prompt).toContain('段落边界')
+    // 引擎自报的限制必须带到模型面前，否则它会把不可靠读数当事实
+    expect(prompt).toContain('未做音源分离')
+  })
+
+  it('没有配乐证据时不出现空小节（不能让模型以为"配乐分析跑过了"）', async () => {
+    const { store } = seedReport(1)
+    const reviewStore = createReviewStore(dir)
+    const { generator, describeMock } = makeGenerator({ store, reviewStore })
+    await generator.generate({ key: KEY, scope: { kind: 'series' } })
+    expect(describeMock.mock.calls[0][0].prompt).not.toContain('【配乐证据')
+  })
+
+  it('维度定义要进提示词，且盲评时也保留（那是客观说明，不是用户偏好）', async () => {
+    const { store } = seedReport(1)
+    const reviewStore = createReviewStore(dir)
+    const { generator, describeMock } = makeGenerator({ store, reviewStore })
+
+    await generator.generate({
+      key: KEY,
+      scope: { kind: 'series' },
+      userContext: {
+        title: '测试番',
+        scores: { 电波: 8 },
+        dimensionHints: { 电波: '看完的第一印象总分', 沉浸: '音乐、画面、分镜、剧情协同度' },
+      },
+    })
+    const { prompt, system } = describeMock.mock.calls[0][0]
+    // 盲评默认开：用户分不该出现，但维度定义要留下
+    expect(prompt).not.toContain('电波 8')
+    expect(prompt).toContain('电波（看完的第一印象总分）')
+    expect(prompt).toContain('沉浸（音乐、画面、分镜、剧情协同度）')
+
+    // system 里要写清这三条口径
+    expect(system).toContain('第一印象')
+    expect(system).toContain('合成维度')
+    expect(system).toContain('每个维度都必须出现')
+    expect(system).toContain('5.0')
+  })
+
+  it('白名单外的维度被丢弃，缺的补成「未评」（雷达图不会凭空多轴、也不会只剩几行）', async () => {
+    const { store } = seedReport(1)
+    const reviewStore = createReviewStore(dir)
+    const json = modelJson({
+      scores: [
+        { dimension: '剧情', value: 8, confidence: 'direct', reason: '有据', evidence: [] },
+        { dimension: '角色', value: 9, reason: '模型自编的轴', evidence: [] },
+      ],
+    })
+    const { generator } = makeGenerator({
+      store,
+      reviewStore,
+      describe: async () => ({ text: json, usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 }, model: 'm' }),
+    })
+    const { review } = await generator.generate({ key: KEY, scope: { kind: 'series' } })
+
+    const names = review.scores.map((s) => s.dimension)
+    expect(names).toEqual(['剧情', '作画', '音声', '制作', '沉浸', '人设', '深度', '电波'])
+    expect(review.scores.find((s) => s.dimension === '角色')).toBeUndefined()
+    // 模型没给的七个补成未评
+    expect(review.scores.filter((s) => s.value === null)).toHaveLength(7)
+    // 模型给的保持原值 + confidence
+    expect(review.scores[0]).toMatchObject({ dimension: '剧情', value: 8, confidence: 'direct' })
+  })
+
+  it('value:null 的维度进 caveats（和"有分但没证据"分开说）', async () => {
+    const { store } = seedReport(1)
+    const reviewStore = createReviewStore(dir)
+    const { generator } = makeGenerator({ store, reviewStore })
+    const { review } = await generator.generate({ key: KEY, scope: { kind: 'series' } })
+    expect(review.caveats?.some((c) => c.includes('未能评分'))).toBe(true)
   })
 })

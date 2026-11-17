@@ -178,6 +178,39 @@ export interface DanmakuSummary {
   buckets: DanmakuBucket[]
 }
 
+/**
+ * 配乐分析的**全局读数**（Music Evidence Engine 的 summary）。
+ *
+ * 为什么和 `MusicEvidence.measurements` 分开放：后者是"逐段的"，这个是"整集的"。
+ * 影评 prompt 里两者都要（整集 LUFS 用来和段落对比，才知道哪段更响）。
+ *
+ * 全部是**测量值**。`caveats` 是引擎自报的适用范围限制（例如"和弦已降级为根音候选"），
+ * 提示词必须把它们带给模型，否则模型会把不可靠读数当事实。
+ */
+export interface MusicAnalysisSummary {
+  bpm?: number
+  tempoStable?: boolean
+  /** 调的候选（混音上不可靠，见 caveats） */
+  key?: string
+  keyConfidence?: number
+  /** 整集响度（LUFS / dBFS） */
+  lufs?: number
+  rmsDbfs?: number
+  peakDbfs?: number
+  /** 能量标准差（越大说明起伏越明显） */
+  energyStd?: number
+  /** 起音率（每秒），高 = 节奏密 */
+  onsetRate?: number
+  /** 引擎按内容切出的段数 */
+  segments: number
+  /** 段落边界（秒 + 响度跳变 dB） */
+  boundaries: Array<{ t: number; jumpDb?: number }>
+  /** 是否做了音源分离（false = 不能归因到具体乐器） */
+  sourcesAvailable: boolean
+  /** 引擎自报限制 */
+  caveats: string[]
+}
+
 /** 落盘的完整报告 */
 export interface WatchReport {
   /** schema 版本：将来改结构时用来判断要不要迁移 */
@@ -258,6 +291,12 @@ export interface WatchReport {
   }
   audio?: {
     windows: MusicEvidence[]
+    /** 引擎标识，例如 `music-evidence-engine@0.1.5` */
+    engine?: string
+    /** 整集读数（BPM / 调性 / LUFS / 段落边界 / 可用性） */
+    summary?: MusicAnalysisSummary
+    /** 引擎与适配器自报的限制（缺分轨、和弦不可用…） */
+    notes?: string[]
   }
   sheets: Sheet[]
   report?: {

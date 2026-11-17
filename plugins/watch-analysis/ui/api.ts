@@ -90,6 +90,12 @@ export interface AnalyzeOptions {
    *   - `off` 不要台词。
    */
   transcript?: 'auto' | 'off' | 'asr'
+  /**
+   * 配乐证据（Music Evidence Engine）：
+   *   - `auto`（默认）装了就跑，24 分钟约 30 秒；
+   *   - `off` 跳过。不给影评「音声 / 沉浸」的实测依据时，它只能写"无法判断"。
+   */
+  music?: 'auto' | 'off'
   /** 只分析这一段（秒） */
   from?: number
   to?: number

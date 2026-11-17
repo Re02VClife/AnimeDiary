@@ -190,6 +190,7 @@ function pickAnalyzeOptions(raw: any): Partial<WatchAnalyzeOptions> {
   if (raw.transcript === 'auto' || raw.transcript === 'off' || raw.transcript === 'asr') {
     out.transcript = raw.transcript
   }
+  if (raw.music === 'auto' || raw.music === 'off') out.music = raw.music
   if (Number.isFinite(raw.from)) out.from = Math.max(0, Number(raw.from))
   if (Number.isFinite(raw.to)) out.to = Math.max(0, Number(raw.to))
   return out

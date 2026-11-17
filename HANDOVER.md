@@ -46,6 +46,7 @@ Start-Process E:\AnimeDiary\AnimeDiary.exe
 | 东西 | 位置 | 用途 |
 |---|---|---|
 | `dsh-video-storyboard` | `node_modules/`（package.json 依赖） | 切镜扫描 + `probeVideo`；2×3 排版**不用**它 |
+| **Music Evidence Engine 0.1.5** | Python 3.11.4 全局（`python -m music_evidence_engine`） | 配乐证据：BPM / 响度 / 起音率 / 段落边界（CPU，24 分钟约 30 秒）。**PyPI 上没有**，要从 GitHub release 下 wheel |
 | MOSS-Transcribe-Diarize | `D:\MOSS-Transcribe-Diarize`（代码）+ `D:\models\MOSS-Transcribe-Diarize`（1.71GB 权重） | 日语语音转写 + **说话人分离** |
 | conda env `moss` | `C:\Users\24628\miniconda3\envs\moss` | Python 3.12 + torch 2.10.0+cu128 |
 | OXR OCR（可选，不稳定） | 在线 `https://47.243.130.113/v1`，key 见其手册 | 文档/图片 OCR；502 = 显卡在跑 Qwen |
@@ -312,6 +313,52 @@ token：**输入 18,489 / 输出 8,344（含思维链 6,596）/ 共 26,833**。
 我们拿不到命令行、加不了 `-threads`。这一阶段靠「进程优先级」降低对前台的影响。
 ⚠️ **GPU 没法"预留显存"**：MOSS 转写是单卡 CUDA 推理，只能靠串行 + 低优先级；`asrLowMemory`
 字段已预留但当前版本不生效。
+
+### 0.10 八维评分 + 配乐证据（2026-11-17 晚）
+
+**问题**：影评只评 **2–4 个维度**（实测单集只给了 剧情/作画/制作/人设），音声、沉浸、深度、电波全缺。
+根因不是模型不行，是三条约束加一条信息缺失：
+
+1. **维度只给名字，没给定义** —— 模板里 `description` 明明有（音声=OP/ED/BGM/声优表现，
+   电波=个人主观综合），前端 `buildTemplateScores` 只把 label→分传过去。实测模型把「电波」
+   理解成"对不上频道"。
+2. **提示词鼓励少评** —— `review.ts` 的 system 写着"只写你确实看清的东西"，
+   fanout 子任务写着"听不到音频就不要评音声/沉浸"。
+3. **grid6 不产出任何音频测量** —— `report.loudness` 恒为 null（那是 storyboard 才有的响度条）。
+4. **`normalizeScores` 不补全** —— 模型少给就真的少。
+
+**改法**（`promptVersion` 1.0.1 → 1.0.2）：
+
+- `ReviewUserContext.dimensionHints`：前端从模板 `description` 取，随 `userContext` 传入。
+  **盲评也保留** —— 那是客观说明，不是用户偏好（只丢 scores/review/tags）。
+- 接 **Music Evidence Engine**（`adapters/music-mee.mjs`，`options.music: 'auto' | 'off'`，默认开）：
+  抽 22050Hz 单声道 → `python -m music_evidence_engine <wav> --json` → 落盘 `report.audio`
+  （逐段响度/起音率 + 整集 BPM/LUFS/段落边界 + `notes` 里的"引擎标记不可用"）。
+- 提示词新增【配乐证据】小节 + 三条口径：
+  - **八维必须齐全**，缺证据也要给分标 `inferred`，无从判断才 `null` + `none`，**禁止用 5.0 充数**；
+  - **沉浸 = 音声 × 视觉 × 氛围**，reason 至少引用两类证据；
+  - **电波 = 看完后的第一印象总分**（不是七维平均），正文结尾写一句第一印象。
+- `AiDimensionScore.confidence`（`direct` / `inferred` / `none`），`value` 允许 `null`；
+  `normalizeScores` 按模板维度白名单过滤 + 缺失项补成"未评"。
+- 面板：拉片 Tab 加「配乐证据」开关；影评表格对 `inferred` 标「推断」、`null` 标「未评」。
+
+**实测（3 分钟测试片，deepseek-v4.1-flash，2026-11-17）**
+
+| 指标 | 结果 |
+|---|---|
+| 拉片分析 | **9.0 秒**（render 3.3 + 配乐 5.7），报告 `audio` 7 段 / 4 个边界 / BPM 123 / −20.54 LUFS |
+| 影评 | 92.7 秒，**8/8 维有分**：5 `direct` + 3 `inferred` |
+| 音声 6.9 `inferred` | 「四处边界 5.7／9.6／10.4dB 反复起落，音量被当节奏器用；这是声音设计层面的判断，不是听感」 |
+| 沉浸 5.9 `inferred` | 「长镜落在低起音段、音画同时收」（跨音声+视觉两类证据） |
+| 电波 6.2 `direct` | 「第一印象：三分钟塞三套梗，密度够，但十八帧里没找到一个让我想追下去的表情」 |
+
+⚠️ **测量 ≠ 听感**：MEE 只给响度/节奏/边界，不给"旋律好不好听"。所以提示词把「音声」限定成
+**声音设计**（响度层次、静音用法、节奏密度是否与画面同步），并强制标 `inferred`。
+想让音声变 `direct` 得装 YAMNet / Demucs 权重做分轨（本机没装，`sources.available=false`）。
+
+⚠️ **CLI 输出是混排的**：`python -m music_evidence_engine ... --json` 会先往 **stdout** 打一行
+`[结构] 10 个候选边界…` 再跟 pretty-print JSON，`JSON.parse(stdout)` 必炸 ——
+`parseMeeJson()` 负责从第一个 `{` 抠到最后一个 `}`（有单测钉住）。
 
 ---
 

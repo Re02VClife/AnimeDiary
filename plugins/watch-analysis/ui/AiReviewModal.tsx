@@ -215,7 +215,7 @@ interface ScoreComparison {
 /**
  * 把 AI 分和用户分按维度名对齐。
  *
- * 维度来源 = AI 给出的维度（顺序即模型的顺序）+ 用户独有、AI 没给的维度。
+ * 维度来源 = 用户维度（模板，权威）优先；用户没打分时用 AI 给的维度。
  * 两边都没有的维度不会凭空出现 —— 不猜模板，只展示真实存在的分。
  */
 /**
@@ -258,7 +258,10 @@ function buildScoreRows(review: AiReview | null, userContext?: ReviewUserContext
     const ai = aiByName.get(dimension) ?? null
     const user = userScores.get(dimension) ?? null
     // 差值只保留一位小数：8.6 - 7.0 = 1.6000000000000005 这种浮点尾差不能露给用户
-    const diff = ai !== null && user !== null ? Math.round((ai.value - user) * 10) / 10 : null
+    // `ai.value === null`（模型明确"无从判断"）不参与差值计算
+    const diff = ai !== null && ai.value !== null && user !== null
+      ? Math.round((ai.value - user) * 10) / 10
+      : null
     return { dimension, ai, user, diff }
   })
 }
@@ -597,6 +600,12 @@ const RadarPanel: FC<{ rows: ScoreComparison[] }> = ({ rows }) => {
         lazyUpdate
       />
       {!hasUser && <span style={MUTED_STYLE}>你还没打分，雷达图里目前只有 AI 的分。</span>}
+      {rows.some((row) => row.ai?.value === null) && (
+        <span style={MUTED_STYLE}>
+          有 {rows.filter((row) => row.ai?.value === null).length} 个维度 AI 明确表示无从判断，
+          雷达图上按 0 画（表格里显示「未评」）。
+        </span>
+      )}
     </div>
   )
 }
@@ -638,7 +647,17 @@ const ScoreComparisonTable: FC<{ rows: ScoreComparison[]; hasUserScores: boolean
       {rows.map((row) => {
         // 差值 ≥1 分算「实质分歧」，整行高亮；证据为空的 AI 分必须挂标签
         const highlight = row.diff !== null && Math.abs(row.diff) >= 1
-        const noEvidence = row.ai !== null && row.ai.evidence.length === 0
+        /*
+         * 三态（2026-11-17 起）：
+         *   - value === null：模型明确"无从判断"，显示未评，不参与雷达图与差值
+         *   - confidence === 'inferred'：从别的维度推的（例如没有音频时按节奏推沉浸）
+         *   - 有分但证据为空：照旧标「无证据」
+         */
+        const aiValue = row.ai?.value ?? null
+        const confidence = row.ai?.confidence
+        const unrated = row.ai !== null && aiValue === null
+        const noEvidence = row.ai !== null && aiValue !== null && row.ai.evidence.length === 0
+        const inferred = !unrated && confidence === 'inferred'
         const barPercent =
           row.diff === null ? 0 : Math.min(50, (Math.abs(row.diff) / 5) * 50)
 
@@ -748,9 +767,27 @@ const ScoreComparisonTable: FC<{ rows: ScoreComparison[]; hasUserScores: boolean
                   color: 'var(--text-primary)',
                 }}
               >
-                {row.ai === null ? '—' : formatScoreValue(row.ai.value)}
+                {row.ai === null || aiValue === null ? '—' : formatScoreValue(aiValue)}
               </span>
-              <span style={{ width: 64, display: 'flex', justifyContent: 'flex-start' }}>
+              <span style={{ width: 64, display: 'flex', justifyContent: 'flex-start', gap: 4 }}>
+                {unrated && (
+                  <Tag data-testid="ai-unrated" style={{ marginInlineEnd: 0 }}>
+                    未评
+                  </Tag>
+                )}
+                {inferred && (
+                  <Tag
+                    data-testid="ai-inferred"
+                    style={{
+                      marginInlineEnd: 0,
+                      color: 'var(--color-info)',
+                      borderColor: 'var(--color-info)',
+                      background: 'transparent',
+                    }}
+                  >
+                    推断
+                  </Tag>
+                )}
                 {noEvidence && (
                   <span data-testid="no-evidence">
                     <Tag

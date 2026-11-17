@@ -189,13 +189,20 @@ async function main() {  const requestPath = process.argv[2]
     /*
      * 进度分配：ASR 是最大开销（一集 24 分钟要 6 分钟），以前只给它 96–98% 这 2 个百分点，
      * 用户看到的是"进度条 98% 却卡了六分钟"（2026-11-17 反馈）。
-     * 开了 ASR 就把 render 压到 40–55、transcript 占 55–95。
+     *
+     * 现在三段：render → music（MEE，约 0.25× 实时）→ transcript。
+     *   - 开 ASR：render 40–52 / music 52–58 / transcript 58–95
+     *   - 不开 ASR：render 45–84 / music 84–93 / transcript 95–98
+     *   - 关掉配乐：把 music 的份额还给 render
      */
     const withAsr = options.transcript === 'asr'
+    const withMusic = options.music !== 'off'
     const renderBase = withAsr ? 40 : 45
-    const renderSpan = withAsr ? 15 : 50
-    const transcriptBase = withAsr ? 55 : 95
-    const transcriptSpan = withAsr ? 40 : 3
+    const renderSpan = withAsr ? 12 : (withMusic ? 39 : 48)
+    const musicBase = withAsr ? 52 : 84
+    const musicSpan = withAsr ? 6 : 9
+    const transcriptBase = withAsr ? 58 : 95
+    const transcriptSpan = withAsr ? 37 : 3
 
     /*
      * 默认密度：每 10 秒一帧。
@@ -247,6 +254,42 @@ async function main() {  const requestPath = process.argv[2]
       percent: renderBase + renderSpan,
       message: `${rendered.shots.length} 个镜头 → ${rendered.sheets.length} 张图`,
     })
+
+    // ── 3.2 配乐证据（Music Evidence Engine，可选）──
+    // 放在弹幕/台词之前：它只依赖音轨，和字幕/ASR 无关；失败就降级，不影响主体。
+    // 没有这一步时，影评的「音声 / 沉浸」两维只能写"听不到，无法判断"（实测就是这样）。
+    let music
+    const musicStarted = Date.now()
+    if (withMusic) {
+      emit({ type: 'progress', phase: 'music', percent: musicBase, message: '分析配乐（本地测量）' })
+      try {
+        const { musicMeeProvider } = await import('../adapters/music-mee.mjs')
+        const ready = await musicMeeProvider.ready()
+        if (!ready.ok) {
+          log(`配乐分析不可用（继续）：${ready.reason ?? '未知原因'}${ready.detail ? ` · ${ready.detail}` : ''}`)
+        } else {
+          const result = await musicMeeProvider.analyze(video, {
+            // worker 没有 AbortSignal：取消整集靠杀进程树（job.ts）
+            onLog: (message) => emit({ type: 'progress', phase: 'music', percent: musicBase + 3, message }),
+          })
+          if (result.windows.length > 0) {
+            music = result
+            emit({
+              type: 'progress',
+              phase: 'music',
+              percent: musicBase + musicSpan,
+              message: `${result.windows.length} 段配乐 / ${result.summary?.boundaries?.length ?? 0} 个段落边界`,
+            })
+            log(`配乐: ${result.windows.length} 段, 引擎 ${result.engine ?? '?'}`)
+          } else {
+            log(`配乐分析没有结果（继续）：${result.notes?.join('；') ?? '未知原因'}`)
+          }
+        }
+      } catch (error) {
+        log(`配乐分析失败（继续）：${error instanceof Error ? error.message : error}`)
+      }
+    }
+    timing.music = (Date.now() - musicStarted) / 1000
 
     // ── 3.5 弹幕（Kazumi 下载缓存自带，不依赖 ASR/字幕）──
     // 放在字幕之前：字幕要 ASR/外挂文件才有，而弹幕几乎每部 Kazumi 番都有，
@@ -399,6 +442,7 @@ async function main() {  const requestPath = process.argv[2]
       ...(danmaku ? { danmaku } : {}),
       ...(transcript ? { transcript } : {}),
       ...(audio ? { audio } : {}),
+      ...(music ? { music } : {}),
       timing: { ...timing, total: (Date.now() - startedAt) / 1000 },
       ...(rendered.notes?.length ? { warnings: rendered.notes } : {}),
       plan: rendered.plan,

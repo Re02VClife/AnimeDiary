@@ -190,8 +190,8 @@ function detectMee(python: DependencyStatus): DependencyStatus {
       label: '配乐分析（Music Evidence Engine）',
       ok: false,
       required: false,
-      hint: '先装 Python 3.10+，再执行 python -m pip install music-evidence-engine',
-      detail: '缺只会少「配乐证据」一块，其它分析照常',
+      hint: '先装 Python 3.10+，再装 music-evidence-engine 的 wheel（见 detail）',
+      detail: '缺它会少「配乐证据」：影评的「音声 / 沉浸」两维就没有实测依据，只能写"无法判断"',
     }
   }
   const r = run(python.path, ['-c', 'import music_evidence_engine as m; print(getattr(m, "__version__", "unknown"))'])
@@ -204,6 +204,7 @@ function detectMee(python: DependencyStatus): DependencyStatus {
       required: false,
       version: version && version !== 'unknown' ? version : undefined,
       path: python.path,
+      detail: '本地测量响度/起音率/段落边界（不做分轨，所以不评乐器与旋律）',
     }
   }
   return {
@@ -211,8 +212,11 @@ function detectMee(python: DependencyStatus): DependencyStatus {
     label: '配乐分析（Music Evidence Engine）',
     ok: false,
     required: false,
-    hint: `${python.path} -m pip install music-evidence-engine`,
-    detail: '缺只会少「配乐证据」一块，其它分析照常',
+    hint: `${python.path} -m pip install <music_evidence_engine-*.whl>`,
+    detail:
+      'PyPI 上没有这个包：到 github.com/ALittleLov/music-evidence-engine/releases/latest 下载 '
+      + 'music_evidence_engine-<版本>-py3-none-any.whl 再 pip install 它。'
+      + '缺它只少「配乐证据」，影评的音声/沉浸会缺依据，其它分析照常',
   }
 }
 

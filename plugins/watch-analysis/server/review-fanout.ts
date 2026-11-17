@@ -35,6 +35,59 @@ function clock(seconds: number): string {
   return `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
 }
 
+/**
+ * 一集的配乐证据 → 提示词里的几行（单次模式与 fanout 共用同一口径）。
+ *
+ * 只格式化**测量值**（响度/起音率/段落边界）和引擎自报的不可用项，
+ * 不做任何"好听/不好听"的概括 —— 那要留给模型判断，而且它必须基于这些数。
+ * 返回 null = 这一集没有配乐证据（没装 MEE 或关掉了），提示词里就不出现这一节。
+ */
+export function formatMusicEvidence(report: {
+  episode: number
+  audio?: {
+    windows: Array<{ from: number; to: number; measurements: { loudness?: number; onsetRate?: number } }>
+    summary?: {
+      bpm?: number
+      tempoStable?: boolean
+      key?: string
+      keyConfidence?: number
+      lufs?: number
+      energyStd?: number
+      onsetRate?: number
+      boundaries: Array<{ t: number; jumpDb?: number }>
+    }
+    notes?: string[]
+  }
+}): string | null {
+  const audio = report.audio
+  if (!audio || !Array.isArray(audio.windows) || audio.windows.length === 0) return null
+  const s = audio.summary
+  const head = [
+    typeof s?.bpm === 'number' ? `BPM ${s.bpm}${s.tempoStable ? '（稳定）' : ''}` : '',
+    s?.key ? `调性候选 ${s.key}${typeof s.keyConfidence === 'number' ? `（置信 ${s.keyConfidence.toFixed(2)}）` : ''}` : '',
+    typeof s?.lufs === 'number' ? `整集 ${s.lufs} LUFS` : '',
+    typeof s?.energyStd === 'number' ? `能量起伏 σ ${s.energyStd}dB` : '',
+    typeof s?.onsetRate === 'number' ? `起音 ${s.onsetRate}/秒` : '',
+  ].filter(Boolean).join('，')
+
+  // 整集 30–60 段，全给会吃掉几千 token；均匀抽 14 段覆盖全片
+  const windows = audio.windows
+  const step = Math.max(1, Math.ceil(windows.length / 14))
+  const picked = windows.filter((_, index) => index % step === 0).slice(0, 14)
+  const rows = picked.map((w) => {
+    const loud = typeof w.measurements?.loudness === 'number' ? `${w.measurements.loudness}dB` : '响度未知'
+    const onset = typeof w.measurements?.onsetRate === 'number' ? ` 起音${w.measurements.onsetRate}/秒` : ''
+    return `  [${clock(w.from)}–${clock(w.to)}] ${loud}${onset}`
+  })
+  const jumps = (s?.boundaries ?? []).slice(0, 8).map((b) => (
+    `[${clock(b.t)}]${typeof b.jumpDb === 'number' ? `+${b.jumpDb}dB` : ''}`
+  )).join(' ')
+
+  return `E${report.episode}（${head || '只有分段响度'}）：\n${rows.join('\n')}`
+    + `${jumps ? `\n  段落边界：${jumps}` : ''}`
+    + `${audio.notes?.length ? `\n  注意：${audio.notes.slice(0, 3).join('；')}` : ''}`
+}
+
 export interface BriefPromptInput {
   title: string
   episode: number
@@ -48,7 +101,14 @@ export interface BriefPromptInput {
   dialogueLines: string[]
   /** 弹幕行（已抽样） */
   danmakuLines: string[]
+  /** 配乐证据行（`formatMusicEvidence` 的产物；没有就不传） */
+  musicLines?: string[]
   userScores: string
+  /**
+   * 维度定义（模板里每个维度的 description）。
+   * 光给「电波 / 沉浸」这几个词，模型只能猜它们指什么。
+   */
+  dimensionHints?: Record<string, string>
   /**
    * 片源有没有音轨（ffprobe 的探测结果）。
    *
@@ -71,7 +131,9 @@ const BRIEF_SYSTEM = [
   '',
   '你只负责这一集，输出一份给「整季汇总」用的结构化小结。铁律：',
   '1. **points 每条都要带时间码**，写清"发生了什么/为什么重要"，不要空话。',
-  '2. **只评你有把握的维度**：听不到音频就不要评音声/沉浸；看不清作画就不要评作画。',
+  '2. **只评你有把握的维度**：看不清作画就不要评作画；',
+  '   音频同理 —— 但如果你收到了【配乐证据】（响度/起音率/段落边界），就可以评「声音设计」',
+  '   （响度层次、静音与爆发的用法、节奏密度），这时要标 `"inferred"` 并在 reason 里说明"依据是测量不是听感"。',
   '   没把握的维度**直接不写**，比编一个分数好得多。',
   '3. **quotes 是可引用的原话**（台词/弹幕），标明来源；没有就空数组。',
   '4. **caveats 老实写**你看不清/听不到的东西。',
@@ -119,6 +181,15 @@ export function buildEpisodeBriefPrompt(input: BriefPromptInput): { system: stri
           '',
         ]
       : []),
+    ...(input.musicLines && input.musicLines.length > 0
+      ? [
+          '【配乐证据（本地测量，不是听感）】',
+          '响度单位 dBFS（越接近 0 越响）；起音率 = 每秒音符/打击事件数；段落边界是声学变化点，',
+          '**不是**"这里是副歌"这种结论。可以据此判断声音怎么参与叙事，不要评价旋律。',
+          ...input.musicLines,
+          '',
+        ]
+      : []),
     '【输出 JSON 结构】',
     '{',
     '  "episode": ' + input.episode + ',',
@@ -129,7 +200,12 @@ export function buildEpisodeBriefPrompt(input: BriefPromptInput): { system: stri
     '}',
     '',
     'points 给 3–6 条；scores 只给你有把握的维度；quotes 0–3 条；caveats 0–3 条。',
-    '维度**只能用这几个**（一个字都不要改）：' + input.dimensions.join(' / '),
+    '维度**只能用这几个**（一个字都不要改）：' + input.dimensions
+      .map((name) => {
+        const hint = input.dimensionHints?.[name]
+        return hint ? `${name}（${hint}）` : name
+      })
+      .join(' / '),
   ].join('\n')
 
   return { system: BRIEF_SYSTEM, prompt }
@@ -200,6 +276,8 @@ export interface SeriesSummaryInput {
   episodes: number[]
   /** 用户模板的维度（汇总时只许用这几个） */
   dimensions: string[]
+  /** 维度定义（模板 description），让模型知道「电波 / 沉浸」具体指什么 */
+  dimensionHints?: Record<string, string>
   /**
    * 盲评：默认 `true` —— 不把用户评分 / 点评交给模型。
    *
@@ -224,6 +302,14 @@ function buildSummarySystem(blind: boolean): string {
     '4. **不要写成"第 1 集讲了…第 2 集讲了…"的流水账**。整季影评要回答：',
     '   这部剧的骨架是什么、哪几集是支点、它的毛病是不是结构性的。',
     '5. 正文不超过 1200 字；timeline 6–10 条；每个维度 reason 不超过 40 字。',
+    '6. **列出的每个维度都必须出现在 scores 里**：有直接证据的给分并标 `"confidence":"direct"`；',
+    '   只能间接推断的也要给分、标 `"inferred"` 并说清从什么推的；完全无从判断给 `"value":null` + `"none"`。',
+    '   **禁止用 5.0 当作"不知道"的占位分。**',
+    '7. **「沉浸」= 音声 × 视觉 × 氛围 的协同度**（配乐段落与画面切换是否同步、镜头节奏、台词与观众反应）。',
+    '   reason 至少引用两类证据；只有一类时必须标 inferred。',
+    '8. **「电波」是看完之后的第一印象总分**，不是其它维度的平均；正文结尾写一句第一印象，电波 reason 引用它。',
+    '9. 【配乐证据】是**本地测量**，不是听感：「音声」评声音设计（响度层次/静音用法/节奏密度），',
+    '   不要评旋律、编曲、声优演技；这类判断给分并标 inferred。只有连测量都没有时才允许 null。',
     '',
     '输出必须是 JSON，不要任何解释文字。',
   ].join('\n')
@@ -259,7 +345,7 @@ export function buildSeriesSummaryPrompt(input: SeriesSummaryInput): { system: s
     '',
     '【输出 JSON 结构】',
     '{',
-    '  "scores": [{ "dimension": "剧情", "value": 8.1, "reason": "一句话说清为什么",',
+    '  "scores": [{ "dimension": "剧情", "value": 8.1, "confidence": "direct", "reason": "一句话说清为什么",',
     '               "evidence": [{ "episode": 1, "t": 754, "note": "具体是什么" }] }],',
     '  "markdown": "整季影评正文（Markdown，1200 字以内，带 [mm:ss] 时间码）",',
     '  "timeline": [{ "episode": 1, "t": 754, "text": "这个时间点发生了什么/说明了什么" }],',
@@ -268,10 +354,16 @@ export function buildSeriesSummaryPrompt(input: SeriesSummaryInput): { system: s
     '  "caveats": ["总结过程中不确定的地方"]',
     '}',
     '',
-    '评分维度**只能是这几个**（一个字都不要改）：' + (input.dimensions.length > 0
-      ? input.dimensions.join(' / ')
+    '**下面每个维度都必须出现**（一个字都不要改）：' + (input.dimensions.length > 0
+      ? input.dimensions
+        .map((name) => {
+          const hint = input.dimensionHints?.[name]
+          return hint ? `${name}（${hint}）` : name
+        })
+        .join(' / ')
       : Array.from(new Set(input.briefs.flatMap((brief) => brief.scores.map((s) => s.dimension)))).join(' / ')),
     '0–10 分，允许一位小数；每个分数都必须有 reason，能给出 evidence 就必须给。',
+    '没把握的维度给 `"value": null` + `"confidence": "none"` 并写明缺什么 —— **不要用 5.0 充数**。',
   ].filter((line) => line !== '').join('\n')
 
   return { system: buildSummarySystem(input.blind !== false), prompt }

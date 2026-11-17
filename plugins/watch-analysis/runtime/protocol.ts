@@ -12,7 +12,15 @@
  *
  * 通信协议：一行一个 JSON（stdout），**不要往 stdout 打日志** —— 日志走 stderr。
  */
-import type { BudgetLedger, DanmakuSummary, Sheet, Shot, WatchPhase } from '../core/types'
+import type {
+  BudgetLedger,
+  DanmakuSummary,
+  MusicAnalysisSummary,
+  MusicEvidence,
+  Sheet,
+  Shot,
+  WatchPhase,
+} from '../core/types'
 import type { RenderStrategy } from '../ports/render'
 
 // ─────────────────────────────────────────────────────────────
@@ -66,6 +74,15 @@ export interface WatchAnalyzeOptions {
    * 24 分钟整段喂给 MOSS 会 CUDA OOM；显存小调小、显存大调大（少加载几次模型）。
    */
   asrChunkSeconds?: number
+  /**
+   * 配乐证据（Music Evidence Engine）：
+   *   - `auto`（默认）装了就跑，约 0.25× 实时（24 分钟 ≈ 30 秒）；
+   *   - `off` 完全不碰（不想等、或这台机器没装）。
+   *
+   * 它给影评的「音声 / 沉浸」两维提供**可复核的测量**（响度/起音率/段落边界），
+   * 不是"好听不好听"的判断 —— 见 adapters/music-mee.mjs 的边界说明。
+   */
+  music?: 'auto' | 'off'
   /** 只分析这一段（秒） */
   from?: number
   to?: number
@@ -175,6 +192,19 @@ export interface WatchWorkerResult {
     step: number
     /** 静音区间（秒），匹配 dsh-see-now 的口径 */
     silences: Array<[number, number]>
+  }
+  /**
+   * 配乐证据（Music Evidence Engine）。
+   *
+   * 与上面的 `audio` 是两件事：`audio` 是 storyboard 顺手给的响度序列（经常没有），
+   * 这个是**专门跑一次 MEE** 的结果 —— 逐段响度/起音率 + 整集 BPM/调性/段落边界。
+   * 落盘后进 `WatchReport.audio`，影评 prompt 的【配乐证据】小节直接读它。
+   */
+  music?: {
+    windows: MusicEvidence[]
+    engine?: string
+    summary?: MusicAnalysisSummary
+    notes?: string[]
   }
   /** 各阶段实测耗时（秒） */
   timing: Record<string, number>

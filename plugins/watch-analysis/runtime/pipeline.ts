@@ -61,10 +61,12 @@ export interface WatchAnalyzer {
 }
 
 /** 默认策略：auto 让 storyboard 自己按时长定张数，我们只给预算上限 */
-const DEFAULT_OPTIONS: Required<Pick<WatchAnalyzeOptions, 'strategy' | 'budgetPixels' | 'transcript'>> = {
+const DEFAULT_OPTIONS: Required<Pick<WatchAnalyzeOptions, 'strategy' | 'budgetPixels' | 'transcript' | 'music'>> = {
   strategy: 'auto',
   budgetPixels: 360_000,
   transcript: 'auto',
+  // 配乐证据默认开：24 分钟约 30 秒，换来影评「音声/沉浸」有实测依据
+  music: 'auto',
 }
 
 /** 把 payload 映射成落盘结构。**这里不做任何判断**，只搬运 + 补元数据。 */
@@ -138,6 +140,7 @@ export function buildReport(
         }
       : {}),
     ...(payload.audio ? { loudness: payload.audio } : {}),
+    ...(payload.music ? { audio: payload.music } : {}),
     ...(payload.plan
       ? {
           render: {

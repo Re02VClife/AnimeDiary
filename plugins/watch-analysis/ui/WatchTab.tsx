@@ -129,6 +129,13 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
   /** 宫格图张数上下限；null / 0 = 自动（每 80 秒一张） */
   const [minSheets, setMinSheets] = useState<number | null>(null)
   const [maxSheets, setMaxSheets] = useState<number | null>(null)
+  /**
+   * 是否跑配乐证据（Music Evidence Engine）。
+   *
+   * 默认跟随依赖：装了就跑（24 分钟约 30 秒），换来影评「音声 / 沉浸」有实测依据；
+   * 没装就自动跳过（worker 也会自己降级，这里只是别让开关看起来像"开着"）。
+   */
+  const [musicOn, setMusicOn] = useState<boolean | null>(null)
 
   /** 本地 MOSS 是否就绪。`undefined` = 服务端没给（旧版本），按「未知」处理、不禁用选项 */
   const asrReady = useMemo<boolean | undefined>(() => {
@@ -136,8 +143,17 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
     return dep ? dep.ok : undefined
   }, [deps])
 
+  /** MEE 是否就绪（可选依赖，缺了只影响影评的音声依据） */
+  const meeReady = useMemo<boolean | undefined>(() => {
+    const dep = deps?.deps.find((d) => d.id === 'mee')
+    return dep ? dep.ok : undefined
+  }, [deps])
+
   /** 依赖就绪时默认用 ASR 兜底；用户手动关掉就按用户的 */
   const effectiveAsr = asrFallback ?? asrReady === true
+
+  /** 配乐分析默认开（缺依赖时 worker 会静默降级） */
+  const effectiveMusic = musicOn ?? meeReady !== false
 
   /** 派生：不让用户在三选一和两个开关之间来回理解 */
   const transcriptMode: TranscriptMode = !readSubtitle ? 'off' : effectiveAsr ? 'asr' : 'auto'
@@ -343,6 +359,7 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
     try {
       const started = await analyze(animeKey, episode, {
         transcript: transcriptMode,
+        music: effectiveMusic ? 'auto' : 'off',
         ...(minSheets !== null && minSheets > 0 ? { minSheets } : {}),
         ...(maxSheets !== null && maxSheets > 0 ? { maxSheets } : {}),
       }, videoFile)
@@ -352,7 +369,7 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
     } finally {
       setStarting(false)
     }
-  }, [animeKey, episode, videoFile, transcriptMode, minSheets, maxSheets])
+  }, [animeKey, episode, videoFile, transcriptMode, effectiveMusic, minSheets, maxSheets])
 
   /**
    * 取消是「请求」不是「结果」：服务端把任务标成 cancelled 后，状态轮询会看到
@@ -651,6 +668,25 @@ export const WatchTab: FC<WatchTabProps> = ({ animeKey, episode, title, videoFil
             )}
             {asrReady === false && (
               <Typography.Text style={mutedTextStyle}>本地 MOSS 未就绪，见上方「可选依赖」</Typography.Text>
+            )}
+          </div>
+
+          {/* 配乐证据：影评「音声 / 沉浸」两维的依据 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Typography.Text style={mutedTextStyle}>配乐证据</Typography.Text>
+            <Switch
+              size="small"
+              checked={effectiveMusic}
+              onChange={setMusicOn}
+              aria-label="配乐分析"
+            />
+            <Typography.Text style={mutedTextStyle}>
+              Music Evidence Engine 本地测量（响度/起音率/段落边界），一集 24 分钟约 30 秒；影评靠它评音声与沉浸
+            </Typography.Text>
+            {meeReady === false && (
+              <Typography.Text style={{ ...mutedTextStyle, color: 'var(--color-warning)' }}>
+                未装 MEE，打开也不会有数据（见上方「可选依赖」）
+              </Typography.Text>
             )}
           </div>
 

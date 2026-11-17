@@ -23,12 +23,13 @@ import type { WatchStore } from './store'
 import {
   buildEpisodeBriefPrompt,
   buildSeriesSummaryPrompt,
+  formatMusicEvidence,
   parseEpisodeBrief,
 } from './review-fanout'
 import type { EpisodeBrief } from './review-fanout'
 
 /** 提示词版本：改了提示词就 +1（影评记录里存它，便于"换尺子后为什么结果变了"复盘） */
-export const REVIEW_PROMPT_VERSION = '1.0.1'
+export const REVIEW_PROMPT_VERSION = '1.0.2'
 
 /** 单图大小上限：超过就跳过（4MB 的 PNG 转 base64 会撑爆请求体） */
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024
@@ -253,6 +254,19 @@ function buildPrompt(
     '12. **控制篇幅**（这条关系到成败，不是风格问题）：正文不超过 1000 字；timeline 最多 6 条；',
     '    每个维度的 reason 不超过 40 字；caveats 最多 3 条。写不完就只写重点，不要堆砌。',
     '    实测输出太长会被上游截断在半截，整篇影评直接作废 —— 短而完整远胜长而报废。',
+    '13. **列出的每个维度都必须出现在 scores 里**。有直接证据的给分并标 `"confidence":"direct"`；',
+    '    只能间接推断的（例如没有音频时按节奏推沉浸）也要给分，标 `"confidence":"inferred"` 并说清从什么推的；',
+    '    完全无从判断给 `"value":null` + `"confidence":"none"` 并写明缺什么。**禁止用 5.0 当作"不知道"的占位分。**',
+    '14. **「沉浸」是合成维度**：它 = 音声 × 视觉 × 氛围 的协同度（配乐段落与画面切换是否同步、镜头长度与构图、',
+    '    台词情绪加观众反应）。给分前把这三类各看一遍，reason 至少引用两类；只有一类证据时必须标 inferred。',
+    '15. **「电波」是看完之后的"第一印象总分"**：不是其它维度的平均，也不是某个技术指标。它允许主观，',
+    '    但要在正文结尾用一句话写出你的第一印象，电波分的 reason 直接引用那句话。',
+    '16. 【配乐证据】是**本地测量**（响度 / 起音率 / 段落边界），不是听感。',
+    '    「音声」在只有测量值时，评的是**声音设计**：响度层次（哪段更响、落差多大）、静音与爆发的用法、',
+    '    节奏密度是否与画面切点同步。**不要**评旋律、编曲、声优演技——你没听到。',
+    '    这类有测量依据的判断要**给分**并标 `"inferred"`，reason 里写明"这是声音设计层面的判断，不是听感"。',
+    '    「音声」只有在**连测量都没有**（没音轨、或这一集没跑配乐分析）时才允许 `null`。',
+    '17. 引擎标注"不可用"的读数（例如调性、和弦）不要当事实引用，只能写进 caveats 说明局限。',
     '',
     '输出必须是 JSON，不要任何解释文字。',
   ].join('\n')
@@ -344,12 +358,31 @@ function buildPrompt(
     danmakuLines.push(`E${report.episode}（共 ${summary.rawTotal ?? summary.total} 条弹幕）：\n${lines.join('\n')}`)
   }
 
+  /*
+   * 配乐证据（Music Evidence Engine）：**音声 / 沉浸两维唯一的一手依据**。
+   *
+   * 以前没有这一步，模型只能写"听不到，无法判断"（2026-11-17 实测：单集影评只评了 4 维，
+   * 音声/沉浸/深度/电波全缺）。这里只给**测量值**和引擎自报的不可用项，
+   * 不给"好听"结论 —— 那本来就不是模型该下的判断（见 system 第 16 条）。
+   */
+  const musicLines: string[] = []
+  for (const report of reports.slice(0, 12)) {
+    const line = formatMusicEvidence(report)
+    if (line) musicLines.push(line)
+  }
+
   // 维度只能用用户模板里那些（中文标签由前端翻译好传进来）。
   // 用户没打过分的维度不要去评 —— 那会让多出来的分数显得凭空出现。
+  //
+  // 每个维度**带上模板里的定义**：光给「电波 / 沉浸」这几个词，模型只能猜
+  // （实测把「电波」理解成"对不上频道"，而用户的定义是"看完的第一印象总分"）。
   const userDimensions = Object.keys(userContext.scores ?? {})
-  const dimensionList = userDimensions.length > 0
-    ? userDimensions.join(' / ')
-    : '剧情 / 作画 / 音声 / 制作 / 沉浸 / 人设 / 深度 / 电波'
+  const dimensionList = (userDimensions.length > 0 ? userDimensions : FALLBACK_DIMENSIONS)
+    .map((name) => {
+      const hint = userContext.dimensionHints?.[name]
+      return hint ? `${name}（${hint}）` : name
+    })
+    .join(' / ')
 
   const prompt = [
     `【作品】${title}`,
@@ -367,6 +400,15 @@ function buildPrompt(
     '【镜头与台词时间码（节选）】',
     ...shotLines,
     '',
+    ...(musicLines.length > 0
+      ? [
+          '【配乐证据（本地测量，不是听感）】',
+          '响度单位 dBFS（越接近 0 越响）；起音率 = 每秒音符/打击事件数（越高节奏越碎）；',
+          '段落边界是声学变化点，**不是**"这里是副歌"这种结论。用它判断声音怎么参与叙事，不要评价旋律。',
+          ...musicLines,
+          '',
+        ]
+      : []),
     ...(dialogueLines.length > 0
       ? [
           '【台词（字幕文件或本地 ASR，同音字可能有错）】',
@@ -394,8 +436,9 @@ function buildPrompt(
     '【输出 JSON 结构】',
     '{',
     '  "scores": [',
-    '    { "dimension": "剧情", "value": 8.1, "reason": "一句话说清为什么",',
-    '      "evidence": [{ "episode": 1, "t": 754, "note": "具体是什么" }] }',
+    '    { "dimension": "剧情", "value": 8.1, "confidence": "direct", "reason": "一句话说清为什么",',
+    '      "evidence": [{ "episode": 1, "t": 754, "note": "具体是什么" }] },',
+    '    { "dimension": "音声", "value": null, "confidence": "none", "reason": "这一集没有音轨数据", "evidence": [] }',
     '  ],',
     '  "markdown": "影评正文（Markdown，1000 字以内，可以插图和 [mm:ss] 时间码）",',
     '  "timeline": [{ "episode": 1, "t": 754, "text": "这个时间点发生了什么/说明了什么", "shot": 42 }],',
@@ -404,26 +447,59 @@ function buildPrompt(
     '  "caveats": ["信息不足/不确定的地方"]',
     '}',
     '',
-    '评分维度**只能是这几个**（一个字都不要改）：' + dimensionList,
+    '**下面每个维度都必须出现在 scores 里**（一个字都不要改）：' + dimensionList,
     '0–10 分，允许一位小数。**每个分数都必须有 reason，能给出 evidence 就必须给。**',
-    '用户没打过分的维度不要评 —— 多出来的分数会让雷达图看起来凭空多了一堆点。',
+    '没把握的维度给 `"value": null` + `"confidence": "none"`，并写明缺什么证据 —— **不要用 5.0 充数**。',
   ].filter((line) => line !== '').join('\n')
 
   return { system, prompt }
 }
 
-/** 校验并收窄模型输出。坏掉的条目丢掉而不是让整篇失败 —— 影评正文通常还是可用的。 */
-function normalizeScores(raw: unknown, reports: WatchReport[]): AiDimensionScore[] {
-  if (!Array.isArray(raw)) return []
+/** 维度别名：老影评里模型按兜底列表写了「声音」，而模板维度叫「音声」 */
+const DIMENSION_ALIASES: Record<string, string> = {
+  声音: '音声',
+}
+
+function canonicalDimension(name: string): string {
+  return DIMENSION_ALIASES[name] ?? name
+}
+
+/**
+ * 校验并收窄模型输出。
+ *
+ * 两条硬规则（都是 2026-11-17 实测逼出来的）：
+ *   1. **白名单外一律丢弃** —— 模型会自编「角色 / 搞笑 / 演出」这类轴，雷达图会被撑爆；
+ *   2. **白名单内缺的补 `value:null`** —— 提示词要求八维齐全，但模型经常只给 2–4 个。
+ *      不补的话 UI 只能显示"有分的几行"，用户以为 AI 漏看了；补 null 之后是
+ *      "这一维 AI 拿不出证据"，语义完全不同。
+ *
+ * 坏掉的条目仍然丢掉而不是让整篇失败 —— 影评正文通常还是可用的。
+ */
+function normalizeScores(
+  raw: unknown,
+  reports: WatchReport[],
+  expected: string[] = [],
+): AiDimensionScore[] {
+  if (!Array.isArray(raw) && expected.length === 0) return []
   const episodeDurations = new Map(reports.map((r) => [r.episode, r.video.duration]))
-  const out: AiDimensionScore[] = []
-  for (const item of raw) {
+  const allowed = expected.map(canonicalDimension)
+  const byDimension = new Map<string, AiDimensionScore>()
+
+  for (const item of Array.isArray(raw) ? raw : []) {
     if (!item || typeof item !== 'object') continue
     const record = item as Record<string, unknown>
-    const dimension = str(record.dimension)
+    const dimension = canonicalDimension(str(record.dimension))
     if (!dimension) continue
-    const value = Math.max(0, Math.min(10, num(record.value, 0)))
+    if (allowed.length > 0 && !allowed.includes(dimension)) continue
+    if (byDimension.has(dimension)) continue
+    const rawValue = record.value
+    // `null` 是模型明确表示"无从判断"，不是缺字段 —— 要保留下来
+    const value = rawValue === null ? null : Math.max(0, Math.min(10, num(rawValue, 0)))
     const reason = str(record.reason)
+    const confidenceRaw = str(record.confidence)
+    const confidence = confidenceRaw === 'direct' || confidenceRaw === 'inferred' || confidenceRaw === 'none'
+      ? confidenceRaw as AiDimensionScore['confidence']
+      : undefined
     const evidence: AiDimensionScore['evidence'] = []
     if (Array.isArray(record.evidence)) {
       for (const ev of record.evidence) {
@@ -437,7 +513,30 @@ function normalizeScores(raw: unknown, reports: WatchReport[]): AiDimensionScore
         evidence.push({ episode, t: Math.round(t * 10) / 10, ...(str(evRecord.note) ? { note: str(evRecord.note) } : {}) })
       }
     }
-    out.push({ dimension, value: Math.round(value * 10) / 10, reason, evidence })
+    byDimension.set(dimension, {
+      dimension,
+      value: value === null ? null : Math.round(value * 10) / 10,
+      ...(confidence ? { confidence } : {}),
+      reason,
+      evidence,
+    })
+  }
+
+  // 白名单里模型没给的维度：补成"未评"，让 UI 能如实显示缺哪几维
+  const out: AiDimensionScore[] = []
+  for (const dimension of allowed.length > 0 ? allowed : [...byDimension.keys()]) {
+    const found = byDimension.get(dimension)
+    if (found) {
+      out.push(found)
+      continue
+    }
+    out.push({
+      dimension,
+      value: null,
+      confidence: 'none',
+      reason: '模型没有给出这个维度（可能是它认为证据不足）',
+      evidence: [],
+    })
   }
   return out
 }
@@ -543,6 +642,17 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       picked = picked.filter((r) => allow.has(r.episode))
     }
     return picked
+  }
+
+  /**
+   * 这次要评的维度白名单。
+   *
+   * 非盲评 = 用户模板里有分的维度（模板是权威）；盲评 / 没打分 = 默认八维。
+   * 它同时决定三件事：提示词里列哪几个、模型多给的丢弃、模型少给的补 null。
+   */
+  function expectedDimensionsOf(userContext: NonNullable<ReviewRequest['userContext']>): string[] {
+    const fromUser = Object.keys(userContext.scores ?? {})
+    return fromUser.length > 0 ? fromUser : FALLBACK_DIMENSIONS
   }
 
   /** 每集配额 + 集内均匀采样：单次模式与 fanout 共用同一份收集逻辑 */
@@ -673,6 +783,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
         episodes: [report.episode],
       })
 
+      const musicLine = formatMusicEvidence(report)
       const { system, prompt } = buildEpisodeBriefPrompt({
         title,
         episode: report.episode,
@@ -683,6 +794,8 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
         ...episodeMaterial(report),
         userScores: userScoreText(userContext, blind),
         dimensions,
+        ...(userContext.dimensionHints ? { dimensionHints: userContext.dimensionHints } : {}),
+        ...(musicLine ? { musicLines: [musicLine] } : {}),
         ...(typeof report.video.hasAudio === 'boolean' ? { hasAudio: report.video.hasAudio } : {}),
       })
 
@@ -760,6 +873,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       userReview: blind ? undefined : userContext.review,
       episodes: selected.map((report) => report.episode),
       dimensions,
+      ...(userContext.dimensionHints ? { dimensionHints: userContext.dimensionHints } : {}),
       blind,
     })
 
@@ -791,7 +905,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
     }
     const record = parsed as Record<string, unknown>
 
-    const scores = normalizeScores(record.scores, selected)
+    const scores = normalizeScores(record.scores, selected, dimensions)
     const timeline = normalizeTimeline(record.timeline, selected)
     const citations = normalizeCitations(record.citations, collected.available)
     const rawMarkdown = str(record.markdown)
@@ -909,7 +1023,17 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
        */
       const requestContext = req.userContext ?? { title: req.key }
       const blind = req.options?.blind !== false
-      const userContext = blind ? { title: requestContext.title } : requestContext
+      /*
+       * 盲评只丢弃"用户的判断"（评分/点评/标签），**维度定义要留下** ——
+       * 那是对「电波」「沉浸」这些词的客观说明，不泄露用户偏好。
+       * 丢了它模型就得自己猜"电波是什么意思"（实测猜成"对不上频道"）。
+       */
+      const userContext = blind
+        ? {
+            title: requestContext.title,
+            ...(requestContext.dimensionHints ? { dimensionHints: requestContext.dimensionHints } : {}),
+          }
+        : requestContext
 
       /*
        * 生成方式：
@@ -995,7 +1119,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       }
       const record = parsed as Record<string, unknown>
 
-      const scores = normalizeScores(record.scores, selected)
+      const scores = normalizeScores(record.scores, selected, expectedDimensionsOf(requestContext))
       const timeline = normalizeTimeline(record.timeline, selected)
       const citations = normalizeCitations(record.citations, collected.available)
       const rawMarkdown = str(record.markdown)
@@ -1003,9 +1127,14 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
 
       const caveats = strArray(record.caveats)
       // 自己没有证据的分数：不拒绝，但要如实提示——这是产品要求
-      const noEvidence = scores.filter((s) => s.evidence.length === 0)
+      const noEvidence = scores.filter((s) => s.value !== null && s.evidence.length === 0)
       if (noEvidence.length > 0) {
         caveats.push(`有 ${noEvidence.length} 个维度没有给出证据（${noEvidence.map((s) => s.dimension).join('、')}）`)
+      }
+      // 连分都没给的维度（模型自认无从判断）：单独说一句，别和"没证据"混为一谈
+      const unrated = scores.filter((s) => s.value === null)
+      if (unrated.length > 0) {
+        caveats.push(`有 ${unrated.length} 个维度未能评分（${unrated.map((s) => s.dimension).join('、')}）：模型认为证据不足`)
       }
       // 时间码被丢掉的数量：说明模型编了不存在的定位
       const rawTimelineCount = Array.isArray(record.timeline) ? record.timeline.length : 0
