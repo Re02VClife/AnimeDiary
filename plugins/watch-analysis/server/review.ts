@@ -84,6 +84,13 @@ export interface DescribeResult {
     reasoningTokens?: number
   }
   model: string
+  /**
+   * 结束原因（`stop` / `length` / `content_filter`…）。
+   *
+   * `length` + 空正文 = 推理模型的思维链把输出预算吃光了 —— 这是 2026-11-17
+   * 「输出 0 字符」那次故障的根因，必须把原因带到错误信息里，否则看起来像"模型没说话"。
+   */
+  finishReason?: string
 }
 
 /**
@@ -671,15 +678,27 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
           signal,
         })
 
-        const result = await attempt(8000)
+        /*
+         * 推理模型会先花几千 token 思考。4000 曾经让 E3/E5 返回半截 JSON；
+         * 12000 又让「只思考、不输出」出现（正文 0 字符）—— 所以给到 12000，
+         * 空正文时再加倍，仍不行才重试一次更大的预算。
+         */
+        let result = await attempt(12000)
         addUsage(totalUsage, result.usage)
+        if (!result.text.trim()) {
+          result = await attempt(24000)
+          addUsage(totalUsage, result.usage)
+        }
         let brief = parseEpisodeBrief(result.text, report.episode)
         if (!brief) {
-          const retry = await attempt(12000)
+          const retry = await attempt(24000)
           addUsage(totalUsage, retry.usage)
           brief = parseEpisodeBrief(retry.text, report.episode)
           if (!brief) {
-            failures.push(`E${report.episode} 的小结无法解析（重试后仍失败，输出 ${retry.text.length} 字符）`)
+            failures.push(
+              `E${report.episode} 的小结无法解析（重试后仍失败，输出 ${retry.text.length} 字符，` +
+              `finishReason=${retry.finishReason ?? '未知'}）`,
+            )
           }
         }
         if (brief) briefs.push(brief)
@@ -719,22 +738,31 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       dimensions,
     })
 
-    const result = await opts.describe({
+    // 汇总是纯文字、不带图，但推理模型同样会把预算花在思考上 —— 24000 起步，空则加倍
+    const callSummary = (maxTokens: number) => opts.describe({
       system,
       prompt,
       images: [],
       jsonMode: true,
-      maxTokens: 12000,
+      maxTokens,
       timeoutMs: REVIEW_TIMEOUT_MS,
       signal,
     })
+
+    let result = await callSummary(24000)
     addUsage(totalUsage, result.usage)
+    if (!result.text.trim()) {
+      result = await callSummary(48000)
+      addUsage(totalUsage, result.usage)
+    }
 
     onEvent?.({ type: 'phase', phase: 'parse', message: '解析汇总结果、校验时间码与引用' })
     const parsed = extractJson(result.text)
     if (!parsed || typeof parsed !== 'object') {
       const tail = result.text.slice(-240).replace(/\s+/g, ' ')
-      throw new Error(`汇总没有返回合法 JSON（输出 ${result.text.length} 字符，结尾：「${tail}」）`)
+      const finish = result.finishReason ? `，finishReason=${result.finishReason}` : ''
+      const thinking = result.usage.reasoningTokens ? `，其中思考 ${result.usage.reasoningTokens} token` : ''
+      throw new Error(`汇总没有返回合法 JSON（输出 ${result.text.length} 字符${finish}${thinking}，结尾：「${tail}」）`)
     }
     const record = parsed as Record<string, unknown>
 
@@ -876,17 +904,33 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
         blind,
       )
 
-      const result = await opts.describe({
+      /*
+       * 调模型。
+       *
+       * maxTokens 从 12000 提到 24000：推理模型的思维链会吃掉大部分预算 ——
+       * 实测 48 张那次 completion 11,841 里有 10,445 是思考，正好压在 12000 上限，
+       * 稍微长一点就「输出 0 字符」（2026-11-17 用户看到的失败）。
+       * 空正文时再加倍重试一次。
+       */
+      const callModel = (maxTokens: number) => opts.describe({
         system,
         prompt,
         images: collected.images,
         jsonMode: true,
-        // 影评正文 + JSON 结构。实测 6000 会被截断（JSON 不完整 → 解析失败），
-        // 一篇 24 分钟单集的影评正文 + 8 个维度 + 时间轴经常超 6000 token。
-        maxTokens: 12000,
+        maxTokens,
         timeoutMs: REVIEW_TIMEOUT_MS,
         signal,
       })
+
+      let result = await callModel(24000)
+      if (!result.text.trim()) {
+        onEvent?.({
+          type: 'phase',
+          phase: 'call',
+          message: `模型只输出了思考（${result.usage.reasoningTokens ?? 0} token），加倍输出预算重试`,
+        })
+        result = await callModel(48000)
+      }
 
       // 预算：请求里带就用请求的（配置页那个 InputNumber），否则用默认 200 万
       const budgetLimit = Math.max(0, Math.floor(req.options?.budget ?? defaultBudgetLimit))
@@ -899,10 +943,12 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       onEvent?.({ type: 'phase', phase: 'parse', message: '解析模型输出、校验时间码与引用' })
       const parsed = extractJson(result.text)
       if (!parsed || typeof parsed !== 'object') {
-        // 只报"没返回 JSON"等于什么都没说 —— 把输出结尾带进错误里，
-        // 才能判断是"被截断"（结尾是半截 JSON）还是"根本没按格式写"（结尾是正文）
+        // 只报"没返回 JSON"等于什么都没说 —— 把输出结尾、结束原因、思考 token 都带上，
+        // 才能判断是"被截断"（length）、"内容过滤"还是"根本没按格式写"
         const tail = result.text.slice(-240).replace(/\s+/g, ' ')
-        throw new Error(`模型没有返回合法 JSON（输出 ${result.text.length} 字符，结尾：「${tail}」）`)
+        const finish = result.finishReason ? `，finishReason=${result.finishReason}` : ''
+        const thinking = result.usage.reasoningTokens ? `，其中思考 ${result.usage.reasoningTokens} token` : ''
+        throw new Error(`模型没有返回合法 JSON（输出 ${result.text.length} 字符${finish}${thinking}，结尾：「${tail}」）`)
       }
       const record = parsed as Record<string, unknown>
 

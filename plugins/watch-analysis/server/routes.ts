@@ -267,11 +267,12 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
         },
       ]
 
-      /** 统一 chat / chatStream 两种结果的形状（review.ts 只认 text/usage/model） */
+      /** 统一 chat / chatStream 两种结果的形状（review.ts 只认 text/usage/model/finishReason） */
       const toResult = (result: {
         content: string
         usage: { promptTokens: number; completionTokens: number; totalTokens: number; reasoningTokens?: number }
         model: string
+        finishReason?: string
       }) => ({
         text: result.content,
         usage: {
@@ -281,6 +282,7 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
           ...(result.usage.reasoningTokens ? { reasoningTokens: result.usage.reasoningTokens } : {}),
         },
         model: result.model,
+        ...(result.finishReason ? { finishReason: result.finishReason } : {}),
       })
 
       try {
@@ -361,7 +363,12 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
           purpose: 'watch-review',
           signal,
         })
-        return { text: result.content, usage: result.usage, model: result.model }
+        return {
+          text: result.content,
+          usage: result.usage,
+          model: result.model,
+          ...(result.finishReason ? { finishReason: result.finishReason } : {}),
+        }
       },
     })
     return reviewGenerator
