@@ -66,6 +66,15 @@ const FALLBACK_DIMENSIONS = ['剧情', '作画', '音声', '制作', '沉浸', '
 const DEFAULT_BUDGET = 2_000_000
 
 /**
+ * 单次调用的输出预算上限（2026-11-17 用户要求提到 100k）。
+ *
+ * 这是**上限不是目标**：提示词仍然要求正文 1000 字出头，模型不会因为上限高就写满；
+ * 费用按实际 token 计，不按上限。它只保证推理模型的思维链有足够空间 ——
+ * 12k 时实测出现过「思考 10,998 token、正文 0 字符」。
+ */
+const REVIEW_MAX_TOKENS = 100_000
+
+/**
  * 影评请求的超时（毫秒）。
  *
  * 实测一集 24 分钟的影评要 110–180 秒：输出 12000 token 是主要耗时，
@@ -683,15 +692,15 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
          * 12000 又让「只思考、不输出」出现（正文 0 字符）—— 所以给到 12000，
          * 空正文时再加倍，仍不行才重试一次更大的预算。
          */
-        let result = await attempt(12000)
+        let result = await attempt(REVIEW_MAX_TOKENS)
         addUsage(totalUsage, result.usage)
         if (!result.text.trim()) {
-          result = await attempt(24000)
+          result = await attempt(REVIEW_MAX_TOKENS)
           addUsage(totalUsage, result.usage)
         }
         let brief = parseEpisodeBrief(result.text, report.episode)
         if (!brief) {
-          const retry = await attempt(24000)
+          const retry = await attempt(REVIEW_MAX_TOKENS)
           addUsage(totalUsage, retry.usage)
           brief = parseEpisodeBrief(retry.text, report.episode)
           if (!brief) {
@@ -738,7 +747,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       dimensions,
     })
 
-    // 汇总是纯文字、不带图，但推理模型同样会把预算花在思考上 —— 24000 起步，空则加倍
+    // 汇总是纯文字、不带图；预算同样给到 100k（空正文再试一次）
     const callSummary = (maxTokens: number) => opts.describe({
       system,
       prompt,
@@ -749,10 +758,10 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       signal,
     })
 
-    let result = await callSummary(24000)
+    let result = await callSummary(REVIEW_MAX_TOKENS)
     addUsage(totalUsage, result.usage)
     if (!result.text.trim()) {
-      result = await callSummary(48000)
+      result = await callSummary(REVIEW_MAX_TOKENS)
       addUsage(totalUsage, result.usage)
     }
 
@@ -907,10 +916,8 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       /*
        * 调模型。
        *
-       * maxTokens 从 12000 提到 24000：推理模型的思维链会吃掉大部分预算 ——
-       * 实测 48 张那次 completion 11,841 里有 10,445 是思考，正好压在 12000 上限，
-       * 稍微长一点就「输出 0 字符」（2026-11-17 用户看到的失败）。
-       * 空正文时再加倍重试一次。
+       * 输出预算 100k：推理模型的思维链会吃掉一两万，12k 时会出现「只思考、不输出」。
+       * 空正文再重试一次（可能是网关抖动）。
        */
       const callModel = (maxTokens: number) => opts.describe({
         system,
@@ -922,14 +929,14 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
         signal,
       })
 
-      let result = await callModel(24000)
+      let result = await callModel(REVIEW_MAX_TOKENS)
       if (!result.text.trim()) {
         onEvent?.({
           type: 'phase',
           phase: 'call',
-          message: `模型只输出了思考（${result.usage.reasoningTokens ?? 0} token），加倍输出预算重试`,
+          message: `模型只输出了思考（${result.usage.reasoningTokens ?? 0} token），重试一次`,
         })
-        result = await callModel(48000)
+        result = await callModel(REVIEW_MAX_TOKENS)
       }
 
       // 预算：请求里带就用请求的（配置页那个 InputNumber），否则用默认 200 万
