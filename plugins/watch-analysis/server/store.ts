@@ -1,7 +1,7 @@
 /**
  * server/store — 拉片报告的落盘
  *
- * 存储位置：`{DATA_DIR}/watch-reports/{safeKey}/{episode}.json` + `{safeKey}/sheets/*.png`
+ * 存储位置：`{DATA_DIR}/watch-reports/{safeKey}/{episode}.json` + `{safeKey}/sheets/ep{N}/*.jpg`
  *
  * 三条约定（和仓库里 music-links / local-library 的侧车数据保持一致）：
  *   1. **不进 Excel** —— Excel 是用户的评分表，拉片是派生数据，丢了可以重算
@@ -74,10 +74,20 @@ export function createWatchStore(DATA_DIR: string): WatchStore {
 
   function sheetFile(key: string, episode: number, file: string): string | null {
     // file 来自报告 JSON，可能被手工改过 —— 必须挡掉 `../` 穿越
+    //
+    // 还要挡掉「空文件名」和「解析出来是目录本身」两种：
+    //   - `file=''`  → path.resolve(base, '') === base → 目录
+    //   - `file='.'` → 同上
+    // 以前这两种能通过 relative 检查（相对路径是空串），路由层 stat 也成功（目录），
+    // 最后 createReadStream(目录) 抛 EISDIR —— 没有 error 监听时**整个 API 进程退出**
+    // （2026-11-17 实测：GET /api/watch/sheet?file= 直接把后端打挂）。
+    const name = String(file ?? '').trim()
+    if (!name || name.includes('\0')) return null
     const base = sheetDir(key, episode)
-    const resolved = path.resolve(base, file)
+    const resolved = path.resolve(base, name)
     const relative = path.relative(base, resolved)
-    if (relative.startsWith('..') || path.isAbsolute(relative)) return null
+    // relative === '' 表示就是 base 目录本身，不是「base 里的某个文件」
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null
     return resolved
   }
 

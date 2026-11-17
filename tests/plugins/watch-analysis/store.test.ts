@@ -147,6 +147,21 @@ describe('sheetFile 目录穿越防护', () => {
     const store = createWatchStore(dir)
     expect(store.sheetFile('模板::标题', 1, 'ep01.evidence.json')).not.toBeNull()
   })
+
+  // 2026-11-17：空名/`.` 会解析成 sheetDir 目录本身，路由层 stat 成功后被
+  // createReadStream 当文件读 → EISDIR 未捕获异常 → 整个 API 进程退出。
+  it('空文件名返回 null（不是目录本身）', () => {
+    const store = createWatchStore(dir)
+    expect(store.sheetFile('模板::标题', 1, '')).toBeNull()
+    expect(store.sheetFile('模板::标题', 1, '   ')).toBeNull()
+  })
+
+  it('`.` 和 `./` 返回 null（那是目录，不是文件）', () => {
+    const store = createWatchStore(dir)
+    expect(store.sheetFile('模板::标题', 1, '.')).toBeNull()
+    expect(store.sheetFile('模板::标题', 1, './')).toBeNull()
+    expect(store.sheetFile('模板::标题', 1, 'sub/..')).toBeNull()
+  })
 })
 
 describe('listEpisodes / remove', () => {

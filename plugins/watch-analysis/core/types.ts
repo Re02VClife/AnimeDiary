@@ -184,7 +184,19 @@ export interface WatchReport {
   schema: 1
   key: string
   episode: number
-  video: Omit<VideoRef, 'animeKey' | 'episode'>
+  /**
+   * 视频本身的信息。
+   *
+   * `hasAudio` / `hasSubtitle` 是**探测结果**（ffprobe 给的），不是"这次有没有取到"：
+   *   - hasAudio=true 而 `loudness` / `audio` 都没有 = 音轨在，但我们没做音频分析
+   *   - 影评 prompt 需要它：模型只收到静帧，不给这个字段它会以为"片源没有音轨"，
+   *     然后在 caveats 里写下"全片无音频轨"这种**事实错误**（2026-11-17 实测两次都出现）
+   * 老报告没有这两个字段，所以是可选的。
+   */
+  video: Omit<VideoRef, 'animeKey' | 'episode'> & {
+    hasAudio?: boolean
+    hasSubtitle?: boolean
+  }
   /** 每个环节实际用的后端，写进报告让人知道这份结果是谁算的 */
   engine: {
     storyboard: string

@@ -61,6 +61,18 @@ describe('buildReport', () => {
     expect(report.cuts[0]).toMatchObject({ t: 5.2, score: 120, engine: 'hsv' })
   })
 
+  it('音轨/字幕探测结果要落盘（影评靠它区分「片源没音轨」和「没做音频分析」）', () => {
+    const withAudio = buildReport(makePayload(), REQ, '1')
+    expect(withAudio.video.hasAudio).toBe(true)
+    expect(withAudio.video.hasSubtitle).toBe(false)
+
+    const noAudio = buildReport(makePayload({
+      video: { duration: 1440, fps: 23.976, width: 1920, height: 1080, hasAudio: false, hasSubtitle: true },
+    }), REQ, '1')
+    expect(noAudio.video.hasAudio).toBe(false)
+    expect(noAudio.video.hasSubtitle).toBe(true)
+  })
+
   it('shots 保留台词与档位，并标出属于哪张图', () => {
     const report = buildReport(makePayload(), REQ, '1')
     expect(report.shots).toHaveLength(3)

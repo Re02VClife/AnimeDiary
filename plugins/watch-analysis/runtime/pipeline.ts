@@ -83,6 +83,9 @@ export function buildReport(
       fps: payload.video.fps,
       width: payload.video.width,
       height: payload.video.height,
+      // 探测结果要落盘：影评 prompt 靠它区分「片源没音轨」和「我们没做音频分析」
+      hasAudio: Boolean(payload.video.hasAudio),
+      hasSubtitle: Boolean(payload.video.hasSubtitle),
     },
     engine: {
       storyboard: 'dsh-video-storyboard',

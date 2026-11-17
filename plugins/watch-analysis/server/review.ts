@@ -28,7 +28,7 @@ import {
 import type { EpisodeBrief } from './review-fanout'
 
 /** 提示词版本：改了提示词就 +1（影评记录里存它，便于"换尺子后为什么结果变了"复盘） */
-export const REVIEW_PROMPT_VERSION = '1.0.0'
+export const REVIEW_PROMPT_VERSION = '1.0.1'
 
 /** 单图大小上限：超过就跳过（4MB 的 PNG 转 base64 会撑爆请求体） */
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024
@@ -137,6 +137,13 @@ export interface ReviewGeneratorOptions {
   }) => Promise<DescribeResult>
   appVersion: string
   budgetLimit?: number
+  /**
+   * 当前配置的模型名（由 routes 注入 `getClient().publicConfig().model`）。
+   *
+   * 缓存判定要比它：换了模型，分数会变，不该拿旧结果冒充新生成。
+   * 不传 = 不比较（单测 / 没配 AI 时不该因为读不到模型名就永远不命中）。
+   */
+  currentModel?: () => string | undefined
 }
 
 export interface ReviewGenerator {
@@ -238,11 +245,12 @@ function buildPrompt(
     '4. **只根据给你的分镜图和台词判断**。没看到的内容不要编造；信息不足就写进 caveats。',
     '5. 分镜图是压缩过的（格子上有编号），你能看到的细节有限；不要假装看清了表情或台词之外的小字。',
     '6. **分镜图底部可能有一条彩色带子，那是音轨/响度可视化，不是画面内容**。不要把它当成场景里的东西来评论。',
-    '7. 图格子上的数字是格子编号，不是年份或字幕。',
-    '8. **正文里不要写「格N」「第N格」**——那是给程序看的内部编号，读者不知道那是什么。要引用画面就直接描述画面里有什么。',
-    '9. **只写你确实看清的东西**。分镜图是压缩过的，表情、小字、细节都可能看不清；看不清就明说"这一段看不清细节"，**不要根据时间码去猜画面内容**——猜错比不写更糟，用户会当场发现。',
-    '10. **评分维度只能用下面列出的那几个**，不要新增、不要改名、不要合并。',
-    '11. **控制篇幅**（这条关系到成败，不是风格问题）：正文不超过 1000 字；timeline 最多 6 条；',
+    '7. **你只收到分镜静帧，没有声音**。片源可能有音轨、只是没把音频交给你 —— 所以音频相关的维度只能写「听不到，无法判断」，**不要断言「全片无音频轨」**（素材里会注明片源到底有没有音轨）。',
+    '8. 图格子上的数字是格子编号，不是年份或字幕。',
+    '9. **正文里不要写「格N」「第N格」**——那是给程序看的内部编号，读者不知道那是什么。要引用画面就直接描述画面里有什么。',
+    '10. **只写你确实看清的东西**。分镜图是压缩过的，表情、小字、细节都可能看不清；看不清就明说"这一段看不清细节"，**不要根据时间码去猜画面内容**——猜错比不写更糟，用户会当场发现。',
+    '11. **评分维度只能用下面列出的那几个**，不要新增、不要改名、不要合并。',
+    '12. **控制篇幅**（这条关系到成败，不是风格问题）：正文不超过 1000 字；timeline 最多 6 条；',
     '    每个维度的 reason 不超过 40 字；caveats 最多 3 条。写不完就只写重点，不要堆砌。',
     '    实测输出太长会被上游截断在半截，整篇影评直接作废 —— 短而完整远胜长而报废。',
     '',
@@ -262,9 +270,15 @@ function buildPrompt(
   const sheetLines: string[] = []
   for (const report of reports) {
     const sheets = sheetsByEpisode.get(report.episode) ?? []
+    // 音轨/字幕探测结果：不给模型的话，它会以为"没给我声音"等于"片源没有音轨"
+    const audio = report.video.hasAudio === true
+      ? '片源有音轨（本次没做音频分析，你听不到）'
+      : report.video.hasAudio === false
+        ? '片源无音轨'
+        : '音轨情况未知'
     sheetLines.push(
       `- E${report.episode}：时长 ${clock(report.video.duration)}，${report.shots.length} 个镜头，` +
-      `${report.cuts.length} 个切点，分镜图 ${sheets.map((s) => `${s.file}(${s.cells} 格)`).join(' / ') || '无'}`,
+      `${report.cuts.length} 个切点，分镜图 ${sheets.map((s) => `${s.file}(${s.cells} 格)`).join(' / ') || '无'}；${audio}`,
     )
   }
 
@@ -669,6 +683,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
         ...episodeMaterial(report),
         userScores: userScoreText(userContext, blind),
         dimensions,
+        ...(typeof report.video.hasAudio === 'boolean' ? { hasAudio: report.video.hasAudio } : {}),
       })
 
       try {
@@ -745,6 +760,7 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
       userReview: blind ? undefined : userContext.review,
       episodes: selected.map((report) => report.episode),
       dimensions,
+      blind,
     })
 
     // 汇总是纯文字、不带图；预算同样给到 100k（空正文再试一次）
@@ -845,11 +861,31 @@ export function createReviewGenerator(opts: ReviewGeneratorOptions): ReviewGener
           : '勾选的集都还没有做过拉片分析')
       }
 
-      // 缓存：同一份报告 + 同一个模型 + 同一版提示词，不重复花钱
+      /*
+       * 缓存判定：同一批集 + 同一个模型 + 同一版提示词，才不重复花钱。
+       *
+       * 三组都要比 —— 以前只按 key+scope 读，只要文件在就永远命中：
+       *   · 换了模型、改了提示词，"重新生成"拿回的仍是旧结果（面板还写着"模型和
+       *     提示词版本都没变"，等于在骗人）；
+       *   · 后来又分析了一集（整季范围），新集被静默忽略；
+       *   · 用户取消勾选的集，缓存里仍然算进去。
+       * 现在只有三项全对得上才返回 cached:true，否则照常重新生成。
+       */
       const existing = opts.reviewStore.read(req.key, scope)
       if (!req.options?.force && existing) {
-        onEvent?.({ type: 'done', review: existing, cached: true })
-        return { review: existing, cached: true }
+        const cachedEpisodes = [...(existing.inputs?.episodes ?? [])].sort((a, b) => a - b)
+        const wantedEpisodes = selected.map((r) => r.episode).sort((a, b) => a - b)
+        // 老记录没有 inputs.episodes 时不做集数比较（不能因为字段缺失就永远重跑）
+        const sameEpisodes = cachedEpisodes.length === 0
+          || (cachedEpisodes.length === wantedEpisodes.length
+            && cachedEpisodes.every((episode, index) => episode === wantedEpisodes[index]))
+        const currentModel = opts.currentModel?.()
+        const sameModel = !currentModel || existing.model === currentModel
+        const samePrompt = existing.promptVersion === REVIEW_PROMPT_VERSION
+        if (sameEpisodes && sameModel && samePrompt) {
+          onEvent?.({ type: 'done', review: existing, cached: true })
+          return { review: existing, cached: true }
+        }
       }
 
       // 命中缓存就没有"整理输入"这一步，collect 事件放在缓存判断之后

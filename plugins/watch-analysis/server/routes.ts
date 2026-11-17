@@ -325,6 +325,7 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
         store,
         reviewStore,
         appVersion,
+        currentModel: () => currentModelName(),
         describe: createStreamingDescribe(
           (chars, reasoningChars) => onEvent({ type: 'delta', chars, reasoningChars }),
           () => onEvent({ type: 'phase', phase: 'call', message: '流式不可用，改用一次性生成' }),
@@ -334,12 +335,23 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
     },
   })
 
+  /** 当前模型名：缓存判定要用（换了模型不该命中旧影评）。读不到就当未知。 */
+  function currentModelName(): string | undefined {
+    try {
+      const cfg = getClient().publicConfig() as { model?: unknown }
+      return typeof cfg?.model === 'string' && cfg.model ? cfg.model : undefined
+    } catch {
+      return undefined
+    }
+  }
+
   let reviewGenerator: ReviewGenerator | null = null
   function getReviewGenerator(): ReviewGenerator {
     reviewGenerator ??= createReviewGenerator({
       store,
       reviewStore,
       appVersion,
+      currentModel: () => currentModelName(),
       describe: async ({ system, prompt, images, jsonMode, maxTokens, timeoutMs, signal }) => {
         const result = await getClient().chat({
           messages: [
@@ -590,6 +602,15 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
       sendJson(res, 404, { ok: false, error: '图片不存在' })
       return
     }
+    /*
+     * 必须是**文件**。
+     *
+     * 只判 stat 成功不够：目录也能 stat 成功，随后 createReadStream 会抛 EISDIR。
+     * 这个 error 没人监听时是 uncaughtException —— 整个接口进程直接退出
+     * （2026-11-17 实测：空 file 参数把 dev 后端打挂，生产里就是「应用所有 API 突然全挂」）。
+     * store.sheetFile 已经在源头挡掉空名/目录，这里是第二道，防止将来别的调用方绕过去。
+     */
+    if (!stat.isFile()) { sendJson(res, 404, { ok: false, error: '图片不存在' }); return }
     res.statusCode = 200
     // 2×3 渲染器出的是 JPEG（PNG 每张近 800KB，18 张就是 14MB）；按扩展名给 MIME
     res.setHeader('Content-Type', /\.jpe?g$/i.test(target) ? 'image/jpeg' : 'image/png')
@@ -597,7 +618,16 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
     // 图一旦生成就不会变（文件名带集号），可以放心长缓存
     res.setHeader('Cache-Control', 'private, max-age=86400')
     if (req.method === 'HEAD') { res.end(); return }
-    fs.createReadStream(target).pipe(res)
+    /*
+     * 流也要挂 error：文件可能在 stat 之后被删/被占用（Windows 上杀毒软件就会这么干）。
+     * 不监听的话 `error` 事件同样会冒泡成未捕获异常把进程带走。
+     */
+    const stream = fs.createReadStream(target)
+    stream.on('error', (error) => {
+      console.warn(`[watch] 读分镜图失败 ${target}: ${error.message}`)
+      try { res.destroy() } catch { /* 连接可能已经断了 */ }
+    })
+    stream.pipe(res)
   })
 
   // ── 已分析的集号 ──
@@ -851,6 +881,7 @@ export function registerWatchRoutes(router: RouterLike, opts: WatchRoutesOptions
         store,
         reviewStore,
         appVersion,
+        currentModel: () => currentModelName(),
         describe: describeStreaming,
       })
 

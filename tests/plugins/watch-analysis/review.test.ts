@@ -97,6 +97,8 @@ function makeGenerator(opts: {
   describe?: (req: any) => Promise<DescribeResult>
   store: ReturnType<typeof createWatchStore>
   reviewStore: ReturnType<typeof createReviewStore>
+  /** 当前模型名（缓存判定用）；不传 = 不比较 */
+  currentModel?: () => string | undefined
 }) {
   const describeMock = vi.fn(opts.describe ?? (async () => ({
     text: modelJson(),
@@ -108,6 +110,7 @@ function makeGenerator(opts: {
     reviewStore: opts.reviewStore,
     appVersion: '1.3.26',
     describe: describeMock,
+    ...(opts.currentModel ? { currentModel: opts.currentModel } : {}),
   })
   return { generator, describeMock }
 }
@@ -626,5 +629,149 @@ describe('createReviewGenerator', () => {
     expect(review.inputs.episodes).toEqual([1, 2, 3])
     const images: string[] = describeMock.mock.calls[0][0].images
     expect(images).toHaveLength(6)
+  })
+
+  /*
+   * 缓存判定（2026-11-17 补）。
+   *
+   * 以前只按 key+scope 读：文件在就永远返回 cached:true。后果是
+   * 「换了模型 / 改了提示词 / 后来又分析了一集」都拿回旧结果，
+   * 而面板上写的是「模型和提示词版本都没变」—— 文案在骗人。
+   */
+  it('换了模型不命中缓存（AI 的分会变，不能拿旧结果冒充新生成）', async () => {
+    const { store } = seedReport(1)
+    const reviewStore = createReviewStore(dir)
+    let model = 'fake-vision-model'
+    const { generator, describeMock } = makeGenerator({ store, reviewStore, currentModel: () => model })
+
+    await generator.generate({ key: KEY, scope: { kind: 'series' } })
+    expect(describeMock).toHaveBeenCalledTimes(1)
+
+    // 模型没变 → 命中
+    expect((await generator.generate({ key: KEY, scope: { kind: 'series' } })).cached).toBe(true)
+    expect(describeMock).toHaveBeenCalledTimes(1)
+
+    // 换模型 → 不命中
+    model = 'another-model'
+    expect((await generator.generate({ key: KEY, scope: { kind: 'series' } })).cached).toBe(false)
+    expect(describeMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('提示词版本变了不命中缓存（换了尺子就该重跑）', async () => {
+    const { store } = seedReport(1)
+    const reviewStore = createReviewStore(dir)
+    const { generator, describeMock } = makeGenerator({ store, reviewStore })
+
+    await generator.generate({ key: KEY, scope: { kind: 'series' } })
+    const saved = reviewStore.read(KEY, { kind: 'series' })!
+    reviewStore.write({ ...saved, promptVersion: '0.9.0' })
+
+    const again = await generator.generate({ key: KEY, scope: { kind: 'series' } })
+    expect(again.cached).toBe(false)
+    expect(again.review.promptVersion).toBe(REVIEW_PROMPT_VERSION)
+    expect(describeMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('多分析了一集之后不命中缓存（新集不能被静默忽略）', async () => {
+    const { store } = seedReport(1)
+    const reviewStore = createReviewStore(dir)
+    const { generator, describeMock } = makeGenerator({ store, reviewStore })
+
+    await generator.generate({ key: KEY, scope: { kind: 'series' }, options: { episodes: [1] } })
+    // 同一批集 → 命中
+    expect((await generator.generate({ key: KEY, scope: { kind: 'series' }, options: { episodes: [1] } })).cached).toBe(true)
+    expect(describeMock).toHaveBeenCalledTimes(1)
+
+    seedReport(2)
+    const again = await generator.generate({ key: KEY, scope: { kind: 'series' } })
+    expect(again.cached).toBe(false)
+    expect(again.review.inputs.episodes).toEqual([1, 2])
+    expect(describeMock).toHaveBeenCalledTimes(2)
+  })
+
+  /* ── 音轨信息（2026-11-17：模型曾断言「全片无音频轨」）── */
+  it('片源有音轨时提示词要写明（否则模型会以为"没给我声音"=片子没声音）', async () => {
+    const { store } = seedReport(1, {
+      video: {
+        file: 'D:/anime/ep01.mkv', duration: 1440, fps: 23.976, width: 1920, height: 1080,
+        hasAudio: true, hasSubtitle: false,
+      },
+    })
+    const reviewStore = createReviewStore(dir)
+    const { generator, describeMock } = makeGenerator({ store, reviewStore })
+
+    await generator.generate({ key: KEY, scope: { kind: 'series' } })
+    const { prompt, system } = describeMock.mock.calls[0][0]
+    expect(prompt).toContain('片源有音轨')
+    expect(prompt).not.toContain('片源无音轨')
+    // system 里要明确禁止"全片无音频轨"这种事实错误
+    expect(String(system)).toContain('全片无音频轨')
+  })
+
+  it('片源没有音轨时也如实写进提示词', async () => {
+    const { store } = seedReport(1, {
+      video: {
+        file: 'D:/anime/ep01.mkv', duration: 1440, fps: 23.976, width: 1920, height: 1080,
+        hasAudio: false, hasSubtitle: false,
+      },
+    })
+    const reviewStore = createReviewStore(dir)
+    const { generator, describeMock } = makeGenerator({ store, reviewStore })
+
+    await generator.generate({ key: KEY, scope: { kind: 'series' } })
+    expect(describeMock.mock.calls[0][0].prompt).toContain('片源无音轨')
+  })
+
+  it('老报告没有 hasAudio 字段时不瞎写（音轨情况未知）', async () => {
+    const { store } = seedReport(1)
+    const reviewStore = createReviewStore(dir)
+    const { generator, describeMock } = makeGenerator({ store, reviewStore })
+
+    await generator.generate({ key: KEY, scope: { kind: 'series' } })
+    const { prompt } = describeMock.mock.calls[0][0]
+    expect(prompt).toContain('音轨情况未知')
+    expect(prompt).not.toContain('片源有音轨')
+    expect(prompt).not.toContain('片源无音轨')
+  })
+
+  it('fanout 汇总在盲评时不要求「说出不同意用户的地方」（提示词不能自相矛盾）', async () => {
+    const { store } = seedReport(1)
+    seedReport(2)
+    const reviewStore = createReviewStore(dir)
+
+    const systems: Array<{ images: number; system: string }> = []
+    const describeMock = vi.fn(async (req: any) => {
+      systems.push({ images: req.images.length, system: req.system })
+      if (req.images.length > 0) {
+        return {
+          text: JSON.stringify({
+            episode: 1,
+            points: ['[00:12] 第一次切镜'],
+            scores: [{ dimension: '剧情', value: 8.2 }],
+            quotes: [],
+            caveats: [],
+          }),
+          usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+          model: 'fake-vision-model',
+        } satisfies DescribeResult
+      }
+      return {
+        text: modelJson(),
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+        model: 'fake-vision-model',
+      } satisfies DescribeResult
+    })
+    const generator = createReviewGenerator({
+      store,
+      reviewStore,
+      appVersion: '1.3.26',
+      describe: describeMock,
+    })
+
+    await generator.generate({ key: KEY, scope: { kind: 'series' }, options: { mode: 'fanout' } })
+    const summary = systems.find((call) => call.images === 0)
+    expect(summary).toBeDefined()
+    expect(summary!.system).toContain('独立判断')
+    expect(summary!.system).not.toContain('不同意他')
   })
 })

@@ -50,6 +50,14 @@ export interface BriefPromptInput {
   danmakuLines: string[]
   userScores: string
   /**
+   * 片源有没有音轨（ffprobe 的探测结果）。
+   *
+   * 不传的话模型只知道"我没收到音频"，会写成"全片无音频轨" —— 那是**事实错误**
+   * （2026-11-17 实测两次都出现在 caveats 里）。有音轨时要让它知道：
+   * 是"听不到"，不是"没有"。
+   */
+  hasAudio?: boolean
+  /**
    * 允许评的维度（模板维度）。
    *
    * 用户没打分时也必须传默认八维 —— 不传的话模型会自己编「角色 / 搞笑 / 演出」
@@ -68,6 +76,8 @@ const BRIEF_SYSTEM = [
   '3. **quotes 是可引用的原话**（台词/弹幕），标明来源；没有就空数组。',
   '4. **caveats 老实写**你看不清/听不到的东西。',
   '5. 不要写完整影评正文 —— 汇总那一步会写。你只提供素材。',
+  '6. **你收到的是静帧，没有声音**；但片源可能有音轨。音频维度只能写「听不到，无法判断」，',
+  '   **不要断言「全片无音频轨」** —— 素材里会注明片源到底有没有音轨。',
   '',
   '输出必须是 JSON，不要任何解释文字。',
 ].join('\n')
@@ -78,9 +88,14 @@ const BRIEF_SYSTEM = [
  * 刻意**不**给整季的镜头/台词/弹幕，只给这一集 —— 这就是"子代理只看一集"的边界。
  */
 export function buildEpisodeBriefPrompt(input: BriefPromptInput): { system: string; prompt: string } {
+  const audioNote = input.hasAudio === true
+    ? '；片源有音轨（本次没做音频分析，你听不到）'
+    : input.hasAudio === false
+      ? '；片源无音轨'
+      : ''
   const prompt = [
     `【作品】${input.title}`,
-    `【这一集】E${input.episode}（时长 ${clock(input.duration)}，${input.shots} 个镜头，${input.cuts} 个切点，分镜图 ${input.sheetCount} 张）`,
+    `【这一集】E${input.episode}（时长 ${clock(input.duration)}，${input.shots} 个镜头，${input.cuts} 个切点，分镜图 ${input.sheetCount} 张${audioNote}）`,
     '',
     '【用户自己的维度评分 —— 你的锚点】',
     input.userScores,
@@ -185,22 +200,34 @@ export interface SeriesSummaryInput {
   episodes: number[]
   /** 用户模板的维度（汇总时只许用这几个） */
   dimensions: string[]
+  /**
+   * 盲评：默认 `true` —— 不把用户评分 / 点评交给模型。
+   *
+   * 和单次模式（`review.ts` 的 buildPrompt）必须一致：以前这里没接这个旗标，
+   * SUMMARY_SYSTEM 固定写着"明确说出你在哪些地方不同意他"，
+   * 而盲评时 userScores 传的是"（盲评：未提供用户评分）" —— 提示词自相矛盾。
+   */
+  blind?: boolean
 }
 
-const SUMMARY_SYSTEM = [
-  '你是一位资深的动画评论者，正在为个人番剧记录应用写一篇**整季**影评。',
-  '',
-  '你手上没有分镜图，只有**每一集的分析小结**（points / 初评 / 引用）。所以：',
-  '1. **不要假装看过画面**。能跨集归纳的是结构、节奏、人物弧线、制作水准的走向；',
-  '   需要具体画面佐证时，引用小结里已有的时间码，不要自己编画面细节。',
-  '2. **每个判断都要能指到具体集数和时间码**。说不出的不要写。',
-  '3. **你的评分和用户评分是两回事**：明确说出你在哪些地方不同意他。',
-  '4. **不要写成"第 1 集讲了…第 2 集讲了…"的流水账**。整季影评要回答：',
-  '   这部剧的骨架是什么、哪几集是支点、它的毛病是不是结构性的。',
-  '5. 正文不超过 1200 字；timeline 6–10 条；每个维度 reason 不超过 40 字。',
-  '',
-  '输出必须是 JSON，不要任何解释文字。',
-].join('\n')
+function buildSummarySystem(blind: boolean): string {
+  return [
+    '你是一位资深的动画评论者，正在为个人番剧记录应用写一篇**整季**影评。',
+    '',
+    '你手上没有分镜图，只有**每一集的分析小结**（points / 初评 / 引用）。所以：',
+    '1. **不要假装看过画面**。能跨集归纳的是结构、节奏、人物弧线、制作水准的走向；',
+    '   需要具体画面佐证时，引用小结里已有的时间码，不要自己编画面细节。',
+    '2. **每个判断都要能指到具体集数和时间码**。说不出的不要写。',
+    blind
+      ? '3. **独立判断**：你没有看到用户的评分，按自己的标准打分，不要猜测用户想听什么。'
+      : '3. **你的评分和用户评分是两回事**：明确说出你在哪些地方不同意他。',
+    '4. **不要写成"第 1 集讲了…第 2 集讲了…"的流水账**。整季影评要回答：',
+    '   这部剧的骨架是什么、哪几集是支点、它的毛病是不是结构性的。',
+    '5. 正文不超过 1200 字；timeline 6–10 条；每个维度 reason 不超过 40 字。',
+    '',
+    '输出必须是 JSON，不要任何解释文字。',
+  ].join('\n')
+}
 
 /** 汇总 prompt：输入只有文字小结，没有图 —— 这正是"避免上下文爆满"的关键。 */
 export function buildSeriesSummaryPrompt(input: SeriesSummaryInput): { system: string; prompt: string } {
@@ -247,5 +274,5 @@ export function buildSeriesSummaryPrompt(input: SeriesSummaryInput): { system: s
     '0–10 分，允许一位小数；每个分数都必须有 reason，能给出 evidence 就必须给。',
   ].filter((line) => line !== '').join('\n')
 
-  return { system: SUMMARY_SYSTEM, prompt }
+  return { system: buildSummarySystem(input.blind !== false), prompt }
 }
