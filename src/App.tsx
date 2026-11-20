@@ -9,6 +9,7 @@ import { useAnimeContext } from '../context/AnimeContext';
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
 import AnimeGrid from './components/AnimeGrid';
+import ScoreRankChart from './components/ScoreRankChart';
 import AnimeDetailModal from './components/AnimeDetailModal';
 import SearchAddModal from '../features/search-add/SearchAddModal';
 import MediaCompleteModal from '../features/media-complete/MediaCompleteModal';
@@ -517,6 +518,18 @@ const App: React.FC = () => {
             scoreFocus={state.scoreFocus}
             onOpenMusic={setMusicPickerAnime}
             onPlayLocal={setLocalPlayerAnime}
+          />
+
+          {/*
+            网格底部的「评分 · 名次」总览：十个维度各一条线，每个点是一部番，
+            点一下直接打开它的详情卡片（不走 FLIP —— 图表在页面最底部，
+            对应的海报通常不在视口里，硬飞会把海报从屏幕外拉进来）。
+          */}
+          <ScoreRankChart
+            animeList={filteredAnime}
+            dimensions={activeTemplateDims}
+            activeDim={activeDim}
+            onPickAnime={handleAnimeClick}
           />
 
           {batchMode && (

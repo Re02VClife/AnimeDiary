@@ -1,0 +1,140 @@
+/* ── 评分 · 名次总览（番剧网格底部） ─────────────────────────────
+ * 形态参考「榜单折线图」：一块玻璃面板，标题在左上、统计和收放在右上，
+ * 下面是一整块 ECharts 画布。配色/轴线都在组件里按主题算好，
+ * 这里只负责面板本身的容器、标题排版和折叠态。
+ */
+
+.score-rank-panel {
+  position: relative;
+  /* .main-content 是 flex column：默认 flex-shrink:1 + 这里 overflow:hidden
+     （overflow 非 visible 时 min-height:auto 不再兜底）会把面板压成 2px 高，
+     图表就只剩一条线。显式禁止收缩。 */
+  flex: 0 0 auto;
+  margin: 34px 0 6px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-gradient);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--shadow-sm);
+  overflow: hidden;
+  /* 图表是 canvas，拖选会选中整个面板，禁用掉更顺手 */
+  user-select: none;
+}
+
+/* 顶部一条很淡的品牌色描边，和标题区呼应 */
+.score-rank-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--brand-line), transparent);
+  pointer-events: none;
+}
+
+.score-rank-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 13px 16px 4px;
+}
+
+.score-rank-title {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.score-rank-title-main {
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.3px;
+  color: var(--text-primary);
+}
+
+.score-rank-title-sub {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.score-rank-meta {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.score-rank-meta b {
+  color: var(--brand-primary);
+  font-weight: 650;
+}
+
+.score-rank-meta-dot {
+  color: var(--text-muted);
+}
+
+.score-rank-toggle {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) ease,
+    border-color var(--duration-fast) ease,
+    background-color var(--duration-fast) ease;
+}
+
+.score-rank-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--brand-line);
+  background: var(--bg-quaternary);
+}
+
+.score-rank-body {
+  padding: 2px 8px 6px;
+  animation: score-rank-in 0.32s var(--ease-out) both;
+}
+
+@keyframes score-rank-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.score-rank-empty {
+  padding: 26px 16px 30px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.score-rank-panel.is-collapsed .score-rank-head {
+  padding-bottom: 10px;
+}
+
+/* 窄屏：副标题让出空间，别把右侧统计顶下去 */
+@media (max-width: 760px) {
+  .score-rank-title-sub {
+    display: none;
+  }
+}
