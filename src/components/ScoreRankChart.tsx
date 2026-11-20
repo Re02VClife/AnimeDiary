@@ -203,32 +203,37 @@ const ScoreRankChart: React.FC<ScoreRankChartProps> = ({
     const series = seriesData.map((item, index) => {
       const color = colorOf(item.key, index);
       const isActive = highlighted && item.key === activeDim;
+      /**
+       * 侧栏「维度排序」选中某个维度时，这里跟着聚焦：那条线加粗、点加大、画在最上层，
+       * 其余维度整体压淡。压淡但**不隐去** —— 位置和走势还看得见，方便对比；
+       * 只留 0.2 的线、0.44 的点，颜色仍能分辨出是哪一维。
+       */
+      const dimmed = highlighted && !isActive;
       return {
         name: item.label,
         type: 'line',
         /** [名次, 分数]；point 挂在数据项上供 tooltip / 点击回查 */
         data: item.points.map((point) => ({ value: [point.rank, point.score], point })),
         symbol: 'circle',
-        symbolSize: isActive ? dotSize + 1.5 : dotSize,
+        symbolSize: isActive ? dotSize + 2 : dotSize,
         showSymbol: true,
         /**
          * 虚线连接：点很多时实线会把相邻两点的空隙全部吃满，虚线的"珠子串"更容易
          * 看出每一部番的位置（参考的那种榜单图也是这条线型）。
-         *
-         * 各维度都保持同样的浓度 —— 之前把非当前维度压到 0.3 透明度，结果是
-         * 「九种颜色」糊成一片灰，用户要的恰恰是颜色能分辨；现在只把当前维度加粗。
          */
         lineStyle: {
-          width: isActive ? 1.8 : 1,
+          width: isActive ? 2.2 : 1,
           type: 'dashed' as const,
           color,
-          opacity: 0.68,
+          opacity: dimmed ? 0.2 : 0.9,
         },
         itemStyle: {
           color,
-          opacity: 1,
+          opacity: dimmed ? 0.44 : 1,
           borderWidth: 0,
         },
+        // 当前维度的线压在所有淡化线之上，密集区不会被别的颜色盖住
+        z: isActive ? 12 : 1,
         emphasis: {
           scale: 1.9,
           focus: 'series' as const,
@@ -236,7 +241,7 @@ const ScoreRankChart: React.FC<ScoreRankChartProps> = ({
             shadowBlur: 10,
             shadowColor: color,
           },
-          lineStyle: { width: 2.2, opacity: 1 },
+          lineStyle: { width: 2.6, opacity: 1 },
         },
         animationDuration: animate ? 480 : 0,
       };
