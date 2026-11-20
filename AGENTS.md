@@ -1,7 +1,7 @@
 # AGENTS.md
 
 > 面向在本仓库工作的 AI 编码代理。取代旧 `CLAUDE.md`。
-> 最后核对：2026-11-17 · v1.3.56。细节见 `README.md` / `HANDOVER.md` / `AI.md`。
+> 最后核对：2026-11-21 · v1.3.57。细节见 `README.md` / `HANDOVER.md` / `AI.md`。
 > **注意：从 1.3.36 起热更新分发不了插件功能**（`plugins/` 和 `dsh-video-storyboard` 不在
 > 热更新 zip 里），改了 `plugins/` 必须覆盖整个程序目录，见 `HANDOVER.md` §0.2。
 
@@ -96,6 +96,8 @@ QQ 音乐 ←→ /api/music/* ←→ server/music-qq.ts ←→ core/music-links.
 - 颜色只用 CSS 变量 `var(--xxx)`，变量在 `src/theme/presets.ts`。
 - **排名唯一入口**：`features/ranking/ranking-service.ts`（Sidebar / Context / RadarChart 都走它）。
   `AnimeDetailModal.nearbyRanking` 是同模板邻邻口径，语义不同、别合并。
+  网格底部「评分 · 名次」图的绘制名次在 `features/ranking/score-rank-series.ts`，
+  只服务画图（x 轴第几位），**不是**排名结论，不要拿它渲染名次数字。
 - **AI 写工具**：契约在 `core/app-tools.ts`，执行器在 `features/ai-analysis/app-tools.ts`。
   写工具必须标 `effect: 'write'`，且只能回调 `host.saveAnime`（即 `handleSaveAnime`），
   不得另开 Excel 写入路径；音乐绑定 `app_music_bind` 是侧车数据的例外，走 `host.bindMusic`
